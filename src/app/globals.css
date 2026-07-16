@@ -1,26 +1,59 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* ─── Dark Mode via class strategy ─── */
+@custom-variant dark (&:where(.dark, .dark *));
 
+/* ─── Custom Theme ─── */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Fonts */
+  --font-heading: var(--font-space-grotesk);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
+
+  /* Brand Colors */
+  --color-ink-navy: #101B2D;
+  --color-paper: #FAFAF7;
+  --color-signal-emerald: #16A365;
+  --color-alert-coral: #E85D4B;
+  --color-slate: #55627A;
+  --color-line-gray-light: #E4E7EC;
+  --color-line-gray-dark: #23324A;
+
+  /* Semantic aliases */
+  --color-background: var(--color-paper);
+  --color-foreground: var(--color-ink-navy);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+/* ─── Base styles ─── */
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--color-paper);
+  color: var(--color-ink-navy);
+  font-family: var(--font-inter), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.dark body {
+  background-color: var(--color-ink-navy);
+  color: var(--color-paper);
+}
+
+/* ─── Scrollbar styling ─── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-line-gray-light);
+  border-radius: 3px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: var(--color-line-gray-dark);
+}
+
+/* ─── Selection ─── */
+::selection {
+  background-color: rgba(22, 163, 101, 0.25);
 }
