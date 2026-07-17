@@ -54,7 +54,7 @@ export function Navbar() {
               <Link key={link.href} href={link.href}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   isActive(link.href)
-                    ? "text-signal-emerald bg-signal-emerald/10"
+                    ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold"
                     : "text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
                 }`}>
                 {link.label}
@@ -62,10 +62,10 @@ export function Navbar() {
             ))}
             {/* Practice — primary pill */}
             <Link href="/practice"
-              className={`ml-1 flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
                 isActive("/practice")
-                  ? "bg-signal-emerald text-white shadow-md shadow-signal-emerald/30"
-                  : "bg-signal-emerald/10 text-signal-emerald hover:bg-signal-emerald hover:text-white hover:shadow-md hover:shadow-signal-emerald/30"
+                  ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold"
+                  : "text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
               }`}>
               <Zap className="w-3.5 h-3.5" />
               Practice
@@ -84,11 +84,11 @@ export function Navbar() {
             {isAuthenticated ? (
               <div className="flex items-center gap-2">
                 {user?.role === "admin" && (
-                  <Link href="/admin" className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-alert-coral border border-alert-coral/30 rounded-lg hover:bg-alert-coral/10 transition-colors">
+                  <Link href="/admin" className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-alert-coral border border-alert-coral/30 rounded-lg hover:bg-alert-coral/10 transition-colors">
                     <Shield className="w-3.5 h-3.5" /> Admin
                   </Link>
                 )}
-                <Link href="/dashboard" className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-signal-emerald text-white rounded-lg hover:bg-signal-emerald/90 transition-colors">
+                <Link href="/dashboard" className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy rounded-lg hover:opacity-90 active:scale-[0.98] transition-all">
                   <LayoutDashboard className="w-3.5 h-3.5" /> Dashboard
                 </Link>
                 <button onClick={logout} className="p-2 rounded-lg text-slate dark:text-paper/70 hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors" aria-label="Logout">
@@ -97,10 +97,10 @@ export function Navbar() {
               </div>
             ) : (
               <div className="flex items-center gap-2">
-                <Link href="/login" className="px-4 py-2 text-sm font-medium text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper transition-colors">
+                <Link href="/login" className="px-4 py-2 text-sm font-semibold text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper transition-colors">
                   Sign In
                 </Link>
-                <Link href="/signup" className="px-4 py-2 text-sm font-medium bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy rounded-lg hover:opacity-90 transition-opacity">
+                <Link href="/signup" className="px-4 py-2 text-sm font-semibold bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy rounded-lg hover:opacity-90 active:scale-[0.98] transition-all">
                   Sign Up
                 </Link>
               </div>
@@ -130,25 +130,27 @@ export function Navbar() {
               {navLinks.map((link) => (
                 <Link key={link.href} href={link.href} onClick={() => setMenuOpen(false)}
                   className={`block px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                    isActive(link.href) ? "text-signal-emerald bg-signal-emerald/10" : "text-slate dark:text-paper/70 hover:bg-line-gray-light dark:hover:bg-line-gray-dark"
+                    isActive(link.href) ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold" : "text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
                   }`}>
                   {link.label}
                 </Link>
               ))}
               <Link href="/practice" onClick={() => setMenuOpen(false)}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold text-signal-emerald bg-signal-emerald/10">
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  isActive("/practice") ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold" : "text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
+                }`}>
                 <Zap className="w-3.5 h-3.5" /> Practice
               </Link>
               <div className="pt-2 border-t border-line-gray-light dark:border-line-gray-dark">
                 {isAuthenticated ? (
                   <div className="space-y-1">
-                    <Link href="/dashboard" onClick={() => setMenuOpen(false)} className="block px-4 py-2.5 text-sm font-medium text-signal-emerald">Dashboard</Link>
-                    <button onClick={() => { logout(); setMenuOpen(false); }} className="block w-full text-left px-4 py-2.5 text-sm font-medium text-slate dark:text-paper/70">Sign Out</button>
+                    <Link href="/dashboard" onClick={() => setMenuOpen(false)} className="block px-4 py-2.5 text-sm font-semibold text-ink-navy dark:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">Dashboard</Link>
+                    <button onClick={() => { logout(); setMenuOpen(false); }} className="block w-full text-left px-4 py-2.5 text-sm font-medium text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">Sign Out</button>
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    <Link href="/login" onClick={() => setMenuOpen(false)} className="block px-4 py-2.5 text-sm font-medium text-slate dark:text-paper/70">Sign In</Link>
-                    <Link href="/signup" onClick={() => setMenuOpen(false)} className="block px-4 py-2.5 text-sm font-bold text-ink-navy dark:text-paper">Sign Up</Link>
+                    <Link href="/login" onClick={() => setMenuOpen(false)} className="block px-4 py-2.5 text-sm font-medium text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">Sign In</Link>
+                    <Link href="/signup" onClick={() => setMenuOpen(false)} className="block px-4 py-2.5 text-sm font-bold text-ink-navy dark:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">Sign Up</Link>
                   </div>
                 )}
               </div>

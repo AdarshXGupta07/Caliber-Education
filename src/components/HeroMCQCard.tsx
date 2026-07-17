@@ -66,10 +66,7 @@ export function HeroMCQCard() {
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* Glow behind card */}
-      <div className="absolute -inset-4 bg-signal-emerald/10 rounded-3xl blur-2xl pointer-events-none" />
-
-      <div className="relative bg-white dark:bg-line-gray-dark/80 border border-line-gray-light dark:border-line-gray-dark rounded-2xl shadow-xl overflow-hidden backdrop-blur-sm">
+      <div className="relative bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark rounded-xl overflow-hidden backdrop-blur-sm">
         {/* Card header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-line-gray-light dark:border-line-gray-dark">
           <div className="flex items-center gap-2">

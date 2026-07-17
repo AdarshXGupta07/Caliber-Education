@@ -58,6 +58,7 @@ type AdminTab = "payments" | "users" | "mcq" | "courses";
 
 function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<AdminTab>("payments");
+  const { verifications } = useAuth();
 
   const tabs: { id: AdminTab; label: string }[] = [
     { id: "payments", label: "Payments" },
@@ -87,7 +88,7 @@ function AdminDashboard() {
           {[
             { icon: <Users className="w-4 h-4" />, value: registeredUsers.length.toString(), label: "Registered Users", color: "text-signal-emerald" },
             { icon: <BookOpen className="w-4 h-4" />, value: initialCourses.length.toString(), label: "Active Courses", color: "text-blue-500" },
-            { icon: <Clock className="w-4 h-4" />, value: pendingVerifications.filter(v => v.status === "pending").length.toString(), label: "Pending Payments", color: "text-yellow-500" },
+            { icon: <Clock className="w-4 h-4" />, value: verifications.filter(v => v.status === "pending").length.toString(), label: "Pending Payments", color: "text-yellow-500" },
             { icon: <Upload className="w-4 h-4" />, value: mcqSets.length.toString(), label: "MCQ Sets", color: "text-purple-500" },
           ].map((s, i) => (
             <motion.div key={s.label} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
@@ -142,13 +143,13 @@ function StatusBadge({ status }: { status: PaymentVerification["status"] }) {
 
 // ─── PAYMENTS TAB ────────────────────────────────────────────────────────
 function PaymentsTab() {
-  const [verifications, setVerifications] = useState<PaymentVerification[]>(pendingVerifications);
+  const { verifications, approveVerification, rejectVerification } = useAuth();
   const [statusFilter, setStatusFilter] = useState<PaymentVerification["status"] | "all">("all");
 
   const filtered = statusFilter === "all" ? verifications : verifications.filter(v => v.status === statusFilter);
 
-  const approve = (id: string) => setVerifications(prev => prev.map(v => v.id === id ? { ...v, status: "approved" } : v));
-  const reject  = (id: string) => setVerifications(prev => prev.map(v => v.id === id ? { ...v, status: "rejected" } : v));
+  const approve = (id: string) => approveVerification(id);
+  const reject  = (id: string) => rejectVerification(id);
 
   return (
     <motion.div key="payments" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">

@@ -23,7 +23,7 @@ export function AuthShell({ children, progressStep, progressTotal }: AuthShellPr
           </Link>
         </div>
 
-        <div className="bg-white dark:bg-line-gray-dark/50 border border-line-gray-light dark:border-line-gray-dark rounded-2xl shadow-xl overflow-hidden">
+        <div className="bg-white dark:bg-line-gray-dark/50 border border-line-gray-light dark:border-line-gray-dark rounded-xl overflow-hidden">
           {/* Progress bar */}
           <div className="h-1 bg-line-gray-light dark:bg-line-gray-dark">
             <div
@@ -85,7 +85,7 @@ export function OTPInput({ value, onChange }: { value: string[]; onChange: (v: s
           onChange={(e) => handleChange(i, e.target.value)}
           onKeyDown={(e) => handleKey(i, e)}
           style={{ height: "3.25rem" }}
-          className="w-11 text-center font-mono text-xl font-bold border-2 border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-xl focus:outline-none focus:border-signal-emerald transition-colors caret-signal-emerald"
+          className="w-11 text-center font-mono text-xl font-bold border-2 border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-signal-emerald transition-colors caret-signal-emerald"
           autoFocus={i === 0}
         />
       ))}

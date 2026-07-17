@@ -17,17 +17,15 @@ const steps = [
 const founders = [
   {
     name: "Somya Deep",
-    role: "[Somya's CA subject specialty — placeholder]",
-    tagline: "[Somya's short tagline — e.g. years of experience, exam cleared, what makes their teaching unique.]",
+    role: "CA Accounting & Finance Specialist",
+    tagline: "Chartered Accountant. Specializes in building conceptual depth in Financial Reporting & Advanced Accounting for droppers.",
     initials: "SD",
-    color: "from-signal-emerald to-emerald-700",
   },
   {
     name: "Aditya Kanal",
-    role: "[Aditya's CA subject specialty — placeholder]",
-    tagline: "[Aditya's short tagline — e.g. years of experience, exam cleared, what makes their teaching unique.]",
+    role: "CA Law, Audit & Taxation Specialist",
+    tagline: "Chartered Accountant. Decodes complex corporate laws and auditing standards through daily memory-retrieval practice.",
     initials: "AK",
-    color: "from-blue-500 to-blue-700",
   },
 ];
 
@@ -37,58 +35,51 @@ export default function HomePage() {
   return (
     <div className="pt-16">
       {/* ─── HERO ─── */}
-      <section className="relative min-h-[calc(100vh-64px)] flex items-center overflow-hidden">
-        <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.06] pointer-events-none">
-          <div className="absolute inset-0" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0)", backgroundSize: "32px 32px" }} />
+      <section className="relative min-h-[85vh] flex items-center overflow-hidden py-32 bg-paper dark:bg-ink-navy border-b border-line-gray-light dark:border-line-gray-dark">
+        <div className="absolute inset-0 opacity-[0.015] dark:opacity-[0.03] pointer-events-none">
+          <div className="absolute inset-0" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0)", backgroundSize: "40px 40px" }} />
         </div>
-        <div className="absolute top-1/4 -left-32 w-96 h-96 bg-signal-emerald/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute bottom-1/4 -right-32 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
 
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
-            <motion.div initial={{ opacity: 0, x: -32 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.6, ease: "easeOut" }} className="space-y-8">
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-signal-emerald/10 border border-signal-emerald/20 rounded-full text-xs font-semibold text-signal-emerald">
-                <span className="w-1.5 h-1.5 rounded-full bg-signal-emerald animate-pulse" />
+        <div className="relative max-w-6xl mx-auto px-6 sm:px-8 py-10 w-full">
+          <div className="grid lg:grid-cols-12 gap-16 items-center">
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: "easeOut" }} className="lg:col-span-7 space-y-10">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-line-gray-light/60 dark:bg-line-gray-dark/60 border border-line-gray-light dark:border-line-gray-dark rounded-full text-xs font-semibold text-slate dark:text-paper/70">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-pulse" />
                 CA Foundation · Inter · Final — Dropper Prep 2026
               </div>
-              <div className="space-y-4">
-                <h1 className="font-heading text-4xl sm:text-5xl lg:text-6xl font-extrabold text-ink-navy dark:text-paper leading-[1.1] tracking-tight">
-                  Practice like <span className="text-signal-emerald">the exam</span>,{" "}
+              <div className="space-y-6">
+                <h1 className="font-heading text-4xl sm:text-5xl lg:text-6xl font-extrabold text-ink-navy dark:text-paper leading-[1.08] tracking-tight">
+                  Practice like <span className="underline decoration-line-gray-light dark:decoration-line-gray-dark">the exam</span>,{" "}
                   <br className="hidden sm:block" />
                   not like a textbook.
                 </h1>
-                <p className="text-lg text-slate dark:text-paper/70 leading-relaxed max-w-md">
+                <p className="text-lg text-slate dark:text-paper/70 leading-relaxed max-w-xl">
                   Timed MCQ sets that replicate real CA exam conditions. Built for droppers and serious repeaters who want results, not just notes.
                 </p>
               </div>
-              <div className="flex flex-wrap gap-3">
-                <Link href="/courses" className="inline-flex items-center gap-2 px-6 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-semibold rounded-xl hover:opacity-90 transition-opacity shadow-lg shadow-ink-navy/20">
+              <div className="flex flex-wrap gap-4">
+                <Link href="/courses" className="inline-flex items-center gap-2 px-6 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm">
                   Browse Courses <ArrowRight className="w-4 h-4" />
                 </Link>
-                <Link href="/practice" className="inline-flex items-center gap-2 px-6 py-3 border-2 border-signal-emerald text-signal-emerald font-semibold rounded-xl hover:bg-signal-emerald/10 transition-colors">
+                <Link href="/practice" className="inline-flex items-center gap-2 px-6 py-3 border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 font-semibold rounded-lg active:scale-[0.98] transition-all text-sm">
                   <Zap className="w-4 h-4" /> Try Free MCQ Set
                 </Link>
               </div>
-              <div className="flex items-center gap-6 pt-2">
+              <div className="flex items-center gap-8 pt-4 border-t border-line-gray-light dark:border-line-gray-dark max-w-md">
                 {[
                   { val: "5,400+", label: "Students enrolled" },
                   { val: "4.8★", label: "Average rating" },
                   { val: "1,200+", label: "MCQs in library" },
                 ].map((s, i) => (
-                  <div key={i} className="text-center">
-                    <div className="font-heading font-bold text-2xl text-ink-navy dark:text-paper">{s.val}</div>
+                  <div key={i} className="space-y-1">
+                    <div className="font-heading font-bold text-xl text-ink-navy dark:text-paper leading-none">{s.val}</div>
                     <div className="text-xs text-slate dark:text-paper/50">{s.label}</div>
-                    {i < 2 && <div className="hidden" />}
                   </div>
-                )).reduce((acc: React.ReactNode[], el, i) => [
-                  ...acc,
-                  el,
-                  i < 2 ? <div key={`sep-${i}`} className="w-px h-10 bg-line-gray-light dark:bg-line-gray-dark" /> : null,
-                ], [])}
+                ))}
               </div>
             </motion.div>
 
-            <motion.div initial={{ opacity: 0, x: 32 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.6, ease: "easeOut", delay: 0.15 }} className="flex justify-center lg:justify-end">
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: "easeOut", delay: 0.1 }} className="lg:col-span-5 flex justify-center lg:justify-end">
               <HeroMCQCard />
             </motion.div>
           </div>
@@ -96,20 +87,20 @@ export default function HomePage() {
       </section>
 
       {/* ─── HOW IT WORKS ─── */}
-      <section className="py-24 bg-ink-navy dark:bg-line-gray-dark/20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-14">
-            <span className="text-xs font-semibold text-signal-emerald uppercase tracking-widest">How It Works</span>
-            <h2 className="font-heading font-bold text-3xl sm:text-4xl text-paper mt-2">Three steps to exam confidence</h2>
+      <section className="py-32 bg-paper dark:bg-ink-navy/40 border-b border-line-gray-light dark:border-line-gray-dark">
+        <div className="max-w-6xl mx-auto px-6 sm:px-8">
+          <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-20">
+            <span className="text-xs font-semibold text-slate dark:text-paper/50 uppercase tracking-widest">How It Works</span>
+            <h2 className="font-heading font-bold text-3xl sm:text-4xl text-ink-navy dark:text-paper mt-3">Three steps to exam confidence</h2>
           </motion.div>
           <div className="grid md:grid-cols-3 gap-8">
             {steps.map((step, i) => (
-              <motion.div key={step.num} initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.12 }} className="text-center space-y-4">
-                <div className="mx-auto w-14 h-14 rounded-2xl bg-signal-emerald/20 border border-signal-emerald/30 flex items-center justify-center text-signal-emerald">{step.icon}</div>
-                <div>
-                  <span className="font-mono text-xs text-signal-emerald/60">{step.num}</span>
-                  <h3 className="font-heading font-bold text-xl text-paper mt-1">{step.title}</h3>
-                  <p className="text-sm text-paper/60 leading-relaxed mt-2 max-w-xs mx-auto">{step.desc}</p>
+              <motion.div key={step.num} initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }} className="flex flex-col items-center text-center space-y-5 p-6 border border-transparent hover:border-line-gray-light dark:hover:border-line-gray-dark rounded-xl transition-all duration-200">
+                <div className="w-12 h-12 rounded-lg border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/30 flex items-center justify-center text-ink-navy dark:text-paper">{step.icon}</div>
+                <div className="space-y-2">
+                  <span className="font-mono text-xs text-slate/50 dark:text-paper/30">{step.num}</span>
+                  <h3 className="font-heading font-bold text-lg text-ink-navy dark:text-paper mt-1">{step.title}</h3>
+                  <p className="text-xs text-slate dark:text-paper/60 leading-relaxed max-w-xs mx-auto">{step.desc}</p>
                 </div>
               </motion.div>
             ))}
@@ -118,33 +109,33 @@ export default function HomePage() {
       </section>
 
       {/* ─── FOUNDERS' TEASER ─── */}
-      <section className="py-24">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-12">
-            <span className="text-xs font-semibold text-signal-emerald uppercase tracking-widest">The Team</span>
-            <h2 className="font-heading font-bold text-3xl sm:text-4xl text-ink-navy dark:text-paper mt-2">Built by CAs who sat the exam themselves</h2>
+      <section className="py-32 bg-paper dark:bg-ink-navy border-b border-line-gray-light dark:border-line-gray-dark">
+        <div className="max-w-6xl mx-auto px-6 sm:px-8">
+          <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-16">
+            <span className="text-xs font-semibold text-slate dark:text-paper/50 uppercase tracking-widest">The Team</span>
+            <h2 className="font-heading font-bold text-3xl sm:text-4xl text-ink-navy dark:text-paper mt-3">Built by CAs who cracked the exam</h2>
           </motion.div>
-          <div className="grid sm:grid-cols-2 gap-6 max-w-3xl mx-auto">
+          <div className="grid sm:grid-cols-2 gap-8 max-w-4xl mx-auto">
             {founders.map((f, i) => (
-              <motion.div key={f.name} initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }}>
+              <motion.div key={f.name} initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}>
                 <Link href="/about" className="group block">
-                  <div className="flex items-start gap-4 p-5 rounded-2xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/30 hover:border-signal-emerald/30 hover:shadow-md transition-all duration-300">
-                    <div className={`flex-shrink-0 w-14 h-14 rounded-xl bg-gradient-to-br ${f.color} flex items-center justify-center text-white font-heading font-bold text-lg`}>{f.initials}</div>
-                    <div className="flex-1 min-w-0">
+                  <div className="flex items-start gap-5 p-6 rounded-xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 hover:border-ink-navy dark:hover:border-paper transition-all duration-200">
+                    <div className="flex-shrink-0 w-12 h-12 rounded-lg border border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/35 dark:bg-line-gray-dark/30 flex items-center justify-center text-ink-navy dark:text-paper font-heading font-bold text-base">{f.initials}</div>
+                    <div className="flex-1 min-w-0 space-y-2">
                       <div className="flex items-center justify-between">
                         <h3 className="font-heading font-bold text-base text-ink-navy dark:text-paper">{f.name}</h3>
-                        <ChevronRight className="w-4 h-4 text-slate/40 group-hover:text-signal-emerald group-hover:translate-x-0.5 transition-all" />
+                        <ChevronRight className="w-4 h-4 text-slate/40 group-hover:text-ink-navy dark:group-hover:text-paper group-hover:translate-x-0.5 transition-all" />
                       </div>
-                      <span className="text-xs font-semibold text-signal-emerald">{f.role}</span>
-                      <p className="text-xs text-slate dark:text-paper/60 mt-1.5 leading-relaxed">{f.tagline}</p>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/50">{f.role}</span>
+                      <p className="text-xs text-slate dark:text-paper/60 leading-relaxed pt-1">{f.tagline}</p>
                     </div>
                   </div>
                 </Link>
               </motion.div>
             ))}
           </div>
-          <div className="text-center mt-8">
-            <Link href="/about" className="inline-flex items-center gap-1.5 text-sm font-semibold text-signal-emerald hover:gap-2.5 transition-all">
+          <div className="text-center mt-12">
+            <Link href="/about" className="inline-flex items-center gap-1.5 text-xs font-semibold text-ink-navy dark:text-paper hover:gap-2.5 transition-all">
               Read our full story <ArrowRight className="w-4 h-4" />
             </Link>
           </div>
@@ -152,18 +143,18 @@ export default function HomePage() {
       </section>
 
       {/* ─── COURSE PREVIEW ─── */}
-      <section className="py-24 bg-line-gray-light/30 dark:bg-line-gray-dark/20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="flex flex-col sm:flex-row sm:items-end justify-between mb-12 gap-4">
-            <div>
-              <span className="text-xs font-semibold text-signal-emerald uppercase tracking-widest">Courses</span>
-              <h2 className="font-heading font-bold text-3xl sm:text-4xl text-ink-navy dark:text-paper mt-2">Start with what matters</h2>
+      <section className="py-32 bg-paper dark:bg-ink-navy/40 border-b border-line-gray-light dark:border-line-gray-dark">
+        <div className="max-w-6xl mx-auto px-6 sm:px-8">
+          <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="flex flex-col sm:flex-row sm:items-end justify-between mb-16 gap-4">
+            <div className="space-y-2">
+              <span className="text-xs font-semibold text-slate dark:text-paper/50 uppercase tracking-widest">Courses</span>
+              <h2 className="font-heading font-bold text-3xl sm:text-4xl text-ink-navy dark:text-paper">Start with what matters</h2>
             </div>
-            <Link href="/courses" className="inline-flex items-center gap-1.5 text-sm font-semibold text-signal-emerald hover:gap-2.5 transition-all flex-shrink-0">
+            <Link href="/courses" className="inline-flex items-center gap-1.5 text-xs font-semibold text-ink-navy dark:text-paper hover:gap-2.5 transition-all flex-shrink-0">
               All courses <ArrowRight className="w-4 h-4" />
             </Link>
           </motion.div>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8">
             {previewCourses.map((course, i) => (
               <CourseCard key={course.id} course={course} index={i} />
             ))}
@@ -172,29 +163,24 @@ export default function HomePage() {
       </section>
 
       {/* ─── FREE PRACTICE CTA ─── */}
-      <section className="py-24">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <motion.div initial={{ opacity: 0, scale: 0.97 }} whileInView={{ opacity: 1, scale: 1 }} viewport={{ once: true }} className="relative rounded-3xl bg-signal-emerald overflow-hidden">
-            <div className="absolute inset-0 opacity-10">
-              <div className="absolute inset-0" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, white 1px, transparent 0)", backgroundSize: "24px 24px" }} />
-            </div>
-            <div className="absolute -top-16 -right-16 w-64 h-64 bg-white/10 rounded-full blur-2xl" />
-            <div className="absolute -bottom-16 -left-16 w-64 h-64 bg-white/10 rounded-full blur-2xl" />
-            <div className="relative px-8 py-14 text-center max-w-2xl mx-auto">
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white/20 rounded-full text-white text-xs font-semibold mb-6">
-                <Trophy className="w-3.5 h-3.5" /> No credit card required
+      <section className="py-32 bg-paper dark:bg-ink-navy">
+        <div className="max-w-6xl mx-auto px-6 sm:px-8">
+          <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="relative rounded-xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 overflow-hidden">
+            <div className="relative px-8 py-16 text-center max-w-2xl mx-auto space-y-6">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-line-gray-light dark:bg-line-gray-dark border border-line-gray-light/55 dark:border-line-gray-dark/55 rounded-full text-xs font-semibold">
+                <Trophy className="w-3.5 h-3.5 text-slate dark:text-paper/60" /> No credit card required
               </div>
-              <h2 className="font-heading font-bold text-3xl sm:text-4xl text-white leading-tight">
+              <h2 className="font-heading font-bold text-3xl sm:text-4xl text-ink-navy dark:text-paper leading-tight">
                 Try a full MCQ set — completely free
               </h2>
-              <p className="mt-4 text-white/80 leading-relaxed">
+              <p className="text-slate dark:text-paper/70 leading-relaxed">
                 30 real CA exam-pattern Accounting questions. Full explanations. The same experience our paid students get.
               </p>
-              <div className="mt-8 flex flex-wrap gap-3 justify-center">
-                <Link href="/quiz/ca-accounting-free" className="inline-flex items-center gap-2 px-8 py-3.5 bg-white text-signal-emerald font-bold rounded-xl hover:bg-white/95 transition-colors shadow-lg">
+              <div className="flex flex-wrap gap-4 justify-center pt-2">
+                <Link href="/quiz/ca-accounting-free" className="inline-flex items-center gap-2 px-6 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm">
                   Start Free Practice <ArrowRight className="w-4 h-4" />
                 </Link>
-                <Link href="/signup" className="inline-flex items-center gap-2 px-8 py-3.5 border-2 border-white/40 text-white font-semibold rounded-xl hover:bg-white/10 transition-colors">
+                <Link href="/signup" className="inline-flex items-center gap-2 px-6 py-3 border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 font-semibold rounded-lg active:scale-[0.98] transition-all text-sm">
                   <Users className="w-4 h-4" /> Sign Up Free
                 </Link>
               </div>
@@ -219,23 +205,23 @@ function Footer() {
   }
 
   return (
-    <footer className="bg-ink-navy text-paper border-t border-line-gray-dark">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-10">
+    <footer className="bg-white dark:bg-ink-navy text-ink-navy dark:text-paper border-t border-line-gray-light dark:border-line-gray-dark">
+      <div className="max-w-6xl mx-auto px-6 sm:px-8 py-20">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-12">
           <div className="lg:col-span-1 space-y-4">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-signal-emerald rounded-lg flex items-center justify-center">
-                <BookOpen className="w-4 h-4 text-white" />
+              <div className="w-8 h-8 bg-ink-navy dark:bg-paper rounded flex items-center justify-center">
+                <BookOpen className="w-4 h-4 text-paper dark:text-ink-navy" />
               </div>
-              <span className="font-heading font-bold text-lg">Caliber Education</span>
+              <span className="font-heading font-bold text-lg">Caliber</span>
             </div>
-            <p className="text-sm text-paper/60 leading-relaxed">Practice like the exam. Built by CAs who cracked it.</p>
-            <p className="text-xs text-paper/40">Founded by Somya Deep & Aditya Kanal</p>
+            <p className="text-xs text-slate dark:text-paper/60 leading-relaxed">Practice like the exam. Built by CAs who cracked it.</p>
+            <p className="text-[10px] text-slate/40 dark:text-paper/40">Founded by Somya Deep & Aditya Kanal</p>
           </div>
 
           <div>
-            <h4 className="font-heading font-semibold text-sm text-paper/80 mb-4 uppercase tracking-wide">Platform</h4>
-            <ul className="space-y-2">
+            <h4 className="font-heading font-semibold text-xs text-ink-navy dark:text-paper mb-4 uppercase tracking-wider">Platform</h4>
+            <ul className="space-y-2.5">
               {[
                 { href: "/courses", label: "All Courses" },
                 { href: "/practice", label: "Free MCQ Practice" },
@@ -243,50 +229,50 @@ function Footer() {
                 { href: "/dashboard", label: "Dashboard" },
               ].map((l) => (
                 <li key={l.href}>
-                  <Link href={l.href} className="text-sm text-paper/60 hover:text-paper transition-colors">{l.label}</Link>
+                  <Link href={l.href} className="text-xs text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors">{l.label}</Link>
                 </li>
               ))}
             </ul>
           </div>
 
           <div>
-            <h4 className="font-heading font-semibold text-sm text-paper/80 mb-4 uppercase tracking-wide">Company</h4>
-            <ul className="space-y-2">
+            <h4 className="font-heading font-semibold text-xs text-ink-navy dark:text-paper mb-4 uppercase tracking-wider">Company</h4>
+            <ul className="space-y-2.5">
               {[
                 { href: "/about", label: "About Us" },
                 { href: "/login", label: "Sign In" },
                 { href: "/signup", label: "Sign Up" },
               ].map((l) => (
                 <li key={l.href}>
-                  <Link href={l.href} className="text-sm text-paper/60 hover:text-paper transition-colors">{l.label}</Link>
+                  <Link href={l.href} className="text-xs text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors">{l.label}</Link>
                 </li>
               ))}
             </ul>
           </div>
 
           <div>
-            <h4 className="font-heading font-semibold text-sm text-paper/80 mb-4 uppercase tracking-wide">Contact Us</h4>
+            <h4 className="font-heading font-semibold text-xs text-ink-navy dark:text-paper mb-4 uppercase tracking-wider">Contact Us</h4>
             {submitted ? (
-              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="flex items-center gap-2 text-sm text-signal-emerald">
-                <Star className="w-4 h-4 fill-signal-emerald" />
-                Message received! We&apos;ll reply within 24 hours.
+              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="flex items-center gap-2 text-xs text-slate dark:text-paper/70 font-semibold">
+                <Star className="w-4 h-4 fill-slate-500 text-slate-500" />
+                Message received! We will reply within 24 hours.
               </motion.div>
             ) : (
-              <form onSubmit={handleSubmit} className="space-y-2.5">
+              <form onSubmit={handleSubmit} className="space-y-3">
                 <input type="text" placeholder="Your name" required value={formState.name} onChange={(e) => setFormState({ ...formState, name: e.target.value })}
-                  className="w-full px-3 py-2 text-xs bg-line-gray-dark/60 border border-line-gray-dark text-paper placeholder-paper/40 rounded-lg focus:outline-none focus:border-signal-emerald transition-colors" />
+                  className="w-full px-3 py-2 text-xs border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors" />
                 <input type="email" placeholder="Email address" required value={formState.email} onChange={(e) => setFormState({ ...formState, email: e.target.value })}
-                  className="w-full px-3 py-2 text-xs bg-line-gray-dark/60 border border-line-gray-dark text-paper placeholder-paper/40 rounded-lg focus:outline-none focus:border-signal-emerald transition-colors" />
+                  className="w-full px-3 py-2 text-xs border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors" />
                 <textarea placeholder="Your message" required rows={3} value={formState.message} onChange={(e) => setFormState({ ...formState, message: e.target.value })}
-                  className="w-full px-3 py-2 text-xs bg-line-gray-dark/60 border border-line-gray-dark text-paper placeholder-paper/40 rounded-lg focus:outline-none focus:border-signal-emerald transition-colors resize-none" />
-                <button type="submit" className="w-full py-2 text-xs font-semibold bg-signal-emerald text-white rounded-lg hover:bg-signal-emerald/90 transition-colors">
+                  className="w-full px-3 py-2 text-xs border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors resize-none" />
+                <button type="submit" className="w-full py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all">
                   Send Message
                 </button>
               </form>
             )}
           </div>
         </div>
-        <div className="mt-12 pt-6 border-t border-line-gray-dark flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-paper/40">
+        <div className="mt-16 pt-8 border-t border-line-gray-light dark:border-line-gray-dark flex flex-col sm:flex-row items-center justify-between gap-4 text-[10px] text-slate/40 dark:text-paper/40">
           <span>© 2026 Caliber Education. All rights reserved.</span>
           <span>Made with ♥ for CA droppers & repeaters</span>
         </div>
