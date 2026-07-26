@@ -283,7 +283,7 @@ export default function DashboardPage() {
                   <div className="min-w-0 space-y-0.5">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <p className="font-semibold text-xs text-ink-navy dark:text-paper truncate">{set.title}</p>
-                      {set.isFree ? (
+                      {!set.isLocked ? (
                         <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-line-gray-light/50 dark:bg-line-gray-dark/60 text-slate dark:text-paper/70 flex-shrink-0">
                           Free
                         </span>
@@ -294,13 +294,13 @@ export default function DashboardPage() {
                       )}
                     </div>
                     <p className="text-[10px] text-slate dark:text-paper/40">
-                      {set.questions.length} questions · {set.subject}
+                      {set.sections.reduce((sum, s) => sum + s.questions.length, 0)} questions · {set.sections.length} sections · {set.subject}
                     </p>
                   </div>
                 </div>
 
                 <div className="flex-shrink-0 pl-3">
-                  {set.isFree ? (
+                  {!set.isLocked ? (
                     <Link
                       href={`/quiz/${set.id}`}
                       className="flex items-center gap-1 text-xs font-semibold text-ink-navy dark:text-paper hover:underline"

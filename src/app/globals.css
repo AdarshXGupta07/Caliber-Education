@@ -57,3 +57,7 @@ body {
 ::selection {
   background-color: rgba(22, 163, 101, 0.25);
 }
+
+/* ─── Utility: hide scrollbar but keep scrollability ─── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

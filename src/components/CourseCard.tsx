@@ -10,10 +10,11 @@ interface CourseCardProps {
   index?: number;
 }
 
-const levelColors: Record<Course["level"], string> = {
+const levelColors: Partial<Record<NonNullable<Course["level"]>, string>> = {
   Foundation:   "text-signal-emerald bg-signal-emerald/10",
   Intermediate: "text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400",
   Final:        "text-alert-coral bg-alert-coral/10",
+  "All Levels": "text-purple-600 bg-purple-50 dark:bg-purple-900/20 dark:text-purple-400",
 };
 
 export function CourseCard({ course, index = 0 }: CourseCardProps) {
@@ -29,9 +30,11 @@ export function CourseCard({ course, index = 0 }: CourseCardProps) {
           <div className="p-6 flex flex-col flex-1 gap-4">
             {/* Level & tag */}
             <div className="flex items-center justify-between">
-              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${levelColors[course.level]}`}>
-                {course.level}
-              </span>
+              {course.level && (
+                <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${levelColors[course.level] ?? "bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/60"}`}>
+                  {course.level}
+                </span>
+              )}
               {course.tag && (
                 <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/60">
                   {course.tag}
@@ -88,7 +91,7 @@ export function CourseCard({ course, index = 0 }: CourseCardProps) {
                 )}
               </div>
               <span className="flex items-center gap-1 text-xs font-semibold text-ink-navy dark:text-paper group-hover:gap-1.5 transition-all">
-                {course.price > 0 && <Lock className="w-3 h-3 text-slate dark:text-paper/40" />}
+                {(typeof course.price === "number" && course.price > 0) && <Lock className="w-3 h-3 text-slate dark:text-paper/40" />}
                 View details
                 <ArrowRight className="w-3.5 h-3.5 text-slate dark:text-paper/50 group-hover:translate-x-0.5 transition-transform" />
               </span>

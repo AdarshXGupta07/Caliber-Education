@@ -136,7 +136,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       id: `pv-${Date.now()}`,
       studentEmail: user.email,
       courseTitle: course.title,
-      amount: course.price,
+      amount: typeof course.price === "number" ? course.price : 0,
       date: new Date().toISOString().split("T")[0],
       status: "pending",
       utrNumber: utr

@@ -11,8 +11,7 @@ import { motion, AnimatePresence } from "framer-motion";
 const navLinks = [
   { href: "/", label: "Home" },
   { href: "/about", label: "About" },
-  { href: "/program", label: "Program" },
-  { href: "/courses", label: "Courses" },
+  { href: "/courses", label: "Program" },
 ];
 
 export function Navbar() {
@@ -60,15 +59,15 @@ export function Navbar() {
                 {link.label}
               </Link>
             ))}
-            {/* Practice — primary pill */}
-            <Link href="/practice"
+            {/* MCQ — primary pill */}
+            <Link href="/mcq"
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                isActive("/practice")
+                isActive("/mcq")
                   ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold"
                   : "text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
               }`}>
               <Zap className="w-3.5 h-3.5" />
-              Practice
+              MCQ
             </Link>
           </nav>
 
@@ -135,11 +134,11 @@ export function Navbar() {
                   {link.label}
                 </Link>
               ))}
-              <Link href="/practice" onClick={() => setMenuOpen(false)}
+              <Link href="/mcq" onClick={() => setMenuOpen(false)}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  isActive("/practice") ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold" : "text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
+                  isActive("/mcq") ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold" : "text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
                 }`}>
-                <Zap className="w-3.5 h-3.5" /> Practice
+                <Zap className="w-3.5 h-3.5" /> MCQ
               </Link>
               <div className="pt-2 border-t border-line-gray-light dark:border-line-gray-dark">
                 {isAuthenticated ? (

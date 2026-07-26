@@ -7,7 +7,7 @@ interface AnswerRevealOptionProps {
   label: string;
   text: string;
   state: "idle" | "selected" | "correct" | "wrong" | "reveal-correct";
-  onClick?: () => void;
+  onClick?: React.MouseEventHandler<HTMLButtonElement>;
   disabled?: boolean;
 }
 
@@ -128,6 +128,7 @@ interface ReviewCardProps {
   userAnswerIndex: number | null;
   correctAnswerIndex: number;
   explanation: string;
+  timeTakenSeconds?: number;
 }
 
 export function ReviewCard({
@@ -137,6 +138,7 @@ export function ReviewCard({
   userAnswerIndex,
   correctAnswerIndex,
   explanation,
+  timeTakenSeconds,
 }: ReviewCardProps) {
   const isCorrect = userAnswerIndex === correctAnswerIndex;
 
@@ -189,6 +191,7 @@ export function ReviewCard({
       </div>
 
       <div className="ml-9 pt-1 border-t border-line-gray-light dark:border-line-gray-dark">
+        {timeTakenSeconds !== undefined && <p className="text-xs font-mono text-slate dark:text-paper/50 mb-2">Time taken: {timeTakenSeconds}s</p>}
         <p className="text-xs text-slate dark:text-paper/60 leading-relaxed">
           <span className="font-semibold text-ink-navy dark:text-paper/80">Explanation: </span>
           {explanation}

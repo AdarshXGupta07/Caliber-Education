@@ -6,7 +6,7 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, CheckCircle, Lock, Users, Star, Clock,
-  BookOpen, MessageCircle, ChevronDown, ChevronRight, X, Zap, Copy, Check
+  BookOpen, MessageCircle, ChevronDown, ChevronRight, X, Zap, Copy, Check, Bell
 } from "lucide-react";
 import { courses } from "@/lib/mockData";
 import { useAuth } from "@/context/AuthContext";
@@ -33,6 +33,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   if (!course) return notFound();
 
   const isPurchased = purchasedCourseIds.includes(course.id);
+  const isComingSoon = course.status === "coming_soon";
   const pendingVerification = verifications.find(
     (v) => v.studentEmail.toLowerCase() === user?.email.toLowerCase() &&
            v.courseTitle === course.title &&
@@ -75,7 +76,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       {/* Breadcrumb */}
       <div className="max-w-6xl mx-auto px-6 sm:px-8 pt-8">
         <Link href="/courses" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors mb-6">
-          <ArrowLeft className="w-4 h-4" /> All Courses
+          <ArrowLeft className="w-4 h-4" /> All Programs
         </Link>
       </div>
 
@@ -223,15 +224,28 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                         <span className="font-heading font-extrabold text-3xl text-ink-navy dark:text-paper">Free</span>
                       ) : (
                         <div className="flex items-baseline gap-2">
-                          <span className="font-heading font-extrabold text-3xl text-ink-navy dark:text-paper">₹{course.price.toLocaleString()}</span>
-                          <span className="text-xs text-slate dark:text-paper/40 font-medium">one-time</span>
+                          <span className="font-heading font-extrabold text-3xl text-ink-navy dark:text-paper">
+                            {typeof course.price === "string" ? course.price : `₹${course.price.toLocaleString()}`}
+                          </span>
+                          {typeof course.price === "number" && (
+                            <span className="text-xs text-slate dark:text-paper/40 font-medium">one-time</span>
+                          )}
                         </div>
                       )}
                     </div>
                   </div>
 
                   {/* Dynamic CTA logic */}
-                  {isPurchased ? (
+                  {isComingSoon ? (
+                    <div className="space-y-3">
+                      <div className="w-full py-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 font-bold rounded-lg flex items-center justify-center gap-2 text-sm">
+                        <Bell className="w-4 h-4" /> Coming Soon
+                      </div>
+                      <p className="text-[11px] text-slate dark:text-paper/50 text-center leading-relaxed">
+                        This program is being prepared. Check back soon — or follow us on WhatsApp for the launch date.
+                      </p>
+                    </div>
+                  ) : isPurchased ? (
                     <Link href={`/courses/${course.id}/success`}
                       className="w-full py-3 text-center bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-2 text-sm">
                       <MessageCircle className="w-4 h-4" /> View WhatsApp Access
