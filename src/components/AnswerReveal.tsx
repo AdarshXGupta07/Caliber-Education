@@ -22,9 +22,9 @@ export function AnswerRevealOption({
     "relative w-full flex items-center gap-3 px-4 py-3.5 rounded-xl border text-left transition-all duration-200 select-none";
 
   const stateStyles: Record<string, string> = {
-    idle: "border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/30 hover:border-signal-emerald/50 hover:bg-signal-emerald/5 cursor-pointer",
+    idle: "border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/30 hover:border-ink-navy/40 dark:hover:border-paper/30 hover:bg-ink-navy/5 dark:hover:bg-paper/5 cursor-pointer",
     selected:
-      "border-slate/50 dark:border-slate/30 bg-slate/5 cursor-pointer",
+      "border-2 border-ink-navy dark:border-paper bg-ink-navy/[0.06] dark:bg-paper/[0.08] ring-1 ring-ink-navy/20 dark:ring-paper/20 cursor-pointer",
     correct:
       "border-signal-emerald bg-signal-emerald/10 shadow-[0_0_16px_rgba(22,163,101,0.25)]",
     wrong: "border-alert-coral bg-alert-coral/10 opacity-75",
@@ -34,7 +34,7 @@ export function AnswerRevealOption({
 
   const iconStyles: Record<string, string> = {
     idle: "bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/50",
-    selected: "bg-slate/20 text-slate",
+    selected: "bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy",
     correct: "bg-signal-emerald text-white",
     wrong: "bg-alert-coral text-white",
     "reveal-correct": "bg-signal-emerald/20 text-signal-emerald",
@@ -101,6 +101,8 @@ export function AnswerRevealOption({
             ? "text-signal-emerald font-semibold"
             : state === "wrong"
             ? "text-alert-coral"
+            : state === "selected"
+            ? "text-ink-navy dark:text-paper font-semibold"
             : "text-ink-navy dark:text-paper"
         }`}
       >

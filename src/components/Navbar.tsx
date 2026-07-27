@@ -33,9 +33,8 @@ export function Navbar() {
     href === "/" ? pathname === "/" : pathname.startsWith(href);
 
   return (
-    <header className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-      scrolled ? "bg-paper/95 dark:bg-ink-navy/95 backdrop-blur-md shadow-sm border-b border-line-gray-light dark:border-line-gray-dark" : "bg-transparent"
-    }`}>
+    <header className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${scrolled ? "bg-paper/95 dark:bg-ink-navy/95 backdrop-blur-md shadow-sm border-b border-line-gray-light dark:border-line-gray-dark" : "bg-transparent"
+      }`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
 
@@ -51,23 +50,29 @@ export function Navbar() {
           <nav className="hidden md:flex items-center gap-1">
             {navLinks.map((link) => (
               <Link key={link.href} href={link.href}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  isActive(link.href)
-                    ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold"
-                    : "text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
-                }`}>
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isActive(link.href)
+                  ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold"
+                  : "text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
+                  }`}>
                 {link.label}
               </Link>
             ))}
             {/* MCQ — primary pill */}
             <Link href="/mcq"
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                isActive("/mcq")
-                  ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold"
-                  : "text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
-              }`}>
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${isActive("/mcq")
+                ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold"
+                : "text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
+                }`}>
               <Zap className="w-3.5 h-3.5" />
               MCQ
+            </Link>
+            {/* Contact */}
+            <Link href="/contact"
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isActive("/contact")
+                ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold"
+                : "text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
+                }`}>
+              Contact Us
             </Link>
           </nav>
 
@@ -128,17 +133,20 @@ export function Navbar() {
             <div className="px-4 py-4 space-y-1">
               {navLinks.map((link) => (
                 <Link key={link.href} href={link.href} onClick={() => setMenuOpen(false)}
-                  className={`block px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                    isActive(link.href) ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold" : "text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
-                  }`}>
+                  className={`block px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive(link.href) ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold" : "text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
+                    }`}>
                   {link.label}
                 </Link>
               ))}
               <Link href="/mcq" onClick={() => setMenuOpen(false)}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  isActive("/mcq") ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold" : "text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
-                }`}>
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive("/mcq") ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold" : "text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
+                  }`}>
                 <Zap className="w-3.5 h-3.5" /> MCQ
+              </Link>
+              <Link href="/contact" onClick={() => setMenuOpen(false)}
+                className={`block px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive("/contact") ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold" : "text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
+                  }`}>
+                Contact Us
               </Link>
               <div className="pt-2 border-t border-line-gray-light dark:border-line-gray-dark">
                 {isAuthenticated ? (

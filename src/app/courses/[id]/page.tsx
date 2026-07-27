@@ -27,26 +27,28 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     submitUTR,
     enrollFreeCourse
   } = useAuth();
-  
+
   const router = useRouter();
 
   if (!course) return notFound();
 
   const isPurchased = purchasedCourseIds.includes(course.id);
   const isComingSoon = course.status === "coming_soon";
-  const pendingVerification = verifications.find(
-    (v) => v.studentEmail.toLowerCase() === user?.email.toLowerCase() &&
-           v.courseTitle === course.title &&
-           v.status === "pending"
-  );
+  const pendingVerification = user?.email
+    ? verifications.find(
+      (v) => v.studentEmail.toLowerCase() === user.email.toLowerCase() &&
+        v.courseTitle === course.title &&
+        v.status === "pending"
+    )
+    : undefined;
   const isPending = !!pendingVerification;
 
   const levelColor =
     course.level === "Foundation"
       ? "text-slate-800 bg-line-gray-light dark:bg-line-gray-dark dark:text-paper"
       : course.level === "Final"
-      ? "text-alert-coral bg-alert-coral/10"
-      : "text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400";
+        ? "text-alert-coral bg-alert-coral/10"
+        : "text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400";
 
   const handleCopyUpi = () => {
     navigator.clipboard.writeText("caliber@upi");
@@ -308,7 +310,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
               <div className="space-y-4">
                 <div className="p-4 rounded-lg bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark space-y-3">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/50 block">Payment Details</span>
-                  
+
                   {/* UPI Box */}
                   <div className="flex items-center justify-between p-2.5 rounded border border-dashed border-line-gray-light dark:border-line-gray-dark bg-paper dark:bg-ink-navy text-xs">
                     <span className="font-mono text-ink-navy dark:text-paper select-all">caliber@upi</span>
