@@ -1,18 +1,37 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { motion } from "framer-motion";
-import { mcqSeries, mcqSets } from "@/lib/mockData";
+import { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Search, Zap, Lock, Unlock, BookOpen, ArrowRight } from "lucide-react";
 
 export default function MCQSeriesPage() {
   const [search, setSearch] = useState("");
+  const [seriesList, setSeriesList] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filtered = mcqSeries.filter((series) =>
-    series.title.toLowerCase().includes(search.toLowerCase()) ||
-    series.subject.toLowerCase().includes(search.toLowerCase()) ||
-    series.description.toLowerCase().includes(search.toLowerCase())
+  useEffect(() => {
+    const fetchSeries = async () => {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const res = await fetch(`${apiURL}/api/mcq-series`);
+        if (res.ok) {
+          const data = await res.json();
+          setSeriesList(data);
+        }
+      } catch (e) {
+        console.warn("Failed to fetch MCQ series", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchSeries();
+  }, []);
+
+  const filtered = seriesList.filter((series) =>
+    (series.title || "").toLowerCase().includes(search.toLowerCase()) ||
+    (series.subject || "").toLowerCase().includes(search.toLowerCase()) ||
+    (series.description || "").toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -61,13 +80,11 @@ export default function MCQSeriesPage() {
           ) : (
             <div className="space-y-6">
               <p className="text-xs text-slate dark:text-paper/50">
-                Showing {filtered.length} of {mcqSeries.length} series
+                Showing {filtered.length} of {seriesList.length} series
               </p>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8">
                 {filtered.map((series, i) => {
-                  const setsInSeries = mcqSets.filter(s => s.seriesId === series.id);
-                  const totalQuestions = setsInSeries.reduce((sum, set) => sum + set.sections.reduce((sSum, sec) => sSum + sec.questions.length, 0), 0);
-                  
+
                   return (
                     <motion.div
                       key={series.id}
@@ -106,9 +123,8 @@ export default function MCQSeriesPage() {
                             <div className="flex items-center gap-4 text-xs text-slate dark:text-paper/50">
                               <span className="flex items-center gap-1">
                                 <BookOpen className="w-3.5 h-3.5" />
-                                {setsInSeries.length} set{setsInSeries.length !== 1 ? "s" : ""}
+                                Interactive
                               </span>
-                              <span>{totalQuestions}+ questions</span>
                             </div>
 
                             {/* CTA */}

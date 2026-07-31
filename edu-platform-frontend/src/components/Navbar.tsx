@@ -11,7 +11,7 @@ import { motion, AnimatePresence } from "framer-motion";
 const navLinks = [
   { href: "/", label: "Home" },
   { href: "/about", label: "About" },
-  { href: "/courses", label: "Program" },
+  { href: "/courses", label: "Courses" },
 ];
 
 export function Navbar() {
@@ -66,13 +66,13 @@ export function Navbar() {
               <Zap className="w-3.5 h-3.5" />
               MCQ
             </Link>
-            {/* Contact */}
-            <Link href="/contact"
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isActive("/contact")
+            {/* Team */}
+            <Link href="/team"
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isActive("/team")
                 ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold"
                 : "text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
                 }`}>
-              Contact Us
+              Team
             </Link>
           </nav>
 
@@ -143,10 +143,10 @@ export function Navbar() {
                   }`}>
                 <Zap className="w-3.5 h-3.5" /> MCQ
               </Link>
-              <Link href="/contact" onClick={() => setMenuOpen(false)}
-                className={`block px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive("/contact") ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold" : "text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
+              <Link href="/team" onClick={() => setMenuOpen(false)}
+                className={`block px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive("/team") ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold" : "text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
                   }`}>
-                Contact Us
+                Team
               </Link>
               <div className="pt-2 border-t border-line-gray-light dark:border-line-gray-dark">
                 {isAuthenticated ? (

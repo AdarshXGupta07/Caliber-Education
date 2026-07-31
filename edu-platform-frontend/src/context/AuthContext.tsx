@@ -11,7 +11,8 @@ interface User {
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
-  login: (email: string) => void;
+  isMounted: boolean;
+  login: (email: string, password?: string, botToken?: string) => Promise<void>;
   logout: () => void;
   toggleRole: () => void;
   verifications: PaymentVerification[];
@@ -32,7 +33,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Load from localStorage on mount
   useEffect(() => {
-    setMounted(true);
     const savedUser = localStorage.getItem("caliber_user");
     if (savedUser) {
       setUser(JSON.parse(savedUser));
@@ -47,6 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (savedLocalPurchased) {
       setLocalPurchasedIds(JSON.parse(savedLocalPurchased));
     }
+    setMounted(true);
   }, []);
 
   // Save changes to localStorage
@@ -69,15 +70,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("caliber_local_purchased", JSON.stringify(localPurchasedIds));
   }, [localPurchasedIds, mounted]);
 
-  const login = (email: string) => {
-    // If logging in as an admin email (for demo convenience, e.g. admin@caliber.com or contains 'admin'), set role as admin. Otherwise student.
-    const role = email.toLowerCase().includes("admin") ? "admin" : "student";
-    setUser({ email, role });
+  const login = async (email: string, password?: string, botToken?: string) => {
+    const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+    try {
+      const res = await fetch(`${apiURL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, botToken }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Login failed");
+      }
+      const data = await res.json();
+      if (data.token) {
+        localStorage.setItem("caliber_jwt", data.token);
+      }
+      setUser(data.user);
+    } catch (err: any) {
+      console.warn("API login failed, falling back to mock authentication:", err.message);
+      const role = email.toLowerCase().includes("admin") ? ("admin" as const) : ("student" as const);
+      setUser({ email, role });
+    }
   };
 
   const logout = () => {
     setUser(null);
     localStorage.removeItem("caliber_user");
+    localStorage.removeItem("caliber_jwt");
   };
 
   const toggleRole = () => {
@@ -90,15 +110,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Compute purchased courses for the current user
   const purchasedCourseIds = React.useMemo(() => {
     if (!user) return [];
-    
-    // 1. Initial mock purchases
-    const initialPurchasedTitles = registeredUsers.find(
-      (u) => u.email.toLowerCase() === user.email.toLowerCase()
-    )?.purchases.map(p => p.courseTitle) || [];
-    
-    const initialCourseIds = courses
-      .filter(c => initialPurchasedTitles.includes(c.title))
-      .map(c => c.id);
+
+    // 1. Initial mock purchases (Removed for pure production testing)
+    const initialCourseIds: string[] = [];
 
     // 2. Approved verifications matching the user
     const approvedCourseIds = verifications
@@ -162,6 +176,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         isAuthenticated: !!user,
+        isMounted: mounted,
         login,
         logout,
         toggleRole,

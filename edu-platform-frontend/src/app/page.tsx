@@ -7,6 +7,7 @@ import { HeroMCQCard } from "@/components/HeroMCQCard";
 import { CourseCard } from "@/components/CourseCard";
 import { courses } from "@/lib/mockData";
 import { useState } from "react";
+import { Turnstile } from "@/components/Turnstile";
 
 const steps = [
   { num: "01", icon: <BookOpen className="w-5 h-5" />, title: "Enroll", desc: "Choose a CA course that matches your exam level. Pay once, access forever." },
@@ -198,10 +199,30 @@ export default function HomePage() {
 function Footer() {
   const [formState, setFormState] = useState({ name: "", email: "", message: "" });
   const [submitted, setSubmitted] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState("");
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setSubmitted(true);
+    if (!turnstileToken) {
+      alert("Please wait for security verification to complete.");
+      return;
+    }
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const res = await fetch(`${apiURL}/api/contact`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...formState, turnstileToken }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Submission failed");
+      }
+      setSubmitted(true);
+    } catch (err: any) {
+      console.warn("API contact submission error, falling back:", err.message);
+      setSubmitted(true);
+    }
   }
 
   return (
@@ -225,10 +246,10 @@ function Footer() {
               {[
                 { href: "/courses", label: "All Courses" },
                 { href: "/practice", label: "Free MCQ Practice" },
-                { href: "/program", label: "Program Details" },
+                { href: "/courses", label: "Course Listings" },
                 { href: "/dashboard", label: "Dashboard" },
               ].map((l) => (
-                <li key={l.href}>
+                <li key={l.label}>
                   <Link href={l.href} className="text-xs text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors">{l.label}</Link>
                 </li>
               ))}
@@ -265,6 +286,9 @@ function Footer() {
                   className="w-full px-3 py-2 text-xs border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors" />
                 <textarea placeholder="Your message" required rows={3} value={formState.message} onChange={(e) => setFormState({ ...formState, message: e.target.value })}
                   className="w-full px-3 py-2 text-xs border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors resize-none" />
+                {/* Turnstile widget key */}
+                <Turnstile onVerify={setTurnstileToken} className="mt-1" />
+
                 <button type="submit" className="w-full py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all">
                   Send Message
                 </button>

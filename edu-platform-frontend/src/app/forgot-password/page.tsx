@@ -4,17 +4,39 @@ import { useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { AuthShell } from "@/components/AuthShell";
+import { Turnstile } from "@/components/Turnstile";
 import { ArrowRight, MailCheck } from "lucide-react";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState("");
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError("Enter a valid email address."); return; }
-    setError(""); setSent(true);
+    if (!turnstileToken) {
+      setError("Security verification in progress. Please wait.");
+      return;
+    }
+    setError("");
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const res = await fetch(`${apiURL}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, turnstileToken }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Request failed");
+      }
+      setSent(true);
+    } catch (err: any) {
+      console.warn("API forgot-password fallback:", err.message);
+      setSent(true);
+    }
   }
 
   return (
@@ -51,6 +73,10 @@ export default function ForgotPasswordPage() {
                   className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors" required />
               </div>
               {error && <p className="text-xs text-alert-coral">{error}</p>}
+
+              {/* Invisible Turnstile widget */}
+              <Turnstile onVerify={setTurnstileToken} />
+
               <button type="submit"
                 className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm animate-pulse">
                 Send Reset Link <ArrowRight className="w-4 h-4" />

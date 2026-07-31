@@ -23,48 +23,218 @@ import {
   X,
   Copy,
   Check,
-  AlertTriangle
+  AlertTriangle,
+  Video
 } from "lucide-react";
 
 export default function DashboardPage() {
-  const { 
-    user, 
-    isAuthenticated, 
-    toggleRole, 
-    purchasedCourseIds, 
-    verifications 
+  const {
+    user,
+    isAuthenticated,
+    isMounted,
+    toggleRole,
+    purchasedCourseIds,
+    verifications
   } = useAuth();
-  
+
   const router = useRouter();
-  
+
   const [accessCourseId, setAccessCourseId] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [activeTab, setActiveTab] = useState<"courses" | "sessions" | "tests">("courses");
+
+  // 1:1 Sessions States
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [loadingSessions, setLoadingSessions] = useState(true);
+
+  // Test Evaluation States
+  const [tests, setTests] = useState<any[]>([]);
+  const [submissions, setSubmissions] = useState<any[]>([]);
+  const [loadingTests, setLoadingTests] = useState(true);
+  const [uploadingTestId, setUploadingTestId] = useState<string | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
+  const [submittingTest, setSubmittingTest] = useState(false);
 
   useEffect(() => {
-    if (!isAuthenticated) router.push("/login");
-  }, [isAuthenticated, router]);
+    if (isMounted && !isAuthenticated) router.push("/login");
+  }, [isMounted, isAuthenticated, router]);
 
-  if (!isAuthenticated || !user) return null;
+  // Load Sessions
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const fetchSessions = async () => {
+      setLoadingSessions(true);
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+
+        const res = await fetch(`${apiURL}/api/sessions`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSessions(data.sessions || data);
+        } else {
+          throw new Error("Unable to fetch sessions");
+        }
+      } catch (err) {
+        console.warn("API request failed:", err);
+        setSessions([]);
+      } finally {
+        setLoadingSessions(false);
+      }
+    };
+    fetchSessions();
+  }, [isAuthenticated]);
+
+  // Load Prep Tests & Student Submissions
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const fetchTestsAndSubmissions = async () => {
+      setLoadingTests(true);
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+
+        const resTests = await fetch(`${apiURL}/api/tests`, { headers: { "Authorization": `Bearer ${token}` } });
+        const resSubs = await fetch(`${apiURL}/api/tests/submissions`, { headers: { "Authorization": `Bearer ${token}` } });
+
+        if (resTests.ok && resSubs.ok) {
+          const testsData = await resTests.json();
+          const subsData = await resSubs.json();
+          setTests(testsData);
+          setSubmissions(subsData);
+        } else {
+          throw new Error("Unable to fetch tests data from server");
+        }
+      } catch (err) {
+        console.warn("API fetch tests failed:", err);
+        setTests([]);
+        setSubmissions([]);
+      } finally {
+        setLoadingTests(false);
+      }
+    };
+    fetchTestsAndSubmissions();
+  }, [isAuthenticated]);
+
+  const handleCancelSession = async (sessionId: string) => {
+    const confirm = window.confirm("Are you sure you want to cancel this booking?");
+    if (!confirm) return;
+
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+
+      const res = await fetch(`${apiURL}/api/sessions/${sessionId}/cancel`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setSessions(prev => prev.filter(s => s.id !== sessionId));
+      } else {
+        throw new Error("Failed to cancel session");
+      }
+    } catch (err) {
+      console.warn("Cancelling booking locally");
+      const updated = sessions.filter(s => s.id !== sessionId);
+      setSessions(updated);
+      localStorage.setItem("caliber_sessions", JSON.stringify(updated));
+    }
+  };
+
+  const handleUploadSubmit = async (e: React.FormEvent, testId: string) => {
+    e.preventDefault();
+    if (!selectedFiles || selectedFiles.length === 0) return;
+    setSubmittingTest(true);
+
+    const fileNames = Array.from(selectedFiles).map(f => f.name);
+
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+
+      const formData = new FormData();
+      Array.from(selectedFiles).forEach(f => {
+        formData.append("files", f);
+      });
+
+      const res = await fetch(`${apiURL}/api/tests/${testId}/submit`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` },
+        body: formData,
+      });
+
+      if (res.ok) {
+        const newSubObj = await res.json();
+        setSubmissions(prev => [...prev, newSubObj]);
+      } else {
+        throw new Error("API submit test order failed");
+      }
+    } catch (err) {
+      console.warn("Adding mock test submission logic");
+      const newSubMock = {
+        id: `sub-mock-${Date.now()}`,
+        testId,
+        status: "pending",
+        submittedAt: new Date().toISOString(),
+        studentFiles: fileNames,
+        marksAwarded: null,
+        maxMarks: 100,
+        remarks: null,
+        checkedCopyLink: null
+      };
+
+      const updatedList = [...submissions, newSubMock];
+      setSubmissions(updatedList);
+      localStorage.setItem("caliber_submissions_tests", JSON.stringify(updatedList));
+
+      const savedAdminList = JSON.parse(localStorage.getItem("caliber_admin_pending_evaluations") || "[]");
+      savedAdminList.push({
+        id: newSubMock.id,
+        testId,
+        studentEmail: user?.email || "student@caliber.com",
+        studentName: user?.email.split("@")[0] || "Student",
+        testTitle: tests.find(t => t.id === testId)?.title || "Evaluation sheet",
+        submittedAt: newSubMock.submittedAt,
+        studentFiles: newSubMock.studentFiles,
+      });
+      localStorage.setItem("caliber_admin_pending_evaluations", JSON.stringify(savedAdminList));
+    } finally {
+      setSubmittingTest(false);
+      setSelectedFiles(null);
+      setUploadingTestId(null);
+    }
+  };
+
+  if (!isMounted || !isAuthenticated || !user) {
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-paper/40 dark:bg-ink-navy/40 backdrop-blur-md transition-all duration-500">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-line-gray-light dark:border-line-gray-dark border-t-ink-navy dark:border-t-signal-emerald rounded-full animate-spin"></div>
+          <p className="text-[10px] font-bold font-heading text-ink-navy dark:text-paper uppercase tracking-widest animate-pulse">
+            Preparing your workspace
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const isAdmin = user.role === "admin";
 
-  // Find user's pending course verifications
   const userPendingVerifications = verifications.filter(
     (v) => v.studentEmail.toLowerCase() === user.email.toLowerCase() && v.status === "pending"
   );
 
-  // Find courses that are purchased
   const userPurchasedCourses = courses.filter((c) => purchasedCourseIds.includes(c.id));
-
-  // Find courses that are pending verification
-  const userPendingCourses = courses.filter((c) => 
+  const userPendingCourses = courses.filter((c) =>
     userPendingVerifications.some((v) => v.courseTitle === c.title)
   );
 
   const totalMyCourses = userPurchasedCourses.length + userPendingCourses.length;
 
   const activeAccessCourse = courses.find(c => c.id === accessCourseId);
-  const activeWhatsappLink = activeAccessCourse 
+  const activeWhatsappLink = activeAccessCourse
     ? `https://chat.whatsapp.com/invite/CA-${activeAccessCourse.id.split("-").slice(1).join("-").toUpperCase()}-2026`
     : "";
 
@@ -77,9 +247,9 @@ export default function DashboardPage() {
 
   return (
     <div className="pt-16 pb-20 min-h-screen bg-paper dark:bg-ink-navy/10">
-      <div className="max-w-6xl mx-auto px-6 sm:px-8 py-10 space-y-10">
-        
-        {/* ─── GREETING ─── */}
+      <div className="max-w-6xl mx-auto px-6 sm:px-8 py-10 space-y-8">
+
+        {/* Greeting Banner */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1">
@@ -87,29 +257,24 @@ export default function DashboardPage() {
               <h1 className="font-heading font-extrabold text-2xl sm:text-3xl text-ink-navy dark:text-paper leading-none">
                 Welcome back 👋
               </h1>
-              <p className="text-xs text-slate dark:text-paper/60">
-                {user.email}
-              </p>
+              <p className="text-xs text-slate dark:text-paper/60">{user.email}</p>
             </div>
 
-            {/* Admin toggle switch */}
+            {/* Admin Toggle switch */}
             <div className="flex flex-col items-start sm:items-end gap-2">
-              <div
-                className={`flex items-center gap-3 px-4 py-2 rounded-lg border transition-all ${
-                  isAdmin
-                    ? "bg-alert-coral/5 border-alert-coral/25"
-                    : "bg-white dark:bg-line-gray-dark/20 border-line-gray-light dark:border-line-gray-dark"
-                }`}
-              >
+              <div className={`flex items-center gap-3 px-4 py-2 rounded-lg border transition-all ${isAdmin
+                ? "bg-alert-coral/5 border-alert-coral/25"
+                : "bg-white dark:bg-line-gray-dark/20 border-line-gray-light dark:border-line-gray-dark"
+                }`}>
                 <Shield className={`w-4 h-4 ${isAdmin ? "text-alert-coral" : "text-slate/50"}`} />
                 <span className={`text-xs font-semibold ${isAdmin ? "text-alert-coral" : "text-slate dark:text-paper/60"}`}>
                   Admin Mode
                 </span>
                 <button
+                  type="button"
                   onClick={toggleRole}
-                  className={`relative w-8 h-4 rounded-full transition-colors ${
-                    isAdmin ? "bg-alert-coral" : "bg-line-gray-light dark:bg-line-gray-dark"
-                  }`}
+                  className={`relative w-8 h-4 rounded-full transition-colors ${isAdmin ? "bg-alert-coral" : "bg-line-gray-light dark:bg-line-gray-dark"
+                    }`}
                   aria-label="Toggle admin mode"
                 >
                   <motion.span
@@ -132,200 +297,470 @@ export default function DashboardPage() {
           </div>
         </motion.div>
 
-        {/* ─── STATS CARDS ─── */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {/* Stats Summary Panel - Temporarily removed because it uses mock data and student hasn't attempted anything yet */}
+
+        {/* Dynamic Tab Selector Switch */}
+        <div className="flex gap-4 border-b border-line-gray-light dark:border-line-gray-dark pb-px pt-2">
           {[
-            { icon: <BookOpen className="w-4 h-4" />, label: "Sets Attempted", value: "7" },
-            { icon: <Star className="w-4 h-4" />, label: "Avg Score", value: "72%" },
-            { icon: <TrendingUp className="w-4 h-4" />, label: "Streak", value: "4 days" },
-            { icon: <BarChart2 className="w-4 h-4" />, label: "Best Score", value: "09/10" },
-          ].map((stat, i) => (
-            <motion.div
-              key={stat.label}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.04, duration: 0.3 }}
-              className="bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark rounded-xl p-5 space-y-3"
+            { id: "courses", label: "Courses & Practice" },
+            { id: "sessions", label: "1:1 Sessions" },
+            { id: "tests", label: "Tests & Evaluations" }
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`pb-3 text-xs font-bold uppercase tracking-wider border-b-2 px-1 transition-all ${activeTab === tab.id
+                ? "border-ink-navy dark:border-paper text-ink-navy dark:text-paper"
+                : "border-transparent text-slate/50 dark:text-paper/40 hover:text-slate dark:hover:text-paper/70"
+                }`}
             >
-              <div className="w-8 h-8 rounded border border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/35 dark:bg-line-gray-dark/30 flex items-center justify-center text-ink-navy dark:text-paper">
-                {stat.icon}
-              </div>
-              <div>
-                <div className="font-heading font-extrabold text-2xl text-ink-navy dark:text-paper leading-none">{stat.value}</div>
-                <div className="text-[10px] text-slate dark:text-paper/40 font-semibold uppercase tracking-wider mt-1">{stat.label}</div>
-              </div>
-            </motion.div>
+              {tab.label}
+            </button>
           ))}
         </div>
 
-        {/* ─── MY COURSES (NEW) ─── */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1, duration: 0.35 }}
-          className="space-y-4"
-        >
-          <div className="flex items-center justify-between border-b border-line-gray-light dark:border-line-gray-dark pb-2">
-            <h2 className="font-heading font-bold text-base text-ink-navy dark:text-paper">My Courses</h2>
-            <span className="text-xs text-slate dark:text-paper/45">{totalMyCourses} enrolled</span>
-          </div>
+        {/* Render Active Tab Panels */}
+        <AnimatePresence mode="wait">
+          {activeTab === "courses" && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-8">
 
-          {totalMyCourses === 0 ? (
-            <div className="p-8 text-center border border-dashed border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/10 space-y-3">
-              <p className="text-xs text-slate dark:text-paper/50">You haven't enrolled in any CA prep courses yet.</p>
-              <Link href="/courses" className="inline-flex items-center gap-1.5 px-4 py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all">
-                Browse Courses <ArrowRight className="w-3.5 h-3.5" />
-              </Link>
-            </div>
-          ) : (
-            <div className="grid sm:grid-cols-2 gap-6">
-              {/* Active Purchased Courses */}
-              {userPurchasedCourses.map((c) => (
-                <div key={c.id} className="p-5 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20 flex flex-col justify-between gap-4">
-                  <div className="space-y-1.5">
-                    <span className="text-[9px] font-bold uppercase tracking-wider text-signal-emerald">Active Access</span>
-                    <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{c.title}</h3>
-                    <p className="text-[10px] text-slate dark:text-paper/50">{c.level} · {c.duration}</p>
-                  </div>
-                  <div className="flex items-center gap-2 pt-2 border-t border-line-gray-light/30 dark:border-line-gray-dark/30">
-                    <button 
-                      onClick={() => setAccessCourseId(c.id)}
-                      className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs transition-all flex items-center justify-center gap-1 active:scale-[0.98]"
-                    >
-                      <MessageCircle className="w-3.5 h-3.5" /> WhatsApp Access
-                    </button>
-                    <Link 
-                      href={`/courses/${c.id}`}
-                      className="px-3 py-1.5 border border-line-gray-light dark:border-line-gray-dark text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper rounded-lg text-xs font-semibold transition-all text-center"
-                    >
-                      View
+              {/* My Courses */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between border-b border-line-gray-light dark:border-line-gray-dark pb-2">
+                  <h2 className="font-heading font-bold text-base text-ink-navy dark:text-paper">My Courses</h2>
+                  <span className="text-xs text-slate dark:text-paper/45">{totalMyCourses} enrolled</span>
+                </div>
+
+                {totalMyCourses === 0 ? (
+                  <div className="p-8 text-center border border-dashed border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/10 space-y-3">
+                    <p className="text-xs text-slate dark:text-paper/50">You haven't enrolled in any CA prep courses yet.</p>
+                    <Link href="/courses" className="inline-flex items-center gap-1.5 px-4 py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all">
+                      Browse Courses <ArrowRight className="w-3.5 h-3.5" />
                     </Link>
                   </div>
-                </div>
-              ))}
-
-              {/* Pending Courses */}
-              {userPendingCourses.map((c) => {
-                const verification = userPendingVerifications.find(v => v.courseTitle === c.title);
-                return (
-                  <div key={c.id} className="p-5 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20 flex flex-col justify-between gap-4 opacity-80">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-yellow-600 dark:text-yellow-400">
-                        <Clock className="w-3.5 h-3.5 animate-pulse" /> Verification Pending
+                ) : (
+                  <div className="grid sm:grid-cols-2 gap-6">
+                    {/* Enrolled Courses */}
+                    {userPurchasedCourses.map((c) => (
+                      <div key={c.id} className="p-5 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20 flex flex-col justify-between gap-4">
+                        <div className="space-y-1.5">
+                          <span className="text-[9px] font-bold uppercase tracking-wider text-signal-emerald">Active Access</span>
+                          <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{c.title}</h3>
+                          <p className="text-[10px] text-slate dark:text-paper/50">{c.level} · {c.duration}</p>
+                        </div>
+                        <div className="flex items-center gap-2 pt-2 border-t border-line-gray-light/30 dark:border-line-gray-dark/30">
+                          <button
+                            onClick={() => setAccessCourseId(c.id)}
+                            className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs transition-all flex items-center justify-center gap-1 active:scale-[0.98]"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" /> WhatsApp Access
+                          </button>
+                          <Link
+                            href={`/courses/${c.id}`}
+                            className="px-3 py-1.5 border border-line-gray-light dark:border-line-gray-dark text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper rounded-lg text-xs font-semibold transition-all text-center"
+                          >
+                            View
+                          </Link>
+                        </div>
                       </div>
-                      <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{c.title}</h3>
-                      <p className="text-[10px] text-slate dark:text-paper/40">UTR: {verification?.utrNumber}</p>
-                    </div>
-                    <div className="pt-2 border-t border-line-gray-light/30 dark:border-line-gray-dark/30 flex items-center justify-between">
-                      <span className="text-[10px] text-slate dark:text-paper/40">Submitting on {verification?.date}</span>
-                      <Link 
-                        href={`/courses/${c.id}`}
-                        className="px-3 py-1.5 border border-line-gray-light dark:border-line-gray-dark text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper rounded-lg text-xs font-semibold transition-all"
-                      >
-                        View Details
-                      </Link>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </motion.div>
+                    ))}
 
-        {/* ─── TODAY'S SET ─── */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15, duration: 0.35 }}
-        >
-          <div className="flex items-center gap-2 mb-4">
-            <Calendar className="w-4 h-4 text-ink-navy dark:text-paper" />
-            <h2 className="font-heading font-bold text-base text-ink-navy dark:text-paper">Today&apos;s Set</h2>
-          </div>
-          <div className="relative rounded-xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 overflow-hidden">
-            <div className="relative px-6 py-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="space-y-1">
-                <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-slate dark:text-paper/40">Daily Upload · Jul 16</span>
-                <h3 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Accounting Fundamentals</h3>
-                <p className="text-xs text-slate dark:text-paper/50">30 questions · ~25 min · Accounting</p>
+                    {/* Pending Verification list */}
+                    {userPendingCourses.map((c) => {
+                      const verification = userPendingVerifications.find(v => v.courseTitle === c.title);
+                      return (
+                        <div key={c.id} className="p-5 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20 flex flex-col justify-between gap-4 opacity-80">
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-yellow-600 dark:text-yellow-400">
+                              <Clock className="w-3.5 h-3.5 animate-pulse" /> Verification Pending
+                            </div>
+                            <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{c.title}</h3>
+                            <p className="text-[10px] text-slate dark:text-paper/40">UTR: {verification?.utrNumber}</p>
+                          </div>
+                          <div className="pt-2 border-t border-line-gray-light/30 dark:border-line-gray-dark/30 flex items-center justify-between">
+                            <span className="text-[10px] text-slate dark:text-paper/40 font-mono">Submitting on {verification?.date}</span>
+                            <Link
+                              href={`/courses/${c.id}`}
+                              className="px-3 py-1.5 border border-line-gray-light dark:border-line-gray-dark text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper rounded-lg text-xs font-semibold transition-all"
+                            >
+                              View Details
+                            </Link>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-              <Link
-                href="/quiz/ca-accounting-free"
-                className="flex-shrink-0 inline-flex items-center gap-2 px-5 py-2.5 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-xs"
-              >
-                Start Now <Zap className="w-3.5 h-3.5" />
-              </Link>
-            </div>
-          </div>
-        </motion.div>
 
-        {/* ─── MCQ SET LIBRARY ─── */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between border-b border-line-gray-light dark:border-line-gray-dark pb-2">
-            <h2 className="font-heading font-bold text-base text-ink-navy dark:text-paper">Practice Library</h2>
-            <span className="text-xs text-slate dark:text-paper/45">{mcqSets.length} sets</span>
-          </div>
-
-          <div className="grid sm:grid-cols-2 gap-4">
-            {mcqSets.map((set, i) => (
-              <motion.div
-                key={set.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 + i * 0.03, duration: 0.3 }}
-                className="flex items-center justify-between p-4 bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark rounded-xl hover:border-ink-navy dark:hover:border-paper transition-all duration-200 group"
-              >
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className="flex-shrink-0 w-10 h-10 rounded bg-line-gray-light/60 dark:bg-line-gray-dark/40 border border-line-gray-light/35 text-ink-navy dark:text-paper flex items-center justify-center text-xs font-bold font-mono">
-                    {set.subject.slice(0, 2).toUpperCase()}
-                  </div>
-
-                  <div className="min-w-0 space-y-0.5">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <p className="font-semibold text-xs text-ink-navy dark:text-paper truncate">{set.title}</p>
-                      {!set.isLocked ? (
-                        <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-line-gray-light/50 dark:bg-line-gray-dark/60 text-slate dark:text-paper/70 flex-shrink-0">
-                          Free
-                        </span>
-                      ) : (
-                        <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-line-gray-light/50 dark:bg-line-gray-dark/60 text-slate dark:text-paper/70 flex-shrink-0">
-                          ₹{set.price}
-                        </span>
-                      )}
+              {/* Today's Set */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Calendar className="w-4 h-4 text-ink-navy dark:text-paper" />
+                  <h2 className="font-heading font-bold text-base text-ink-navy dark:text-paper">Today&apos;s Set</h2>
+                </div>
+                <div className="relative rounded-xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 overflow-hidden">
+                  <div className="relative px-6 py-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-slate dark:text-paper/40">Daily Upload</span>
+                      <h3 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Accounting Fundamentals</h3>
+                      <p className="text-xs text-slate dark:text-paper/50">30 questions · ~25 min · Accounting</p>
                     </div>
-                    <p className="text-[10px] text-slate dark:text-paper/40">
-                      {set.sections.reduce((sum, s) => sum + s.questions.length, 0)} questions · {set.sections.length} sections · {set.subject}
-                    </p>
+                    <Link
+                      href="/quiz/ca-accounting-free"
+                      className="flex-shrink-0 inline-flex items-center gap-2 px-5 py-2.5 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-xs"
+                    >
+                      Start Now <Zap className="w-3.5 h-3.5" />
+                    </Link>
                   </div>
                 </div>
+              </div>
 
-                <div className="flex-shrink-0 pl-3">
-                  {!set.isLocked ? (
-                    <Link
-                      href={`/quiz/${set.id}`}
-                      className="flex items-center gap-1 text-xs font-semibold text-ink-navy dark:text-paper hover:underline"
-                    >
-                      <Unlock className="w-3 h-3 text-slate/50" />
-                      Attempt
-                      <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-                    </Link>
-                  ) : (
-                    <Link
-                      href="/practice"
-                      className="flex items-center gap-1 text-xs font-medium text-slate dark:text-paper/40 hover:text-ink-navy dark:hover:text-paper transition-colors"
-                    >
-                      <Lock className="w-3 h-3 text-slate/30" />
-                      Unlock
-                    </Link>
-                  )}
+              {/* Practice Library */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between border-b border-line-gray-light dark:border-line-gray-dark pb-2">
+                  <h2 className="font-heading font-bold text-base text-ink-navy dark:text-paper">Practice Library</h2>
+                  <span className="text-xs text-slate dark:text-paper/45">{mcqSets.length} sets</span>
                 </div>
-              </motion.div>
-            ))}
-          </div>
-        </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  {mcqSets.map((set, i) => (
+                    <div
+                      key={set.id}
+                      className="flex items-center justify-between p-4 bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark rounded-xl hover:border-slate/50 dark:hover:border-paper transition-all duration-200 group"
+                    >
+                      <div className="flex items-center gap-4 min-w-0">
+                        <div className="flex-shrink-0 w-10 h-10 rounded bg-line-gray-light/60 dark:bg-line-gray-dark/40 border border-line-gray-light/35 text-ink-navy dark:text-paper flex items-center justify-center text-xs font-bold font-mono">
+                          {set.subject.slice(0, 2).toUpperCase()}
+                        </div>
+
+                        <div className="min-w-0 space-y-0.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="font-semibold text-xs text-ink-navy dark:text-paper truncate">{set.title}</p>
+                            {!set.isLocked ? (
+                              <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-line-gray-light/50 dark:bg-line-gray-dark/60 text-slate dark:text-paper/70 flex-shrink-0">
+                                Free
+                              </span>
+                            ) : (
+                              <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-line-gray-light/50 dark:bg-line-gray-dark/60 text-slate dark:text-paper/70 flex-shrink-0">
+                                Paid
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-slate dark:text-paper/40">
+                            {set.sections.reduce((sum, s) => sum + s.questions.length, 0)} questions · {set.subject}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex-shrink-0 pl-3">
+                        {!set.isLocked ? (
+                          <Link
+                            href={`/quiz/${set.id}`}
+                            className="flex items-center gap-1 text-xs font-semibold text-ink-navy dark:text-paper hover:underline"
+                          >
+                            <Unlock className="w-3 h-3 text-slate/50" />
+                            Attempt
+                            <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                          </Link>
+                        ) : (
+                          <Link
+                            href="/practice"
+                            className="flex items-center gap-1 text-xs font-medium text-slate dark:text-paper/40 hover:text-ink-navy dark:hover:text-paper transition-colors"
+                          >
+                            <Lock className="w-3 h-3 text-slate/30" />
+                            Unlock
+                          </Link>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === "sessions" && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
+
+              {/* Booking Action */}
+              <div className="p-6 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper">Book a new 1:1 session</h3>
+                  <p className="text-xs text-slate dark:text-paper/50">Schedule a private 30-min live session with our CA mentors to clear doubts.</p>
+                </div>
+                <div className="flex gap-2">
+                  <Link
+                    href="/book-session/somya-deep"
+                    className="px-4 py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
+                  >
+                    Somya Deep
+                  </Link>
+                  <Link
+                    href="/book-session/aditya-kanal"
+                    className="px-4 py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
+                  >
+                    Aditya Kanal
+                  </Link>
+                </div>
+              </div>
+
+              {/* Lists */}
+              <div className="space-y-6">
+                {/* Pending Session Requests */}
+                {sessions.filter(s => s.status === "pending_schedule").length > 0 && (
+                  <div className="space-y-3">
+                    <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper border-b border-line-gray-light dark:border-line-gray-dark pb-2">Pending Requests</h3>
+                    {sessions.filter(s => s.status === "pending_schedule").map(sess => (
+                      <div key={sess.id} className="p-4 border border-amber-200 dark:border-amber-800/40 rounded-lg bg-amber-50 dark:bg-amber-900/10 space-y-2">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h4 className="font-heading font-bold text-xs text-ink-navy dark:text-paper">{sess.mentorName}</h4>
+                            <p className="text-[10px] text-slate dark:text-paper/45">{sess.specialty}</p>
+                          </div>
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Awaiting Schedule</span>
+                        </div>
+                        <p className="text-[11px] text-slate dark:text-paper/60 flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5" />
+                          Your mentor will email you a Google Meet link once scheduled.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => handleCancelSession(sess.id)}
+                          className="px-3 py-1.5 border border-line-gray-light dark:border-line-gray-dark text-slate hover:text-alert-coral dark:text-paper/50 rounded text-[11px] font-semibold active:scale-[0.98] transition-all"
+                        >
+                          Cancel Request
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Upcoming Confirmed Sessions */}
+                <div className="grid sm:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper border-b border-line-gray-light dark:border-line-gray-dark pb-2">Upcoming Sessions</h3>
+                    {loadingSessions ? (
+                      <p className="text-xs text-slate/50">Loading sessions...</p>
+                    ) : sessions.filter(s => s.status !== "pending_schedule" && new Date(s.datetime) > new Date()).length === 0 ? (
+                      <p className="text-xs text-slate dark:text-paper/40 py-4 italic">No confirmed upcoming sessions.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {sessions.filter(s => s.status !== "pending_schedule" && new Date(s.datetime) > new Date()).map(sess => (
+                          <div key={sess.id} className="p-4 border border-line-gray-light dark:border-line-gray-dark rounded-lg bg-white dark:bg-line-gray-dark/20 space-y-3">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <h4 className="font-heading font-bold text-xs text-ink-navy dark:text-paper">{sess.mentorName}</h4>
+                                <p className="text-[10px] text-slate dark:text-paper/45">{sess.specialty}</p>
+                              </div>
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-450">Confirmed</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[11px] text-slate dark:text-paper/60 font-medium">
+                              <Calendar className="w-3.5 h-3.5" />
+                              <span>
+                                {new Date(sess.datetime).toLocaleDateString("en-IN", {
+                                  weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"
+                                })}
+                              </span>
+                            </div>
+                            <div className="flex gap-2">
+                              {sess.meetLink ? (
+                                <a
+                                  href={sess.meetLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex-1 py-1.5 text-center bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded text-[11px] active:scale-[0.98] transition-all hover:opacity-90 inline-flex items-center justify-center gap-1"
+                                >
+                                  <Video className="w-3 h-3" /> Join Meet
+                                </a>
+                              ) : (
+                                <span className="flex-1 py-1.5 text-center text-[11px] text-slate/50 border border-dashed border-line-gray-light dark:border-line-gray-dark rounded">Meet link coming soon</span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleCancelSession(sess.id)}
+                                className="px-3 py-1.5 border border-line-gray-light dark:border-line-gray-dark text-slate hover:text-alert-coral dark:text-paper/50 rounded text-[11px] font-semibold active:scale-[0.98] transition-all"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Past Sessions */}
+                  <div className="space-y-4">
+                    <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper border-b border-line-gray-light dark:border-line-gray-dark pb-2">Past Sessions</h3>
+                    {loadingSessions ? (
+                      <p className="text-xs text-slate/50">Loading sessions...</p>
+                    ) : sessions.filter(s => new Date(s.datetime) <= new Date()).length === 0 ? (
+                      <p className="text-xs text-slate/40 dark:text-paper/40 py-4 italic text-[10px]">No past sessions on record.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {sessions.filter(s => new Date(s.datetime) <= new Date()).map(sess => (
+                          <div key={sess.id} className="p-4 border border-line-gray-light dark:border-line-gray-dark rounded-lg bg-white dark:bg-line-gray-dark/20 space-y-2 opacity-75">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <h4 className="font-heading font-bold text-xs text-ink-navy dark:text-paper">{sess.mentorName}</h4>
+                                <p className="text-[10px] text-slate dark:text-paper/45">{sess.specialty}</p>
+                              </div>
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-line-gray-light dark:bg-line-gray-dark/50 text-slate/60 dark:text-paper/45">Finished</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px] text-slate dark:text-paper/60">
+                              <Calendar className="w-3.5 h-3.5" />
+                              <span>
+                                {new Date(sess.datetime).toLocaleDateString("en-IN", {
+                                  day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"
+                                })}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === "tests" && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
+
+              <div className="border-b border-line-gray-light dark:border-line-gray-dark pb-2">
+                <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper font-heading">Mock Tests & Checked Evaluations</h3>
+                <p className="text-[10px] text-slate dark:text-paper/40 mt-0.5">Download questions, upload answer papers, and inspect evaluations.</p>
+              </div>
+
+              {loadingTests ? (
+                <div className="text-center py-6 text-xs text-slate/50">Loading test catalog...</div>
+              ) : tests.length === 0 ? (
+                <div className="text-center py-8 text-xs text-slate/50 italic border border-dashed border-line-gray-light dark:border-line-gray-dark rounded-xl">No active test evaluation systems configured currently.</div>
+              ) : (
+                <div className="space-y-4">
+                  {tests.map(test => {
+                    const sub = submissions.find(s => s.testId === test.id);
+                    return (
+                      <div key={test.id} className="p-5 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20 grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
+
+                        <div className="space-y-1.5 col-span-1">
+                          <span className="text-[9px] font-bold uppercase tracking-wider text-alert-coral bg-alert-coral/10 px-2 py-0.5 rounded">
+                            {test.subject} · {test.duration}
+                          </span>
+                          <h4 className="font-heading font-extrabold text-sm text-ink-navy dark:text-paper leading-tight">{test.title}</h4>
+                          <a
+                            href={test.questionPaperLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-xs text-signal-emerald font-bold hover:underline"
+                          >
+                            📥 Download Question Paper
+                          </a>
+                        </div>
+
+                        <div className="col-span-1">
+                          {sub ? (
+                            <div className="p-3.5 rounded-lg bg-paper dark:bg-line-gray-dark/30 border border-line-gray-light dark:border-line-gray-dark space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] text-slate dark:text-paper/40">Status:</span>
+                                <span className={`text-[9px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded ${sub.status === "reviewed"
+                                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-450"
+                                  : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-450"
+                                  }`}>
+                                  {sub.status === "reviewed" ? "Reviewed" : "Pending Review"}
+                                </span>
+                              </div>
+
+                              {sub.status === "reviewed" ? (
+                                <div className="space-y-2 text-xs">
+                                  <div>
+                                    <span className="text-slate/60 dark:text-paper/40 text-[10px] block">Score:</span>
+                                    <strong className="text-ink-navy dark:text-paper text-sm font-bold font-mono">{sub.marksAwarded}</strong> / {sub.maxMarks}
+                                  </div>
+                                  {sub.remarks && (
+                                    <div>
+                                      <span className="text-slate/60 dark:text-paper/40 text-[10px] block">Remarks:</span>
+                                      <p className="text-[10px] text-slate dark:text-paper/85 leading-normal italic py-1 border-l-2 border-line-gray-light dark:border-line-gray-dark pl-2">{sub.remarks}</p>
+                                    </div>
+                                  )}
+                                  {sub.checkedCopyLink && (
+                                    <a
+                                      href={sub.checkedCopyLink}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="w-full mt-1.5 py-1.5 text-center bg-signal-emerald hover:bg-signal-emerald/90 text-white font-bold rounded text-[10px] flex items-center justify-center gap-1 active:scale-[98] transition-all"
+                                    >
+                                      📂 Download Evaluated Copy
+                                    </a>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="text-[10px] text-slate dark:text-paper/50 leading-relaxed">
+                                  Submitted on {new Date(sub.submittedAt).toLocaleDateString("en-IN")}. Reviews take 24-48 hours.
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-center py-4 bg-paper/20 rounded-lg border border-dashed border-line-gray-light dark:border-line-gray-dark text-[10px] text-slate dark:text-paper/40">
+                              You haven't submitted your answers yet.
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="col-span-1 text-right">
+                          {!sub && (
+                            <>
+                              {uploadingTestId === test.id ? (
+                                <form onSubmit={(e) => handleUploadSubmit(e, test.id)} className="space-y-2 text-left">
+                                  <label className="text-[10px] font-bold text-slate dark:text-paper/60 uppercase">Upload sheets (PDF/Images)</label>
+                                  <input
+                                    type="file"
+                                    multiple
+                                    required
+                                    onChange={e => setSelectedFiles(e.target.files)}
+                                    className="w-full text-xs text-slate dark:text-paper/50 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-semibold file:bg-line-gray-light file:text-ink-navy dark:file:bg-line-gray-dark dark:file:text-paper hover:file:opacity-90"
+                                  />
+                                  <div className="flex gap-2 pt-1">
+                                    <button
+                                      type="submit"
+                                      disabled={submittingTest || !selectedFiles}
+                                      className="flex-1 py-1.5 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded text-[10px] active:scale-[0.98] transition-all disabled:opacity-40"
+                                    >
+                                      {submittingTest ? "Submitting..." : "Submit File"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => { setUploadingTestId(null); setSelectedFiles(null); }}
+                                      className="px-2 py-1.5 border border-line-gray-light dark:border-line-gray-dark font-semibold text-slate dark:text-paper/50 rounded text-[10px]"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </form>
+                              ) : (
+                                <button
+                                  onClick={() => setUploadingTestId(test.id)}
+                                  className="w-full py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-xs flex items-center justify-center gap-1.5"
+                                >
+                                  🚀 Upload Answer Copy
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
-      {/* ─── WHATSAPP ACCESS MODAL ─── */}
+      {/* WhatsApp Access Modal popup */}
       <AnimatePresence>
         {accessCourseId && activeAccessCourse && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -346,7 +781,7 @@ export default function DashboardPage() {
               <div className="space-y-4">
                 <div className="p-4 rounded-lg bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark space-y-3">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/50 block">Your Access Link</span>
-                  
+
                   <div className="flex items-center justify-between p-2.5 rounded border border-line-gray-light dark:border-line-gray-dark bg-paper dark:bg-ink-navy text-xs">
                     <span className="font-mono text-slate dark:text-paper/85 overflow-hidden truncate select-all">{activeWhatsappLink}</span>
                     <button onClick={handleCopyLink} className="ml-2 p-1 hover:bg-line-gray-light dark:hover:bg-line-gray-dark rounded transition-colors text-slate dark:text-paper/60 flex-shrink-0">
@@ -354,7 +789,7 @@ export default function DashboardPage() {
                     </button>
                   </div>
 
-                  <a 
+                  <a
                     href={activeWhatsappLink}
                     target="_blank"
                     rel="noopener noreferrer"

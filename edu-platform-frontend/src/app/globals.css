@@ -61,3 +61,17 @@ body {
 /* ─── Utility: hide scrollbar but keep scrollability ─── */
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ─── Custom animations ─── */
+@keyframes bounceSubtle {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+.hover\:animate-bounce-subtle:hover {
+  animation: bounceSubtle 1.2s ease-in-out infinite;
+}

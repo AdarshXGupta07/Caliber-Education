@@ -8,7 +8,7 @@ const founders = [
     name: "Somya Deep",
     role: "CA Accounting Specialist",
     initials: "SD",
-    bio: "Chartered Accountant (CA). After clearing his exams, Somya realized that standard dropper programs focused too much on passive reading. He specializes in Financial Reporting and Advanced Accounting, helping repeaters build structural confidence in resolving timed exam papers.",
+    bio: "Chartered Accountant (CA). After clearing his exams, Somya realized that standard dropper courses focused too much on passive reading. He specializes in Financial Reporting and Advanced Accounting, helping repeaters build structural confidence in resolving timed exam papers.",
     specialties: ["Financial Reporting", "Advanced Accounting", "Corporate Valuation"],
     quote: "Exam confidence isn't about how many hours you study. It is about how many timed decisions you make under pressure.",
   },
@@ -72,7 +72,7 @@ export default function AboutPage() {
               Somya and Aditya both cleared the rigorous CA examinations before co-founding Caliber. During their preparation and teaching tenures, they witnessed the same recurring issue: droppers who understood concepts perfectly still struggled to clear their examinations because they had not trained for the actual format.
             </p>
             <p>
-              Traditional coaching programs rely heavily on passive lecture hours and massive textbook dumps. But pattern recognition and speed require active timed retrieval. Caliber provides exactly that—a streamlined workspace where every session behaves like a mock exam, complete with immediate explanations to help close knowledge gaps in real-time.
+              Traditional coaching courses rely heavily on passive lecture hours and massive textbook dumps. But pattern recognition and speed require active timed retrieval. Caliber provides exactly that—a streamlined workspace where every session behaves like a mock exam, complete with immediate explanations to help close knowledge gaps in real-time.
             </p>
           </div>
         </div>

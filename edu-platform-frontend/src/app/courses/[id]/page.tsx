@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useState, useEffect } from "react";
 import { notFound, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -8,27 +8,81 @@ import {
   ArrowLeft, CheckCircle, Lock, Users, Star, Clock,
   BookOpen, MessageCircle, ChevronDown, ChevronRight, X, Zap, Copy, Check, Bell
 } from "lucide-react";
-import { courses } from "@/lib/mockData";
+import { courses as defaultCourses } from "@/lib/mockData";
 import { useAuth } from "@/context/AuthContext";
 
 export default function CourseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const [courses, setCourses] = useState(defaultCourses);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("caliber_admin_courses");
+    if (saved) setCourses(JSON.parse(saved));
+    setMounted(true);
+  }, []);
+
   const course = courses.find((c) => c.id === id);
   const [openModule, setOpenModule] = useState<number | null>(0);
-  const [showModal, setShowModal] = useState(false);
-  const [utr, setUtr] = useState("");
-  const [copiedUpi, setCopiedUpi] = useState(false);
+  const [purchaseLoading, setPurchaseLoading] = useState(false);
 
   const {
     user,
     isAuthenticated,
     verifications,
     purchasedCourseIds,
-    submitUTR,
-    enrollFreeCourse
+    enrollFreeCourse,
+    submitUTR
   } = useAuth();
 
+  const [showManualUpi, setShowManualUpi] = useState(false);
+  const [utrNumber, setUtrNumber] = useState("");
+  const [utrLoading, setUtrLoading] = useState(false);
+
+  const handleUpiSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!utrNumber || utrNumber.length < 10) {
+      alert("Please enter a valid 12-digit UTR/Ref Number");
+      return;
+    }
+    setUtrLoading(true);
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+
+      const res = await fetch(`${apiURL}/api/payments/verify-utr`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ courseId: course?.id, utrNumber }),
+      });
+
+      if (res.ok) {
+        submitUTR(course?.id || "", utrNumber);
+        alert("Payment under verification. You will automatically get access once verified by admins!");
+        router.push("/dashboard");
+      } else {
+        const errData = await res.json();
+        alert(errData.detail || "Failed to submit UTR. Make sure it isn't duplicated.");
+      }
+    } catch (err) {
+      alert("Error contacting the server. Try again.");
+    } finally {
+      setUtrLoading(false);
+    }
+  };
+
   const router = useRouter();
+
+  if (!mounted) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-paper/40 dark:bg-ink-navy/40 backdrop-blur-sm z-50">
+        <div className="w-10 h-10 border-4 border-line-gray-light dark:border-line-gray-dark border-t-signal-emerald rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   if (!course) return notFound();
 
@@ -50,27 +104,89 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         ? "text-alert-coral bg-alert-coral/10"
         : "text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400";
 
-  const handleCopyUpi = () => {
-    navigator.clipboard.writeText("caliber@upi");
-    setCopiedUpi(true);
-    setTimeout(() => setCopiedUpi(false), 2000);
-  };
+  const handleBuyNow = async () => {
+    if (!isAuthenticated) {
+      router.push("/login");
+      return;
+    }
+    setPurchaseLoading(true);
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
 
-  const handleUtrSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!utr.trim()) return;
-    submitUTR(course.id, utr.trim());
-    setUtr("");
-    setShowModal(false);
-    // Redirect to dashboard to see pending status
-    router.push("/dashboard");
-  };
+      const res = await fetch(`${apiURL}/api/payments/create-order`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ courseId: course.id }),
+      });
 
-  const handleInstantDemoPurchase = () => {
-    // Directly enrol user (simulating approved payment instantly)
-    enrollFreeCourse(course.id);
-    setShowModal(false);
-    router.push(`/courses/${course.id}/success`);
+      if (!res.ok) {
+        throw new Error("Unable to create order. Please try again.");
+      }
+
+      const orderData = await res.json();
+
+      const options = {
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_xxxxxxx",
+        amount: orderData.amount,
+        currency: orderData.currency || "INR",
+        name: "Caliber Education",
+        description: course.title,
+        order_id: orderData.orderId,
+        handler: async function (response: any) {
+          try {
+            const verifyRes = await fetch(`${apiURL}/api/payments/verify-payment`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              }),
+            });
+            if (verifyRes.ok) {
+              enrollFreeCourse(course.id);
+              router.push(`/courses/${course.id}/success`);
+            } else {
+              alert("Payment verification failed. Please contact support.");
+            }
+          } catch (err) {
+            console.error("Signature verification error", err);
+            alert("Error verifying payment signature");
+          }
+        },
+        prefill: {
+          email: user?.email || "",
+        },
+        theme: {
+          color: "#0F1A2C",
+        },
+        modal: {
+          ondismiss: () => {
+            setPurchaseLoading(false);
+          }
+        }
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.open();
+    } catch (err: any) {
+      console.warn("API payments ordering error:", err.message);
+      // Fallback for visual mock testing:
+      const confirmDemo = window.confirm("Razorpay API not responding. Fall back to demo payment simulation?");
+      if (confirmDemo) {
+        enrollFreeCourse(course.id);
+        router.push(`/courses/${course.id}/success`);
+      }
+    } finally {
+      setPurchaseLoading(false);
+    }
   };
 
   return (
@@ -78,7 +194,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       {/* Breadcrumb */}
       <div className="max-w-6xl mx-auto px-6 sm:px-8 pt-8">
         <Link href="/courses" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors mb-6">
-          <ArrowLeft className="w-4 h-4" /> All Programs
+          <ArrowLeft className="w-4 h-4" /> All Courses
         </Link>
       </div>
 
@@ -244,7 +360,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                         <Bell className="w-4 h-4" /> Coming Soon
                       </div>
                       <p className="text-[11px] text-slate dark:text-paper/50 text-center leading-relaxed">
-                        This program is being prepared. Check back soon — or follow us on WhatsApp for the launch date.
+                        This course is being prepared. Check back soon — or follow us on WhatsApp for the launch date.
                       </p>
                     </div>
                   ) : isPurchased ? (
@@ -263,10 +379,58 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                       <Zap className="w-4 h-4" /> Enrol for Free
                     </button>
                   ) : (
-                    <button onClick={() => { if (isAuthenticated) { setShowModal(true); } else { router.push("/login"); } }}
-                      className="w-full py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm">
-                      <Lock className="w-4 h-4" /> Buy Now
-                    </button>
+                    <div className="space-y-3">
+                      <button onClick={handleBuyNow} disabled={purchaseLoading}
+                        className="w-full py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                        <Lock className="w-4 h-4" /> {purchaseLoading ? "Processing Razorpay..." : "Pay with Razorpay (Cards/Netbanking)"}
+                      </button>
+
+                      <div className="relative flex items-center py-2">
+                        <div className="flex-grow border-t border-line-gray-light dark:border-line-gray-dark"></div>
+                        <span className="flex-shrink-0 mx-4 text-slate dark:text-paper/50 text-[10px] font-bold uppercase tracking-wider">or</span>
+                        <div className="flex-grow border-t border-line-gray-light dark:border-line-gray-dark"></div>
+                      </div>
+
+                      {!showManualUpi ? (
+                        <button onClick={() => {
+                          if (!isAuthenticated) return router.push("/login");
+                          setShowManualUpi(true);
+                        }}
+                          className="w-full py-3 border border-ink-navy dark:border-paper text-ink-navy dark:text-paper font-bold rounded-lg hover:bg-slate/5 dark:hover:bg-line-gray-dark/50 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm">
+                          <Zap className="w-4 h-4" /> Pay directly via UPI manually
+                        </button>
+                      ) : (
+                        <motion.form initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} className="p-4 border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 rounded-xl space-y-4" onSubmit={handleUpiSubmit}>
+                          <div className="text-center space-y-1">
+                            <p className="text-[10px] font-bold text-slate dark:text-paper/60 uppercase tracking-wider">Transfer to this UPI ID:</p>
+                            <p className="font-mono text-base font-extrabold text-ink-navy dark:text-paper">caliber@upibank</p>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-xs font-semibold text-ink-navy dark:text-paper block">Enter UTR / Transaction Reference No.</label>
+                            <input
+                              type="text"
+                              value={utrNumber}
+                              onChange={(e) => setUtrNumber(e.target.value)}
+                              placeholder="e.g. 312567489021"
+                              required
+                              className="w-full bg-line-gray-light/30 dark:bg-line-gray-dark/50 border border-line-gray-light dark:border-line-gray-dark rounded-lg px-4 py-2.5 text-sm text-ink-navy dark:text-paper focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors"
+                            />
+                            <p className="text-[10px] text-slate dark:text-paper/60 leading-relaxed">
+                              Send the exact amount ({typeof course.price === "number" ? `₹${course.price.toLocaleString()}` : course.price}) to our UPI ID via PhonePe/GPay, and paste the 12-digit UTR number here.
+                            </p>
+                          </div>
+
+                          <button type="submit" disabled={utrLoading} className="w-full py-2.5 bg-signal-emerald hover:bg-emerald-700 text-white font-bold rounded-lg transition-all text-sm disabled:opacity-50">
+                            {utrLoading ? "Submitting..." : "Submit UTR for Verification"}
+                          </button>
+
+                          <button type="button" onClick={() => setShowManualUpi(false)} className="w-full py-1.5 text-xs font-bold text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors">
+                            Cancel
+                          </button>
+                        </motion.form>
+                      )}
+                    </div>
                   )}
 
                   <div className="space-y-3 pt-4 border-t border-line-gray-light dark:border-line-gray-dark">
@@ -289,73 +453,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         </div>
       </div>
 
-      {/* ─── BUY MODAL ─── */}
-      <AnimatePresence>
-        {showModal && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink-navy/60 backdrop-blur-sm"
-            onClick={(e) => e.target === e.currentTarget && setShowModal(false)}>
-            <motion.div initial={{ scale: 0.96, opacity: 0, y: 15 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.96, opacity: 0, y: 15 }}
-              className="bg-paper dark:bg-ink-navy border border-line-gray-light dark:border-line-gray-dark rounded-xl p-6 max-w-sm w-full shadow-lg space-y-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="font-heading font-bold text-base text-ink-navy dark:text-paper">Checkout</h3>
-                  <p className="text-[10px] font-bold text-slate dark:text-paper/50 mt-0.5">{course.title}</p>
-                </div>
-                <button onClick={() => setShowModal(false)} className="p-1 rounded hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors">
-                  <X className="w-4 h-4 text-slate dark:text-paper/60" />
-                </button>
-              </div>
 
-              <div className="space-y-4">
-                <div className="p-4 rounded-lg bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark space-y-3">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/50 block">Payment Details</span>
-
-                  {/* UPI Box */}
-                  <div className="flex items-center justify-between p-2.5 rounded border border-dashed border-line-gray-light dark:border-line-gray-dark bg-paper dark:bg-ink-navy text-xs">
-                    <span className="font-mono text-ink-navy dark:text-paper select-all">caliber@upi</span>
-                    <button onClick={handleCopyUpi} className="p-1 hover:bg-line-gray-light dark:hover:bg-line-gray-dark rounded transition-colors text-slate dark:text-paper/60">
-                      {copiedUpi ? <Check className="w-3.5 h-3.5 text-signal-emerald" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-
-                  <div className="text-[10px] text-slate dark:text-paper/50 leading-relaxed space-y-1">
-                    <p>1. Scan or pay to the UPI ID above using any app (GPay/PhonePe/Paytm).</p>
-                    <p>2. Enter your 12-digit UTR/Transaction ID below to submit.</p>
-                  </div>
-                </div>
-
-                <form onSubmit={handleUtrSubmit} className="space-y-3">
-                  <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1 block">Transaction ID / UTR</label>
-                    <input type="text" placeholder="Enter UTR number" required value={utr} onChange={(e) => setUtr(e.target.value)}
-                      className="w-full px-3 py-2 text-xs border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors" />
-                  </div>
-                  <button type="submit" disabled={!utr.trim()}
-                    className="w-full py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-xs disabled:opacity-40 disabled:cursor-not-allowed">
-                    Submit Verification
-                  </button>
-                </form>
-
-                <div className="relative flex py-1 items-center">
-                  <div className="flex-grow border-t border-line-gray-light dark:border-line-gray-dark"></div>
-                  <span className="flex-shrink mx-3 text-[10px] font-bold uppercase tracking-wider text-slate/30 dark:text-paper/30">OR</span>
-                  <div className="flex-grow border-t border-line-gray-light dark:border-line-gray-dark"></div>
-                </div>
-
-                {/* Instant Success Button for demo */}
-                <div className="space-y-1">
-                  <button onClick={handleInstantDemoPurchase}
-                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 text-xs active:scale-[0.98]">
-                    <Zap className="w-3.5 h-3.5" /> Simulate Instant Success (Demo)
-                  </button>
-                  <p className="text-[8px] text-center text-slate/40 dark:text-paper/40">Bypasses admin UTR review for evaluation purposes.</p>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

@@ -270,7 +270,7 @@ export const courses: Course[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface Question {
-  id: number;
+  id: number | string;
   text: string;
   options: string[];
   correctOptionIndex: number;
@@ -484,12 +484,12 @@ const auditQsC: Question[] = [
 
 // ─── SERIES ────────────────────────────────────────────────────────────────
 export const mcqSeries: MCQSeries[] = [
-  { id: "accounting-foundation", title: "CA Foundation — Accounting",      subject: "Accounting", description: "Core accounting practice mapped to the CA Foundation syllabus.",           price: 0,    isLocked: false },
-  { id: "law-foundation",        title: "CA Foundation — Business Laws",   subject: "Law",        description: "Act-wise practice for the CA Foundation Business Laws paper.",            price: 0,    isLocked: false },
-  { id: "costing-intermediate",  title: "CA Intermediate — Costing",       subject: "Costing",    description: "Cost and management accounting drills for CA Intermediate.",              price: 2999, isLocked: true },
-  { id: "audit-intermediate",    title: "CA Intermediate — Audit",         subject: "Audit",      description: "Standards and audit-procedure practice for CA Intermediate.",             price: 0,    isLocked: false },
-  { id: "all-levels-comprehensive", title: "Test Series — All Levels",     subject: "All Subjects", description: "Comprehensive MCQ test series for CA Foundation, Intermediate, and Final. Unlocked via course purchase.", price: 2999, isLocked: true },
-  { id: "quiz-practice-all",     title: "Quiz — Practice Bank",            subject: "All Subjects", description: "Subject-wise MCQ practice platform with instant feedback and performance analytics.", price: 999, isLocked: true },
+  { id: "accounting-foundation", title: "CA Foundation — Accounting", subject: "Accounting", description: "Core accounting practice mapped to the CA Foundation syllabus.", price: 0, isLocked: false },
+  { id: "law-foundation", title: "CA Foundation — Business Laws", subject: "Law", description: "Act-wise practice for the CA Foundation Business Laws paper.", price: 0, isLocked: false },
+  { id: "costing-intermediate", title: "CA Intermediate — Costing", subject: "Costing", description: "Cost and management accounting drills for CA Intermediate.", price: 2999, isLocked: true },
+  { id: "audit-intermediate", title: "CA Intermediate — Audit", subject: "Audit", description: "Standards and audit-procedure practice for CA Intermediate.", price: 0, isLocked: false },
+  { id: "all-levels-comprehensive", title: "Test Series — All Levels", subject: "All Subjects", description: "Comprehensive MCQ test series for CA Foundation, Intermediate, and Final. Unlocked via course purchase.", price: 2999, isLocked: true },
+  { id: "quiz-practice-all", title: "Quiz — Practice Bank", subject: "All Subjects", description: "Subject-wise MCQ practice platform with instant feedback and performance analytics.", price: 999, isLocked: true },
 ];
 
 // ─── SETS ─────────────────────────────────────────────────────────────────
@@ -597,13 +597,13 @@ export interface PaymentVerification {
 }
 
 export const pendingVerifications: PaymentVerification[] = [
-  { id: "pv-001", studentEmail: "aditya.sharma@gmail.com",  courseTitle: "CA Foundation — Accounting",                       amount: 1299, date: "2026-07-14", status: "pending",  utrNumber: "UTR4892019384" },
-  { id: "pv-002", studentEmail: "priya.nair@gmail.com",     courseTitle: "CA Intermediate — Taxation (IT + GST)",            amount: 1899, date: "2026-07-15", status: "pending",  utrNumber: "UTR8812093412" },
-  { id: "pv-003", studentEmail: "rohan.mehta@outlook.com",  courseTitle: "CA Intermediate — Cost & Management Accounting",   amount: 1499, date: "2026-07-15", status: "approved", utrNumber: "UTR2234819823" },
-  { id: "pv-004", studentEmail: "sneha.gupta@yahoo.com",    courseTitle: "CA Final — Full Mock Test Series",                 amount:  799, date: "2026-07-16", status: "pending",  utrNumber: "UTR9920345102" },
-  { id: "pv-005", studentEmail: "karthik.iyer@gmail.com",   courseTitle: "CA Foundation — Business Laws",                   amount:  999, date: "2026-07-16", status: "rejected", utrNumber: "UTR5567238902" },
-  { id: "pv-006", studentEmail: "meera.pillai@gmail.com",   courseTitle: "CA Intermediate — Taxation (IT + GST)",            amount: 1899, date: "2026-07-12", status: "approved", utrNumber: "UTR1123445566" },
-  { id: "pv-007", studentEmail: "vijay.singh@gmail.com",    courseTitle: "CA Foundation — Accounting",                       amount: 1299, date: "2026-07-10", status: "refunded", utrNumber: "UTR7788990011" },
+  { id: "pv-001", studentEmail: "aditya.sharma@gmail.com", courseTitle: "CA Foundation — Accounting", amount: 1299, date: "2026-07-14", status: "pending", utrNumber: "UTR4892019384" },
+  { id: "pv-002", studentEmail: "priya.nair@gmail.com", courseTitle: "CA Intermediate — Taxation (IT + GST)", amount: 1899, date: "2026-07-15", status: "pending", utrNumber: "UTR8812093412" },
+  { id: "pv-003", studentEmail: "rohan.mehta@outlook.com", courseTitle: "CA Intermediate — Cost & Management Accounting", amount: 1499, date: "2026-07-15", status: "approved", utrNumber: "UTR2234819823" },
+  { id: "pv-004", studentEmail: "sneha.gupta@yahoo.com", courseTitle: "CA Final — Full Mock Test Series", amount: 799, date: "2026-07-16", status: "pending", utrNumber: "UTR9920345102" },
+  { id: "pv-005", studentEmail: "karthik.iyer@gmail.com", courseTitle: "CA Foundation — Business Laws", amount: 999, date: "2026-07-16", status: "rejected", utrNumber: "UTR5567238902" },
+  { id: "pv-006", studentEmail: "meera.pillai@gmail.com", courseTitle: "CA Intermediate — Taxation (IT + GST)", amount: 1899, date: "2026-07-12", status: "approved", utrNumber: "UTR1123445566" },
+  { id: "pv-007", studentEmail: "vijay.singh@gmail.com", courseTitle: "CA Foundation — Accounting", amount: 1299, date: "2026-07-10", status: "refunded", utrNumber: "UTR7788990011" },
 ];
 
 // ─── MOCK REGISTERED USERS ─────────────────────────────────────────────

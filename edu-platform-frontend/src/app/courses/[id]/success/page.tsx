@@ -13,21 +13,44 @@ export default function PaymentSuccessPage({ params }: { params: Promise<{ id: s
   const course = courses.find((c) => c.id === id);
   const { user, isAuthenticated, purchasedCourseIds } = useAuth();
   const router = useRouter();
-  
+
   const [copied, setCopied] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [whatsappLink, setWhatsappLink] = useState("");
+  const [loadingLink, setLoadingLink] = useState(true);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    if (!mounted || !id) return;
+    const getAccessLink = async () => {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+        const res = await fetch(`${apiURL}/api/courses/${id}/whatsapp-access`, {
+          headers: {
+            "Authorization": `Bearer ${token}`
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setWhatsappLink(data.whatsappLink || data.link || "");
+        } else {
+          setWhatsappLink(`https://chat.whatsapp.com/invite/CA-${id.split("-").slice(1).join("-").toUpperCase()}-2026`);
+        }
+      } catch (err) {
+        console.warn("API whatsapp-access failed, using mock:", err);
+        setWhatsappLink(`https://chat.whatsapp.com/invite/CA-${id.split("-").slice(1).join("-").toUpperCase()}-2026`);
+      } finally {
+        setLoadingLink(false);
+      }
+    };
+    getAccessLink();
+  }, [id, mounted]);
+
   if (!course) return notFound();
-
-  // If not authenticated or not purchased in the context, we should redirect to login/dashboard
-  // But wait, for easy demoing let's allow viewing it if mounted is true, but check is good.
-  const isPurchased = purchasedCourseIds.includes(course.id);
-
-  const whatsappLink = `https://chat.whatsapp.com/invite/CA-${course.id.split("-").slice(1).join("-").toUpperCase()}-2026`;
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(whatsappLink);
@@ -43,10 +66,10 @@ export default function PaymentSuccessPage({ params }: { params: Promise<{ id: s
   return (
     <div className="pt-16 pb-24 min-h-screen bg-paper dark:bg-ink-navy/10 flex items-center justify-center px-4">
       <div className="max-w-md w-full border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 rounded-xl p-8 shadow-sm space-y-8">
-        
+
         {/* Success Moment */}
         <div className="text-center space-y-4">
-          <motion.div 
+          <motion.div
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ type: "spring", stiffness: 200, damping: 15 }}
@@ -72,7 +95,7 @@ export default function PaymentSuccessPage({ params }: { params: Promise<{ id: s
         </div>
 
         {/* WhatsApp Block */}
-        <motion.div 
+        <motion.div
           initial={{ y: 15, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.1 }}
@@ -88,27 +111,39 @@ export default function PaymentSuccessPage({ params }: { params: Promise<{ id: s
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="flex-1 flex items-center justify-between p-2.5 rounded border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-[11px] select-all font-mono text-slate dark:text-paper/80 overflow-hidden truncate">
-              <span>{whatsappLink}</span>
-              <button 
-                onClick={handleCopyLink} 
-                className="ml-2 p-1 hover:bg-line-gray-light dark:hover:bg-line-gray-dark rounded transition-colors text-slate dark:text-paper/60 flex-shrink-0"
-                aria-label="Copy link"
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-signal-emerald" /> : <Copy className="w-3.5 h-3.5" />}
-              </button>
+          {loadingLink ? (
+            <div className="text-center py-4 text-xs text-slate dark:text-paper/40 animate-pulse">
+              Retrieving invite link...
             </div>
-          </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 flex items-center justify-between p-2.5 rounded border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-[11px] select-all font-mono text-slate dark:text-paper/80 overflow-hidden truncate">
+                  <span>{whatsappLink}</span>
+                  <button
+                    onClick={handleCopyLink}
+                    className="ml-2 p-1 hover:bg-line-gray-light dark:hover:bg-line-gray-dark rounded transition-colors text-slate dark:text-paper/60 flex-shrink-0"
+                    aria-label="Copy link"
+                  >
+                    {copied ? <Check className="w-3.5 h-3.5 text-signal-emerald" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
 
-          <a 
-            href={whatsappLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 text-xs active:scale-[0.98]"
-          >
-            <MessageCircle className="w-4.5 h-4.5" /> Join WhatsApp Group
-          </a>
+              <a
+                href={whatsappLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 text-xs active:scale-[0.98]"
+              >
+                <MessageCircle className="w-4.5 h-4.5" /> Join WhatsApp Group
+              </a>
+
+              <p className="text-[10px] text-center text-slate dark:text-paper/50 bg-line-gray-light/45 dark:bg-line-gray-dark/20 p-2 rounded leading-normal">
+                📲 <strong>Setup Note:</strong> Tap the button above and request to join the group inside WhatsApp — you'll be approved within a few hours.
+              </p>
+            </>
+          )}
 
           {/* Restriction Note */}
           <div className="flex gap-2 p-3 rounded bg-amber-500/5 border border-amber-500/15 text-[10px] text-amber-700 dark:text-amber-500 leading-relaxed">
@@ -121,13 +156,13 @@ export default function PaymentSuccessPage({ params }: { params: Promise<{ id: s
 
         {/* Dashboard Navigation */}
         <div className="pt-2 flex flex-col gap-2">
-          <Link 
+          <Link
             href="/dashboard"
             className="w-full py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-xs flex items-center justify-center gap-2"
           >
             <LayoutDashboard className="w-3.5 h-3.5" /> Go to Dashboard <ArrowRight className="w-3.5 h-3.5" />
           </Link>
-          <Link 
+          <Link
             href={`/courses/${course.id}`}
             className="w-full py-2 text-center text-xs text-slate dark:text-paper/50 hover:text-ink-navy dark:hover:text-paper transition-colors"
           >

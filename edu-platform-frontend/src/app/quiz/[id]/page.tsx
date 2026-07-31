@@ -8,7 +8,7 @@ import {
   Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { AnswerRevealOption, ReviewCard } from "@/components/AnswerReveal";
-import { mcqSets, flattenSetQuestions, type MCQSet } from "@/lib/mockData";
+import { flattenSetQuestions, type MCQSet } from "@/lib/mockData";
 import {
   ArrowLeft, ArrowRight, Clock, LayoutDashboard, RotateCcw, Trophy,
   SkipForward, AlertCircle,
@@ -18,15 +18,53 @@ type QuizPhase = "in-progress" | "results";
 
 export default function QuizPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const set = mcqSets.find((s) => s.id === id);
-  if (!set) return notFound();
+  const [set, setSet] = useState<MCQSet | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [is404, setIs404] = useState(false);
+
+  useEffect(() => {
+    const fetchQuiz = async () => {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const res = await fetch(`${apiURL}/api/quizzes/${id}`);
+        if (res.status === 404) { setIs404(true); return; }
+        if (res.ok) {
+          const data = await res.json();
+          setSet(data);
+        }
+      } catch (e) {
+        console.warn(e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchQuiz();
+  }, [id]);
+
+  if (is404) return notFound();
+  if (loading || !set) return <div className="pt-24 text-center">Loading quiz engine...</div>;
+
   return <QuizEngine set={set} />;
 }
 
 // ─── Quiz Engine ──────────────────────────────────────────────────────────
 function QuizEngine({ set }: { set: MCQSet }) {
+  // If no questions physically exist yet, block gracefully using flattened array
   const flatQuestions = flattenSetQuestions(set);
   const total = flatQuestions.length;
+
+  // EARLY RETURN IF EMPTY
+  if (total === 0) {
+    return (
+      <div className="pt-32 pb-20 text-center max-w-lg mx-auto">
+        <h2 className="text-xl font-bold font-heading mb-4 text-ink-navy dark:text-paper">No questions available</h2>
+        <p className="text-slate dark:text-paper/60 mb-6">This MCQ set hasn't been populated with questions yet.</p>
+        <Link href="/mcq" className="text-sm font-bold text-signal-emerald hover:underline">
+          Go back to MCQ Library
+        </Link>
+      </div>
+    );
+  }
 
   const [phase, setPhase] = useState<QuizPhase>("in-progress");
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -105,8 +143,36 @@ function QuizEngine({ set }: { set: MCQSet }) {
     }
   }
 
-  function finishQuiz() {
+  async function finishQuiz() {
     setShowFinishWarning(false);
+
+    // Save attempt to backend
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt");
+      const score = userAnswers.reduce<number>(
+        (sum, answer, i) => sum + (answer === flatQuestions[i].question.correctOptionIndex ? 1 : 0),
+        0
+      );
+      if (token) {
+        await fetch(`${apiURL}/api/quizzes/${set.id}/attempts`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            score: score,
+            totalQuestions: total,
+            totalTimeSeconds: elapsedSeconds,
+            perQuestionTimes: perQuestionTimes
+          })
+        });
+      }
+    } catch (e) {
+      console.warn("Failed to sync quiz attempt", e);
+    }
+
     setPhase("results");
   }
 
@@ -174,13 +240,12 @@ function QuizEngine({ set }: { set: MCQSet }) {
               key={index}
               onClick={() => jumpTo(index)}
               title={`Q${index + 1}${userAnswers[index] !== null ? " (answered)" : " (unanswered)"}`}
-              className={`w-6 h-6 rounded-md text-[9px] font-bold transition-all ${
-                index === currentIndex
-                  ? "bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy ring-2 ring-ink-navy/20 dark:ring-paper/20"
-                  : userAnswers[index] !== null
+              className={`w-6 h-6 rounded-md text-[9px] font-bold transition-all ${index === currentIndex
+                ? "bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy ring-2 ring-ink-navy/20 dark:ring-paper/20"
+                : userAnswers[index] !== null
                   ? "bg-slate/30 dark:bg-slate/50 text-ink-navy dark:text-paper hover:bg-slate/50"
                   : "bg-line-gray-light dark:bg-line-gray-dark text-slate/50 dark:text-paper/40 hover:bg-line-gray-light/80"
-              }`}
+                }`}
             >
               {index + 1}
             </button>
@@ -386,12 +451,70 @@ function ResultsView({
   });
 
   const headline = [
-    { label: "Score",           value: `${score}/${total}` },
-    { label: "Accuracy",        value: `${accuracy}%` },
-    { label: "Time taken",      value: formatTime(elapsedSeconds) },
+    { label: "Score", value: `${score}/${total}` },
+    { label: "Accuracy", value: `${accuracy}%` },
+    { label: "Time taken", value: formatTime(elapsedSeconds) },
     { label: "vs topper score", value: signed(score - set.topperStats.score) },
-    { label: "vs topper time",  value: signed(elapsedSeconds - set.topperStats.totalTimeSeconds, "s") },
+    { label: "vs topper time", value: signed(elapsedSeconds - set.topperStats.totalTimeSeconds, "s") },
   ];
+
+  const [liveLeaderboard, setLiveLeaderboard] = useState<any[]>([]);
+  const [loadingBoard, setLoadingBoard] = useState(true);
+
+  useEffect(() => {
+    const fetchBoard = async () => {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const res = await fetch(`${apiURL}/api/quizzes/${set.id}/leaderboard`);
+        if (res.ok) {
+          const data = await res.json();
+          setLiveLeaderboard(data);
+        }
+      } catch (e) {
+        console.warn("Failed to fetch leaderboard", e);
+      } finally {
+        setLoadingBoard(false);
+      }
+    };
+    fetchBoard();
+  }, [set.id]);
+
+  // If live database has entries, integrate them and rank. Append current user's local score so they always see themselves immediately.
+  const rawLeaderboard = liveLeaderboard.length > 0
+    ? [
+      ...liveLeaderboard.map(lb => ({ name: lb.name, score: lb.score, time: lb.time, isUser: false })),
+      { name: "You", score: score, time: elapsedSeconds, isUser: true }
+    ]
+    : [
+      { name: "Akash Mehta (Topper)", score: (set.topperStats?.score || total), time: (set.topperStats?.totalTimeSeconds || 600), isUser: false },
+      { name: "You", score: score, time: elapsedSeconds, isUser: true }
+    ];
+
+  // Remove duplicate "You" if the backend processed it as part of the live leaderboard
+  const uniqueBoardMap = new Map();
+  rawLeaderboard.forEach(item => {
+    const key = `${item.name}-${item.score}-${item.time}`;
+    uniqueBoardMap.set(key, item);
+  });
+
+  const sortedLeaderboard = Array.from(uniqueBoardMap.values()).sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.time - b.time;
+  }).slice(0, 5); // top 5
+
+  const RankBadge = ({ rank }: { rank: number }) => {
+    const bg =
+      rank === 1 ? "bg-amber-100 dark:bg-amber-955/35 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800/40" :
+        rank === 2 ? "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-400 border-slate-300 dark:border-slate-700" :
+          rank === 3 ? "bg-orange-100 dark:bg-orange-955/30 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-850" :
+            "bg-line-gray-light/60 dark:bg-line-gray-dark text-slate dark:text-paper/40 border-line-gray-light dark:border-line-gray-dark/50";
+
+    return (
+      <span className={`w-6 h-6 rounded-full border flex items-center justify-center text-[10px] font-bold font-mono ${bg}`}>
+        {rank}
+      </span>
+    );
+  };
 
   return (
     <motion.main
@@ -417,7 +540,7 @@ function ResultsView({
         </p>
       </section>
 
-      {/* Score comparison + Section accuracy */}
+      {/* Score comparison + Leaderboard */}
       <div className="grid lg:grid-cols-2 gap-6">
         <ChartCard title="Score comparison — You vs Topper">
           <ResponsiveContainer width="100%" height={240}>
@@ -427,14 +550,69 @@ function ResultsView({
               <YAxis allowDecimals={false} tick={{ fontSize: 11 }} domain={[0, total]} />
               <Tooltip />
               <Legend />
-              <Bar dataKey="You"    fill="#16a365" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="You" fill="#16a365" radius={[6, 6, 0, 0]} />
               <Bar dataKey="Topper" fill="#64748b" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
 
+        {/* Dynamic Leaderboard Card */}
+        <section className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl p-5 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-heading font-bold text-base text-ink-navy dark:text-paper flex items-center gap-1.5">
+                <Trophy className="w-4 h-4 text-yellow-500" /> Leaderboard — Top Performers
+              </h2>
+              <span className="text-[9px] px-2 py-0.5 rounded bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/50 font-bold uppercase tracking-wider">
+                Live Rankings
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              {sortedLeaderboard.map((item, idx) => {
+                const rank = idx + 1;
+                return (
+                  <motion.div
+                    key={item.name}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: idx * 0.05 }}
+                    className={`flex items-center justify-between p-2.5 rounded-xl border transition-all ${item.isUser
+                      ? "bg-signal-emerald/5 dark:bg-signal-emerald/10 border-signal-emerald/30 shadow-sm"
+                      : "bg-paper/40 dark:bg-line-gray-dark/10 border-line-gray-light dark:border-line-gray-dark/30"
+                      }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <RankBadge rank={rank} />
+                      <div>
+                        <p className={`text-xs font-semibold ${item.isUser ? "text-signal-emerald dark:text-emerald-400 font-bold" : "text-ink-navy dark:text-paper"}`}>
+                          {item.name} {item.isUser && "(You)"}
+                        </p>
+                        <p className="text-[9px] text-slate dark:text-paper/40 font-mono mt-0.5">
+                          Time: {formatTime(item.time)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${item.isUser
+                        ? "bg-signal-emerald/10 text-signal-emerald dark:text-emerald-400"
+                        : "bg-line-gray-light/50 dark:bg-line-gray-dark/60 text-slate dark:text-paper/50"
+                        }`}>
+                        {item.score}/{total} Correct
+                      </span>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      </div>
+
+      {/* Section-wise Accuracy and Time indicators charts */}
+      <div className="grid lg:grid-cols-2 gap-6">
         <ChartCard title="Section-wise accuracy (%)">
-          <ResponsiveContainer width="100%" height={240}>
+          <ResponsiveContainer width="100%" height={245}>
             <BarChart data={sectionStats} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.08} />
               <XAxis dataKey="section" tick={{ fontSize: 10 }} interval={0} />
@@ -451,24 +629,23 @@ function ResultsView({
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
+
+        <ChartCard title="Time per question (seconds) — You vs Topper">
+          <ResponsiveContainer width="100%" height={245}>
+            <BarChart data={timeChartData} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.08} />
+              <XAxis dataKey="question" tick={{ fontSize: 9 }} interval={Math.floor(total / 10)} />
+              <YAxis tick={{ fontSize: 11 }} />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="You" fill="#16a365" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Topper" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
       </div>
 
-      {/* Time per question */}
-      <ChartCard title="Time per question (seconds) — You vs Topper">
-        <ResponsiveContainer width="100%" height={280}>
-          <BarChart data={timeChartData} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.08} />
-            <XAxis dataKey="question" tick={{ fontSize: 9 }} interval={Math.floor(total / 10)} />
-            <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip />
-            <Legend />
-            <Bar dataKey="You"    fill="#16a365" radius={[4, 4, 0, 0]} />
-            <Bar dataKey="Topper" fill="#94a3b8" radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </ChartCard>
-
-      {/* Full question review — emerald/coral reveal plays here, once */}
+      {/* Full question review */}
       <section>
         <h2 className="font-heading font-bold text-xl text-ink-navy dark:text-paper mb-4">Full question review</h2>
         <div className="space-y-4">
@@ -497,7 +674,7 @@ function ResultsView({
       <div className="flex flex-col sm:flex-row gap-3 pb-4">
         <button
           onClick={onReset}
-          className="flex-1 flex justify-center items-center gap-2 py-3 border-2 border-ink-navy dark:border-paper text-ink-navy dark:text-paper font-bold rounded-xl hover:opacity-90 active:scale-[0.98] transition-all"
+          className="flex-1 flex justify-center items-center gap-2 py-3 border-2 border-ink-navy dark:border-paper text-ink-navy dark:text-paper font-bold rounded-xl hover:opacity-90 active:scale-[0.98] transition-all cursor-pointer"
         >
           <RotateCcw className="w-4 h-4" /> Practice Again
         </button>

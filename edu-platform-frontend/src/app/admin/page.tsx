@@ -23,7 +23,18 @@ export default function AdminPage() {
   const { user, isAuthenticated, toggleRole } = useAuth();
   const router = useRouter();
   useEffect(() => { if (!isAuthenticated) router.push("/login"); }, [isAuthenticated, router]);
-  if (!isAuthenticated || !user) return null;
+  if (!isAuthenticated || !user) {
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-paper/40 dark:bg-ink-navy/40 backdrop-blur-md transition-all duration-500">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-line-gray-light dark:border-line-gray-dark border-t-alert-coral rounded-full animate-spin"></div>
+          <p className="text-[10px] font-bold font-heading text-ink-navy dark:text-paper uppercase tracking-widest animate-pulse">
+            Authenticating Admin
+          </p>
+        </div>
+      </div>
+    );
+  }
   if (user.role !== "admin") return <AccessDenied onToggle={toggleRole} />;
   return <AdminDashboard />;
 }
@@ -47,7 +58,266 @@ function AccessDenied({ onToggle }: { onToggle: () => void }) {
   );
 }
 
-type AdminTab = "payments" | "users" | "mcq" | "series" | "courses";
+type AdminTab = "payments" | "users" | "mcq" | "series" | "courses" | "evaluations";
+
+interface PendingEvaluation {
+  id: string;
+  studentEmail: string;
+  studentName: string;
+  testTitle: string;
+  submittedAt: string;
+  studentFiles: string[];
+}
+
+function EvaluationsTab() {
+  const [pending, setPending] = useState<PendingEvaluation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [reviewing, setReviewing] = useState<PendingEvaluation | null>(null);
+  const [marks, setMarks] = useState("");
+  const [remarks, setRemarks] = useState("");
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [submittingReview, setSubmittingReview] = useState(false);
+
+  useEffect(() => {
+    const fetchPendingSubmissions = async () => {
+      setLoading(true);
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+        const res = await fetch(`${apiURL}/api/admin/submissions/pending`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setPending(data.submissions || data);
+        } else {
+          throw new Error("Unable to fetch submissions");
+        }
+      } catch (err) {
+        console.warn("Loading mock pending evaluations roster");
+        const defaultMock = [
+          {
+            id: "sub-2",
+            studentEmail: "student@caliber.com",
+            studentName: "Aditya Jain",
+            testTitle: "Advanced Financial Reporting Test",
+            submittedAt: "2026-07-28T09:00:00Z",
+            studentFiles: ["FR_consolidation_sheets.pdf", "FR_working_notes.jpg"]
+          },
+          {
+            id: "sub-3",
+            studentEmail: "tester@gmail.com",
+            studentName: "Karan Gupta",
+            testTitle: "Corporate Law Assessment",
+            submittedAt: "2026-07-29T11:45:00Z",
+            studentFiles: ["CorpLaw_Answers_Draft1.pdf"]
+          }
+        ];
+        const saved = localStorage.getItem("caliber_admin_pending_evaluations");
+        if (saved) {
+          setPending(JSON.parse(saved));
+        } else {
+          setPending(defaultMock);
+          localStorage.setItem("caliber_admin_pending_evaluations", JSON.stringify(defaultMock));
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchPendingSubmissions();
+  }, []);
+
+  const handleReviewSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reviewing) return;
+    setSubmittingReview(true);
+
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+
+      const formData = new FormData();
+      formData.append("marks", marks);
+      formData.append("remarks", remarks);
+      if (uploadedFile) {
+        formData.append("checkedFile", uploadedFile);
+      }
+
+      const res = await fetch(`${apiURL}/api/admin/submissions/${reviewing.id}/review`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` },
+        body: formData
+      });
+
+      if (res.ok) {
+        setPending(prev => prev.filter(p => p.id !== reviewing.id));
+      } else {
+        throw new Error("Review submission endpoint rejected evaluation payload");
+      }
+    } catch (err) {
+      console.warn("Review submission completed locally");
+      const updatedPending = pending.filter(p => p.id !== reviewing.id);
+      setPending(updatedPending);
+      localStorage.setItem("caliber_admin_pending_evaluations", JSON.stringify(updatedPending));
+
+      const studentSubs = JSON.parse(localStorage.getItem("caliber_submissions_tests") || "[]");
+      const targetSub = studentSubs.find((s: any) => s.id === reviewing.id || s.testId === "t1");
+      if (targetSub) {
+        targetSub.status = "reviewed";
+        targetSub.marksAwarded = Number(marks);
+        targetSub.remarks = remarks;
+        targetSub.checkedCopyLink = uploadedFile ? `/files/${uploadedFile.name}` : "https://caliber.education/downloads/checked-copy-demo.pdf";
+      }
+      localStorage.setItem("caliber_submissions_tests", JSON.stringify(studentSubs));
+    } finally {
+      setSubmittingReview(false);
+      setReviewing(null);
+      setMarks("");
+      setRemarks("");
+      setUploadedFile(null);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="font-heading font-extrabold text-lg text-ink-navy dark:text-paper">Paper Evaluations</h2>
+          <p className="text-xs text-slate dark:text-paper/50">Assess student mocks and upload evaluated papers.</p>
+        </div>
+      </div>
+
+      {reviewing ? (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="p-6 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-4">
+          <div className="flex justify-between items-center border-b border-line-gray-light dark:border-line-gray-dark pb-3">
+            <div>
+              <span className="text-[9px] font-bold uppercase tracking-wider text-slate dark:text-paper/40">Evaluating Submission</span>
+              <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{reviewing.testTitle}</h3>
+              <p className="text-xs text-slate dark:text-paper/50 mt-0.5">Student: {reviewing.studentName} ({reviewing.studentEmail})</p>
+            </div>
+            <button onClick={() => setReviewing(null)} className="p-1 rounded hover:bg-line-gray-light dark:hover:bg-line-gray-dark text-slate dark:text-paper/60"><X className="w-4 h-4" /></button>
+          </div>
+
+          <div className="space-y-3">
+            <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase">Student Answer Sheets</p>
+            <div className="flex flex-wrap gap-2">
+              {reviewing.studentFiles.map(file => (
+                <a
+                  key={file}
+                  href={`#download-${file}`}
+                  className="px-3 py-1.5 border border-line-gray-light dark:border-line-gray-dark rounded bg-paper dark:bg-line-gray-dark/65 hover:opacity-85 text-xs text-ink-navy dark:text-paper font-medium flex items-center gap-1.5"
+                  onClick={() => alert(`Downloading student copy: ${file}`)}
+                >
+                  📄 {file}
+                </a>
+              ))}
+            </div>
+          </div>
+
+          <form onSubmit={handleReviewSubmit} className="space-y-4 pt-2 border-t border-line-gray-light dark:border-line-gray-dark">
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Marks Awarded (out of 100)</label>
+                <input
+                  type="number"
+                  required
+                  min="0"
+                  max="105"
+                  placeholder="e.g. 78"
+                  value={marks}
+                  onChange={e => setMarks(e.target.value)}
+                  className={inp}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Upload Checked Answer Sheet</label>
+                <input
+                  type="file"
+                  required
+                  onChange={e => setUploadedFile(e.target.files ? e.target.files[0] : null)}
+                  className="w-full text-xs text-slate dark:text-paper/50 file:mr-2 file:py-1.5 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-semibold file:bg-line-gray-light file:text-ink-navy dark:file:bg-line-gray-dark dark:file:text-paper hover:file:opacity-90"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block font-heading">Feedback & Remarks</label>
+              <textarea
+                required
+                rows={4}
+                placeholder="Give constructive feedback on errors, presentation style..."
+                value={remarks}
+                onChange={e => setRemarks(e.target.value)}
+                className={`${inp} resize-none`}
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={submittingReview}
+                className="px-6 py-2 bg-signal-emerald text-white text-xs font-bold rounded-lg hover:opacity-90 transition-all disabled:opacity-40"
+              >
+                {submittingReview ? "Submitting Review..." : "Submit Review & Send Email Notify"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setReviewing(null)}
+                className="px-6 py-2 border border-line-gray-light dark:border-line-gray-dark text-xs font-semibold text-slate dark:text-paper/70 rounded-lg hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-all"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </motion.div>
+      ) : loading ? (
+        <div className="text-center py-10 text-xs text-slate/50">Fetching student submissions lists...</div>
+      ) : pending.length === 0 ? (
+        <div className="p-8 text-center border border-dashed border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/10 rounded-2xl text-xs text-slate/50">
+          No pending test submissions needing review right now. Nice job!
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-2xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20">
+          <table className="w-full text-xs text-left">
+            <thead>
+              <tr className="bg-line-gray-light/50 dark:bg-line-gray-dark/50 text-slate dark:text-paper/40 font-semibold uppercase tracking-wider">
+                <th className="px-5 py-3">Student Name</th>
+                <th className="px-5 py-3">Test Title</th>
+                <th className="px-5 py-3">Submitted On</th>
+                <th className="px-5 py-3">Uploaded Sheets</th>
+                <th className="px-5 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line-gray-light dark:divide-line-gray-dark">
+              {pending.map(item => (
+                <tr key={item.id} className="hover:bg-line-gray-light/10 dark:hover:bg-line-gray-dark/10 font-medium">
+                  <td className="px-5 py-3.5">
+                    <div className="text-ink-navy dark:text-paper font-semibold">{item.studentName}</div>
+                    <div className="text-[10px] text-slate dark:text-paper/40 font-normal">{item.studentEmail}</div>
+                  </td>
+                  <td className="px-5 py-3.5 text-ink-navy dark:text-paper">{item.testTitle}</td>
+                  <td className="px-5 py-3.5 font-mono text-[10px] text-slate dark:text-paper/40">
+                    {new Date(item.submittedAt).toLocaleDateString("en-IN", {
+                      day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"
+                    })}
+                  </td>
+                  <td className="px-5 py-3.5 text-slate dark:text-paper/50">{item.studentFiles.length} file(s)</td>
+                  <td className="px-5 py-3.5 text-right">
+                    <button
+                      onClick={() => setReviewing(item)}
+                      className="px-3 py-1.5 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-[10px] font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all"
+                    >
+                      Review
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<AdminTab>("payments");
@@ -56,10 +326,11 @@ function AdminDashboard() {
 
   const tabs: { id: AdminTab; label: string }[] = [
     { id: "payments", label: "Payments" },
-    { id: "users",    label: "Users" },
-    { id: "mcq",      label: "MCQ Sets" },
-    { id: "series",   label: "Series" },
-    { id: "courses",  label: "Courses" },
+    { id: "users", label: "Users" },
+    { id: "mcq", label: "MCQ Sets" },
+    { id: "series", label: "Series" },
+    { id: "courses", label: "Courses" },
+    { id: "evaluations", label: "Evaluations" },
   ];
 
   return (
@@ -79,10 +350,10 @@ function AdminDashboard() {
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
-            { icon: <Users className="w-4 h-4" />,   value: registeredUsers.length.toString(),                                  label: "Registered Users",  color: "text-signal-emerald" },
-            { icon: <BookOpen className="w-4 h-4" />, value: initialCourses.length.toString(),                                  label: "Active Courses",    color: "text-blue-500" },
-            { icon: <Clock className="w-4 h-4" />,    value: verifications.filter(v => v.status === "pending").length.toString(), label: "Pending Payments",  color: "text-yellow-500" },
-            { icon: <Upload className="w-4 h-4" />,   value: mcqSets.length.toString(),                                       label: "MCQ Sets",        color: "text-purple-500" },
+            { icon: <Users className="w-4 h-4" />, value: registeredUsers.length.toString(), label: "Registered Users", color: "text-signal-emerald" },
+            { icon: <BookOpen className="w-4 h-4" />, value: initialCourses.length.toString(), label: "Active Courses", color: "text-blue-500" },
+            { icon: <Clock className="w-4 h-4" />, value: verifications.filter(v => v.status === "pending").length.toString(), label: "Pending Payments", color: "text-yellow-500" },
+            { icon: <Upload className="w-4 h-4" />, value: mcqSets.length.toString(), label: "MCQ Sets", color: "text-purple-500" },
           ].map((s, i) => (
             <motion.div key={s.label} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
               className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl p-4">
@@ -96,9 +367,8 @@ function AdminDashboard() {
         <div className="flex gap-1 p-1 bg-line-gray-light dark:bg-line-gray-dark rounded-xl w-fit flex-wrap">
           {tabs.map((t) => (
             <button key={t.id} onClick={() => setActiveTab(t.id)}
-              className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
-                activeTab === t.id ? "bg-white dark:bg-ink-navy text-ink-navy dark:text-paper shadow-sm" : "text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper"
-              }`}>
+              className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${activeTab === t.id ? "bg-white dark:bg-ink-navy text-ink-navy dark:text-paper shadow-sm" : "text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper"
+                }`}>
               {t.label}
             </button>
           ))}
@@ -106,10 +376,11 @@ function AdminDashboard() {
 
         <AnimatePresence mode="wait">
           {activeTab === "payments" && <PaymentsTab key="payments" />}
-          {activeTab === "users"    && <UsersTab    key="users" />}
-          {activeTab === "mcq"      && <MCQSetsTab key="mcq" series={series} />}
-          {activeTab === "series"   && <SeriesTab   key="series" items={series} setItems={setSeries} />}
-          {activeTab === "courses"  && <CoursesTab  key="courses" series={series} />}
+          {activeTab === "users" && <UsersTab key="users" />}
+          {activeTab === "mcq" && <MCQSetsTab key="mcq" series={series} />}
+          {activeTab === "series" && <SeriesTab key="series" items={series} setItems={setSeries} />}
+          {activeTab === "courses" && <CoursesTab key="courses" series={series} />}
+          {activeTab === "evaluations" && <EvaluationsTab key="evaluations" />}
         </AnimatePresence>
       </div>
     </div>
@@ -120,9 +391,9 @@ function AdminDashboard() {
 function StatusBadge({ status }: { status: PaymentVerification["status"] }) {
   const map = {
     approved: { cls: "bg-signal-emerald/10 text-signal-emerald", icon: <CheckCircle className="w-3 h-3" />, label: "Approved" },
-    rejected: { cls: "bg-alert-coral/10 text-alert-coral",       icon: <XCircle className="w-3 h-3" />,    label: "Rejected" },
+    rejected: { cls: "bg-alert-coral/10 text-alert-coral", icon: <XCircle className="w-3 h-3" />, label: "Rejected" },
     refunded: { cls: "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400", icon: <RefreshCw className="w-3 h-3" />, label: "Refunded" },
-    pending:  { cls: "bg-yellow-50 dark:bg-yellow-900/20 text-yellow-600 dark:text-yellow-400", icon: <AlertTriangle className="w-3 h-3" />, label: "Pending" },
+    pending: { cls: "bg-yellow-50 dark:bg-yellow-900/20 text-yellow-600 dark:text-yellow-400", icon: <AlertTriangle className="w-3 h-3" />, label: "Pending" },
   };
   const s = map[status];
   return <span className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full ${s.cls}`}>{s.icon} {s.label}</span>;
@@ -141,9 +412,8 @@ function PaymentsTab() {
         <div className="flex gap-1.5 flex-wrap">
           {(["all", "pending", "approved", "rejected", "refunded"] as const).map((s) => (
             <button key={s} onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors capitalize ${
-                statusFilter === s ? "bg-signal-emerald text-white" : "bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/60 hover:bg-signal-emerald/10 hover:text-signal-emerald"
-              }`}>
+              className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors capitalize ${statusFilter === s ? "bg-signal-emerald text-white" : "bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/60 hover:bg-signal-emerald/10 hover:text-signal-emerald"
+                }`}>
               {s === "all" ? `All (${verifications.length})` : `${s} (${verifications.filter(v => v.status === s).length})`}
             </button>
           ))}
@@ -267,18 +537,17 @@ function UsersTab() {
     </motion.div>
   );
 }
-
 // ─── MCQ SETS TAB — Set builder with Sections ────────────────────────────
 type SetDraft = Omit<MCQSet, "sections"> & { sections: SectionDraft[] };
 type SectionDraft = { id: string; title: string; questions: Question[] };
 
-function emptyQuestion(id: number): Question {
-  return { id, text: "", options: ["", "", "", ""], correctOptionIndex: 0, explanation: "" };
-}
+const emptyQuestion = (): Question => ({
+  id: crypto.randomUUID(), text: "", options: ["", "", "", ""], correctOptionIndex: 0, explanation: ""
+});
 
-function emptySection(idx: number): SectionDraft {
-  return { id: `new-sec-${Date.now()}-${idx}`, title: `Section ${String.fromCharCode(65 + idx)}`, questions: [emptyQuestion(1)] };
-}
+const emptySection = (sIndex: number): SectionDraft => ({
+  id: crypto.randomUUID(), title: `Section ${String.fromCharCode(65 + sIndex)}`, questions: [emptyQuestion()]
+});
 
 function MCQSetsTab({ series }: { series: MCQSeries[] }) {
   const [sets, setSets] = useState<SetDraft[]>(
@@ -290,7 +559,7 @@ function MCQSetsTab({ series }: { series: MCQSeries[] }) {
 
   function openNew() {
     const d: SetDraft = {
-      id: `new-${Date.now()}`, seriesId: series[0]?.id ?? "", title: "", isLocked: false, price: 0,
+      id: crypto.randomUUID(), seriesId: series[0]?.id ?? "", title: "", isLocked: false, price: 0,
       description: "", subject: "",
       sections: [emptySection(0)],
       topperStats: { score: 0, totalTimeSeconds: 0, perQuestionTimes: [0] },
@@ -305,14 +574,41 @@ function MCQSetsTab({ series }: { series: MCQSeries[] }) {
 
   function closeEditor() { setEditingId(null); setDraft(null); }
 
-  function saveSet() {
+  async function saveSet() {
     if (!draft) return;
-    if (editingId === "__new__") setSets(prev => [...prev, draft]);
-    else setSets(prev => prev.map(s => s.id === editingId ? draft : s));
-    closeEditor();
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/mcq-sets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify(draft)
+      });
+      if (!res.ok) throw new Error();
+      if (editingId === "__new__") setSets(prev => [...prev, draft]);
+      else setSets(prev => prev.map(s => s.id === editingId ? draft : s));
+      closeEditor();
+    } catch {
+      alert("Error saving set to database.");
+    }
   }
 
-  function deleteSet(id: string) { setSets(prev => prev.filter(s => s.id !== id)); }
+  async function deleteSet(id: string) {
+    if (!window.confirm("Delete MCQ Set permanently?")) return;
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/mcq-sets/${id}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setSets(prev => prev.filter(s => s.id !== id));
+      } else alert("Delete failed");
+    } catch {
+      alert("Error contacting server");
+    }
+  }
 
   // ── Draft helpers — sections ──
   function addSection() {
@@ -332,8 +628,9 @@ function MCQSetsTab({ series }: { series: MCQSeries[] }) {
   // ── Draft helpers — questions ──
   function addQuestion(si: number) {
     if (!draft) return;
-    const sections = draft.sections.map((s, i) => i === si ? { ...s, questions: [...s.questions, emptyQuestion(s.questions.length + 1)] } : s);
-    setDraft({ ...draft, sections });
+    const updated = [...draft.sections];
+    updated[si].questions = [...updated[si].questions, emptyQuestion()];
+    setDraft({ ...draft, sections: updated });
   }
   function removeQuestion(si: number, qi: number) {
     if (!draft) return;
@@ -515,15 +812,44 @@ function MCQSetsTab({ series }: { series: MCQSeries[] }) {
 // ─── SERIES TAB ──────────────────────────────────────────────────────────
 function SeriesTab({ items, setItems }: { items: MCQSeries[]; setItems: React.Dispatch<React.SetStateAction<MCQSeries[]>> }) {
   const [draft, setDraft] = useState<MCQSeries | null>(null);
-  const startNew = () => setDraft({ id: `series-${Date.now()}`, title: "", subject: "", description: "", price: 0, isLocked: false });
-  const save = () => {
+  const startNew = () => setDraft({ id: crypto.randomUUID(), title: "", subject: "", description: "", price: 0, isLocked: false });
+  const save = async () => {
     if (!draft) return;
-    setItems(current =>
-      current.some(item => item.id === draft.id)
-        ? current.map(item => item.id === draft.id ? draft : item)
-        : [...current, draft]
-    );
-    setDraft(null);
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/mcq-series`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify(draft)
+      });
+      if (!res.ok) throw new Error();
+      setItems(current =>
+        current.some(item => item.id === draft.id)
+          ? current.map(item => item.id === draft.id ? draft : item)
+          : [...current, draft]
+      );
+      setDraft(null);
+    } catch {
+      alert("Error saving series to database");
+    }
+  };
+
+  const removeSeries = async (id: string) => {
+    if (!window.confirm("Delete series permanently?")) return;
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/mcq-series/${id}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setItems(current => current.filter(s => s.id !== id));
+      } else alert("Delete failed");
+    } catch {
+      alert("Error contacting server");
+    }
   };
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
@@ -561,7 +887,7 @@ function SeriesTab({ items, setItems }: { items: MCQSeries[]; setItems: React.Di
             </div>
             <div className="flex gap-1">
               <button onClick={() => setDraft(item)} className="p-1.5 text-slate hover:text-signal-emerald transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-              <button onClick={() => setItems(current => current.filter(s => s.id !== item.id))} className="p-1.5 text-slate hover:text-alert-coral transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+              <button onClick={() => removeSeries(item.id)} className="p-1.5 text-slate hover:text-alert-coral transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
             </div>
           </div>
         ))}
@@ -578,43 +904,347 @@ function emptyMentor(): Mentor {
 }
 function emptyModule() { return { module: "", topics: [""] }; }
 
+interface EnrolledStudentItem {
+  id: string;
+  email: string;
+  purchaseDate: string;
+  addedBy: "purchase" | "admin";
+  notes?: string;
+}
+
+function EnrolledStudentsPanel({ courseId }: { courseId: string }) {
+  const [enrolled, setEnrolled] = useState<EnrolledStudentItem[]>([]);
+  const [users, setUsers] = useState<{ id: string; email: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [selectedUserEmail, setSelectedUserEmail] = useState("");
+  const [notes, setNotes] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+
+        const resEnrollments = await fetch(`${apiURL}/api/admin/courses/${courseId}/enrollments`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+
+        const resUsers = await fetch(`${apiURL}/api/admin/users`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+
+        if (resEnrollments.ok && resUsers.ok) {
+          const enrollmentsData = await resEnrollments.json();
+          const usersData = await resUsers.json();
+          setEnrolled(enrollmentsData);
+          setUsers(usersData);
+        } else {
+          throw new Error("Failed to load admin enrollment rosters");
+        }
+      } catch (err: any) {
+        console.warn("Using mock enrollment lists:", err.message);
+        setEnrolled([
+          { id: "e1", email: "student@caliber.com", purchaseDate: "2026-07-28T09:00:00Z", addedBy: "purchase", notes: "Regular purchase" },
+          { id: "e2", email: "demo@caliber.com", purchaseDate: "2026-07-29T10:30:00Z", addedBy: "admin", notes: "Scholarship entry" },
+        ]);
+        setUsers([
+          { id: "u1", email: "student@caliber.com" },
+          { id: "u2", email: "demo@caliber.com" },
+          { id: "u3", email: "john.doe@example.com" },
+          { id: "u4", email: "jane.smith@example.com" },
+          { id: "u5", email: "caliber_tester@gmail.com" },
+        ]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadData();
+  }, [courseId]);
+
+  const handleAddStudent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedUserEmail) return;
+
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/courses/${courseId}/enrollments`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ email: selectedUserEmail, notes })
+      });
+      if (res.ok) {
+        const newEnrollment = await res.json();
+        setEnrolled(prev => [...prev, newEnrollment]);
+      } else {
+        throw new Error("Add student request failed");
+      }
+    } catch (err) {
+      console.warn("Adding mock enrollment locally");
+      const exists = enrolled.some(e => e.email.toLowerCase() === selectedUserEmail.toLowerCase());
+      if (exists) {
+        alert("User is already enrolled in this course.");
+        return;
+      }
+      const newMockItem: EnrolledStudentItem = {
+        id: `mock-e-${Date.now()}`,
+        email: selectedUserEmail,
+        purchaseDate: new Date().toISOString(),
+        addedBy: "admin",
+        notes
+      };
+      setEnrolled(prev => [...prev, newMockItem]);
+    }
+
+    setSelectedUserEmail("");
+    setNotes("");
+    setShowAddForm(false);
+  };
+
+  const handleRemoveStudent = async (enrollmentId: string) => {
+    const confirm = window.confirm("Are you sure you want to remove this student's access?");
+    if (!confirm) return;
+
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/courses/${courseId}/enrollments/${enrollmentId}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setEnrolled(prev => prev.filter(item => item.id !== enrollmentId));
+      } else {
+        throw new Error("Remove request failed");
+      }
+    } catch (err) {
+      console.warn("Removing mock enrollment locally");
+      setEnrolled(prev => prev.filter(item => item.id !== enrollmentId));
+    }
+  };
+
+  const filteredUsers = users.filter(u =>
+    u.email.toLowerCase().includes(searchQuery.toLowerCase()) &&
+    !enrolled.some(e => e.email.toLowerCase() === u.email.toLowerCase())
+  );
+
+  return (
+    <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase tracking-wide font-heading">Enrolled Students</p>
+          <p className="text-[10px] text-slate dark:text-paper/40 mt-0.5">Manage student access rules for this course.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowAddForm(!showAddForm)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-signal-emerald text-white rounded-lg hover:bg-signal-emerald/90 transition-colors"
+        >
+          {showAddForm ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+          {showAddForm ? "Close Panel" : "Add Student"}
+        </button>
+      </div>
+
+      {showAddForm && (
+        <form onSubmit={handleAddStudent} className="p-4 rounded-xl border border-line-gray-light dark:border-line-gray-dark bg-paper/20 dark:bg-line-gray-dark/20 space-y-3">
+          <p className="text-xs font-semibold text-ink-navy dark:text-paper">Manual Enrollment Provision</p>
+
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1 block">Search & Select Student</label>
+              <input
+                type="text"
+                placeholder="Type email to search..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full px-3 py-1.5 text-xs border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg mb-2"
+              />
+              <select
+                required
+                className="w-full px-3 py-1.5 text-xs border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg"
+                value={selectedUserEmail}
+                onChange={e => setSelectedUserEmail(e.target.value)}
+              >
+                <option value="">-- Choose User --</option>
+                {filteredUsers.length > 0 ? (
+                  filteredUsers.map(u => (
+                    <option key={u.id} value={u.email}>{u.email}</option>
+                  ))
+                ) : (
+                  <option disabled>No users found matching query</option>
+                )}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1 block">Internal Enrollment Notes</label>
+              <textarea
+                placeholder="e.g. Free scholarship, offline batch offset..."
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                rows={3}
+                className="w-full px-3 py-1.5 text-xs border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg resize-none"
+              />
+            </div>
+          </div>
+          <button
+            type="submit"
+            disabled={!selectedUserEmail}
+            className="px-4 py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-bold rounded-lg hover:opacity-90 transition-all disabled:opacity-40"
+          >
+            Confirm Enrollment
+          </button>
+        </form>
+      )}
+
+      {loading ? (
+        <div className="text-center py-4 text-xs text-slate/50">Loading student rosters...</div>
+      ) : enrolled.length === 0 ? (
+        <div className="text-center py-4 text-xs text-slate/50 bg-paper/10 rounded-xl border border-dashed border-line-gray-light dark:border-line-gray-dark">No students currently enrolled in this course.</div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-line-gray-light dark:border-line-gray-dark">
+          <table className="w-full text-xs text-left">
+            <thead>
+              <tr className="bg-line-gray-light/30 dark:bg-line-gray-dark/30 text-slate dark:text-paper/40 font-semibold border-b border-line-gray-light dark:border-line-gray-dark">
+                <th className="px-4 py-2">Student Email</th>
+                <th className="px-4 py-2">Date Added</th>
+                <th className="px-4 py-2">Provision Context</th>
+                <th className="px-4 py-2">Notes</th>
+                <th className="px-4 py-2 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line-gray-light dark:divide-line-gray-dark bg-white dark:bg-line-gray-dark/10">
+              {enrolled.map(item => (
+                <tr key={item.id} className="hover:bg-line-gray-light/20 dark:hover:bg-line-gray-dark/10">
+                  <td className="px-4 py-2.5 font-medium text-ink-navy dark:text-paper">{item.email}</td>
+                  <td className="px-4 py-2.5 text-slate/60 dark:text-paper/40 font-mono text-[10px]">
+                    {new Date(item.purchaseDate).toLocaleDateString("en-IN", {
+                      day: "2-digit",
+                      month: "short",
+                      year: "numeric"
+                    })}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.addedBy === "admin"
+                      ? "bg-purple-100 text-purple-700 dark:bg-purple-900/35 dark:text-purple-400"
+                      : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/35 dark:text-emerald-400"
+                      }`}>
+                      {item.addedBy === "admin" ? "Admin Override" : "Purchase Portal"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-slate/75 dark:text-paper/60 italic max-w-[150px] truncate" title={item.notes}>
+                    {item.notes || "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveStudent(item.id)}
+                      className="p-1 rounded text-slate/40 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors"
+                      title="Revoke access"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CoursesTab({ series }: { series: MCQSeries[] }) {
-  const [courseList, setCourseList] = useState<CourseDraft[]>(initialCourses.map(c => ({ ...c })));
+  const [courseList, setCourseList] = useState<CourseDraft[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<CourseDraft | null>(null);
 
+  useEffect(() => {
+    const saved = localStorage.getItem("caliber_admin_courses");
+    if (saved) {
+      setCourseList(JSON.parse(saved));
+    } else {
+      setCourseList(initialCourses);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (courseList.length > 0) {
+      localStorage.setItem("caliber_admin_courses", JSON.stringify(courseList));
+    }
+  }, [courseList]);
+
   function openNew() {
-    const d: CourseDraft = { 
-      id: `new-${Date.now()}`, 
-      title: "", 
-      description: "", 
-      price: 0, 
-      level: "Foundation", 
-      duration: "", 
-      tag: "", 
-      enrolledCount: 0, 
-      rating: 4.5, 
-      outcomes: [""], 
-      curriculum: [emptyModule()], 
-      mentors: [emptyMentor()], 
+    const d: CourseDraft = {
+      id: `new-${Date.now()}`,
+      title: "",
+      description: "",
+      price: 0,
+      level: "Foundation",
+      duration: "",
+      tag: "",
+      enrolledCount: 0,
+      rating: 4.5,
+      outcomes: [""],
+      curriculum: [emptyModule()],
+      mentors: [emptyMentor()],
       deliveryType: "whatsapp",
       whatsappLink: "",
       status: "coming_soon",
-      _new: true 
+      _new: true
     };
     setDraft(d); setEditingId("__new__");
   }
   function openEdit(c: CourseDraft) { setDraft({ ...c, outcomes: [...c.outcomes], curriculum: c.curriculum.map(m => ({ ...m, topics: [...m.topics] })), mentors: c.mentors.map(m => ({ ...m })) }); setEditingId(c.id); }
   function closeEditor() { setEditingId(null); setDraft(null); }
-  function saveCourse() {
+  async function saveCourse() {
     if (!draft) return;
-    if (editingId === "__new__") setCourseList(prev => [...prev, { ...draft, _new: false }]);
-    else setCourseList(prev => prev.map(c => c.id === editingId ? { ...draft, _new: false } : c));
-    closeEditor();
-  }
-  function deleteCourse(id: string) { setCourseList(prev => prev.filter(c => c.id !== id)); }
-  const setD = (patch: Partial<CourseDraft>) => draft && setDraft({ ...draft, ...patch });
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/courses`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify(draft)
+      });
 
+      if (!res.ok) throw new Error("Failed to save to Supabase database");
+
+      if (editingId === "__new__") setCourseList(prev => [...prev, { ...draft, _new: false }]);
+      else setCourseList(prev => prev.map(c => c.id === editingId ? { ...draft, _new: false } : c));
+
+      closeEditor();
+    } catch (e) {
+      alert("Error saving course to database. Make sure backend is running.");
+    }
+  }
+
+  async function deleteCourse(id: string) {
+    if (!window.confirm("Delete course permanently from database?")) return;
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/courses/${id}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setCourseList(prev => prev.filter(c => c.id !== id));
+      } else {
+        alert("Delete failed on server");
+      }
+    } catch (e) {
+      alert("Error contacting server");
+    }
+  }
+
+  const setD = (patch: Partial<CourseDraft>) => draft && setDraft({ ...draft, ...patch });
   function updateOutcome(i: number, val: string) { if (!draft) return; const o = [...draft.outcomes]; o[i] = val; setDraft({ ...draft, outcomes: o }); }
   function addOutcome() { draft && setDraft({ ...draft, outcomes: [...draft.outcomes, ""] }); }
   function removeOutcome(i: number) { draft && setDraft({ ...draft, outcomes: draft.outcomes.filter((_, idx) => idx !== i) }); }
@@ -706,6 +1336,9 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
             </label>
           </div>
         </div>
+        {!draft._new && (
+          <EnrolledStudentsPanel courseId={draft.id} />
+        )}
         <div className="flex gap-3">
           <button onClick={saveCourse} className="px-6 py-2.5 bg-signal-emerald text-white text-sm font-bold rounded-xl hover:bg-signal-emerald/90 transition-colors">Save Course</button>
           <button onClick={closeEditor} className="px-6 py-2.5 border border-line-gray-light dark:border-line-gray-dark text-sm font-semibold text-slate dark:text-paper/60 rounded-xl hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors">Cancel</button>

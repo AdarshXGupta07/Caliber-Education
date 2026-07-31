@@ -1,24 +1,45 @@
 "use client";
 
-import { use } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, notFound } from "next/navigation";
 import { motion } from "framer-motion";
-import { mcqSeries, mcqSets } from "@/lib/mockData";
 import { useAuth } from "@/context/AuthContext";
 import { ArrowLeft, Zap, Lock, Unlock, BookOpen, Clock, ArrowRight } from "lucide-react";
 
 export default function SeriesDetailPage({ params }: { params: Promise<{ seriesId: string }> }) {
   const { seriesId } = use(params);
-  const series = mcqSeries.find(s => s.id === seriesId);
-  
-  if (!series) return notFound();
-
   const router = useRouter();
   const { isAuthenticated } = useAuth();
-  
-  const setsInSeries = mcqSets.filter(s => s.seriesId === series.id);
-  const totalQuestions = setsInSeries.reduce((sum, set) => sum + set.sections.reduce((sSum, sec) => sSum + sec.questions.length, 0), 0);
+
+  const [series, setSeries] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [is404, setIs404] = useState(false);
+
+  useEffect(() => {
+    const fetchSeries = async () => {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const res = await fetch(`${apiURL}/api/mcq-series/${seriesId}`);
+        if (res.status === 404) { setIs404(true); return; }
+        if (res.ok) {
+          const data = await res.json();
+          setSeries(data);
+        }
+      } catch (e) {
+        console.warn(e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchSeries();
+  }, [seriesId]);
+
+  if (is404) return notFound();
+  if (loading || !series) return <div className="pt-24 text-center">Loading series...</div>;
+
+  const setsInSeries = series.sets || [];
+  const totalQuestions = setsInSeries.length * 10; // Placeholder until questions logic is merged
 
   function handleAttempt(set: typeof setsInSeries[0]) {
     if (set.isLocked && !isAuthenticated) {
@@ -44,7 +65,7 @@ export default function SeriesDetailPage({ params }: { params: Promise<{ seriesI
             <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-line-gray-light/60 dark:bg-line-gray-dark/40 text-slate dark:text-paper/80">
               {series.subject}
             </span>
-            {!series.isLocked && (
+            {!series.is_locked && (
               <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-signal-emerald/10 text-signal-emerald">Free Access</span>
             )}
           </div>
@@ -61,7 +82,7 @@ export default function SeriesDetailPage({ params }: { params: Promise<{ seriesI
             <span className="flex items-center gap-1.5">
               <Zap className="w-4 h-4" /> {totalQuestions}+ total questions
             </span>
-            {series.isLocked && (
+            {series.is_locked && (
               <span className="flex items-center gap-1.5">
                 <Lock className="w-4 h-4" /> ₹{series.price.toLocaleString()} — one-time payment
               </span>
@@ -72,16 +93,17 @@ export default function SeriesDetailPage({ params }: { params: Promise<{ seriesI
         {/* Sets list */}
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="space-y-4">
           <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Practice Sets in this Series</h2>
-          
+
           {setsInSeries.length === 0 ? (
             <div className="p-8 text-center border border-dashed border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/10">
               <p className="text-xs text-slate dark:text-paper/50">No sets available in this series yet.</p>
             </div>
           ) : (
             <div className="grid sm:grid-cols-2 gap-6">
-              {setsInSeries.map((set, i) => {
-                const questionCount = set.sections.reduce((sum, sec) => sum + sec.questions.length, 0);
-                
+              {setsInSeries.map((set: any, i: number) => {
+                const questionCount = 10; // Placeholder until strict question db mapping
+
+
                 return (
                   <motion.div
                     key={set.id}
@@ -96,7 +118,7 @@ export default function SeriesDetailPage({ params }: { params: Promise<{ seriesI
                         <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-line-gray-light/60 dark:bg-line-gray-dark/40 text-slate dark:text-paper/70">
                           {set.subject}
                         </span>
-                        {!set.isLocked ? (
+                        {!set.is_locked ? (
                           <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-signal-emerald/10 text-signal-emerald">Free</span>
                         ) : (
                           <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-line-gray-light/60 dark:bg-line-gray-dark/60 text-slate dark:text-paper/70">₹{set.price}</span>
@@ -117,14 +139,14 @@ export default function SeriesDetailPage({ params }: { params: Promise<{ seriesI
                       <div className="flex items-center gap-3 text-[10px] text-slate dark:text-paper/50">
                         <span>{questionCount} questions</span>
                         <span>·</span>
-                        <span>{set.sections.length} section{set.sections.length !== 1 ? "s" : ""}</span>
+                        <span>{(set.sections || []).length} section{(set.sections || []).length !== 1 ? "s" : ""}</span>
                         <span>·</span>
                         <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> ~{Math.round(questionCount * 1.5)}m</span>
                       </div>
 
                       {/* CTA */}
                       <div className="pt-3 border-t border-line-gray-light dark:border-line-gray-dark">
-                        {!set.isLocked ? (
+                        {!set.is_locked ? (
                           <button
                             onClick={() => handleAttempt(set)}
                             className="w-full flex items-center justify-center gap-2 py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all"

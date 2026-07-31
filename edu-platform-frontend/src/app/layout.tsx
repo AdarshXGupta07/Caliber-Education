@@ -3,6 +3,7 @@ import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { Navbar } from "@/components/Navbar";
+import Script from "next/script";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -44,7 +45,10 @@ export default function RootLayout({
           <Navbar />
           <main>{children}</main>
         </Providers>
+        <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="afterInteractive" />
+        <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" />
       </body>
     </html>
   );
 }
+
