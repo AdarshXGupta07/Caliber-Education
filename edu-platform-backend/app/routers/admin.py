@@ -125,7 +125,42 @@ async def admin_list_series(admin: dict = Depends(require_admin), db: Client = D
 
 @router.get("/mcq-sets")
 async def admin_list_sets(admin: dict = Depends(require_admin), db: Client = Depends(get_db)):
-    return db.table("mcq_sets").select("*").execute().data or []
+    # Fetch all sets
+    sets_data = db.table("mcq_sets").select("*").execute().data or []
+    
+    # Pre-fetch all sections and questions to avoid N+1 issues or loops if possible
+    # For a moderately sized admin dashboard, a loop is ok for now.
+    enriched_sets = []
+    for s in sets_data:
+        sections_res = db.table("set_sections").select("*").eq("set_id", s["id"]).execute()
+        sections = sections_res.data or []
+        enriched_sections = []
+        for sec in sections:
+            q_res = db.table("questions").select("*").eq("section_id", sec["id"]).execute()
+            mapped_qs = []
+            for q in (q_res.data or []):
+                mapped_qs.append({
+                    "id": q["id"],
+                    "type": q.get("type", "case"),
+                    "caseText": q.get("case_text", ""),
+                    "text": q["text"],
+                    "options": q["options"],
+                    "correctOptionIndex": q["correct_option_index"],
+                    "explanation": q["explanation"]
+                })
+            enriched_sections.append({**sec, "questions": mapped_qs})
+        # Map DB keys back to camelCase for frontend where needed
+        enriched_sets.append({
+            "id": s["id"],
+            "seriesId": s.get("series_id"),
+            "title": s["title"],
+            "isLocked": s.get("is_locked", False),
+            "price": s.get("price", 0),
+            "description": s.get("description", ""),
+            "subject": s.get("subject", ""),
+            "sections": enriched_sections
+        })
+    return enriched_sets
 
 
 # ─── Content Management (Courses, Series, Sets) ─────────────────────────────
@@ -169,6 +204,51 @@ async def admin_delete_course(
     db: Client = Depends(get_db),
 ):
     db.table("courses").delete().eq("id", course_id).execute()
+    return {"success": True}
+
+@router.get("/course-bundles")
+async def admin_list_bundles(
+    admin: dict = Depends(require_admin),
+    db: Client = Depends(get_db),
+):
+    result = db.table("course_bundles").select("*").execute()
+    # map to camelCase for UI
+    out = []
+    for row in (result.data or []):
+        out.append({
+            "id": row.get("id"),
+            "title": row.get("title"),
+            "description": row.get("description", ""),
+            "level": row.get("level"),
+            "courseIds": row.get("course_ids", []),
+            "price": row.get("price", 0)
+        })
+    return out
+
+@router.post("/course-bundles")
+async def admin_upsert_bundle(
+    body: dict,
+    admin: dict = Depends(require_admin),
+    db: Client = Depends(get_db),
+):
+    data = {
+        "id": body.get("id"),
+        "title": body.get("title"),
+        "description": body.get("description", ""),
+        "level": body.get("level", "Multiple"),
+        "course_ids": body.get("courseIds", []),
+        "price": body.get("price", 0),
+    }
+    result = db.table("course_bundles").upsert(data).execute()
+    return {"success": True, "id": result.data[0]["id"] if result.data else None}
+
+@router.delete("/course-bundles/{bundle_id}")
+async def admin_delete_bundle(
+    bundle_id: str,
+    admin: dict = Depends(require_admin),
+    db: Client = Depends(get_db),
+):
+    db.table("course_bundles").delete().eq("id", bundle_id).execute()
     return {"success": True}
 
 @router.post("/mcq-series")
@@ -240,6 +320,8 @@ async def admin_upsert_set(
             db.table("questions").insert({
                 "id": q.get("id"),
                 "section_id": sec_id,
+                "type": q.get("type", "case"),
+                "case_text": q.get("caseText", ""),
                 "text": q.get("text", ""),
                 "options": q.get("options", []),
                 "correct_option_index": q.get("correctOptionIndex", 0),
@@ -377,6 +459,20 @@ async def approve_payment(
         "added_by": "admin",
         "purchased_at": datetime.now(timezone.utc).isoformat(),
     }).execute()
+
+    # Record coupon usage if applicable (for UTR/manual payments)
+    coupon_id = payment.data.get("coupon_id")
+    if coupon_id:
+        from app.routers.payments import _record_coupon_usage
+        coupon_row = db.table("coupons").select("*").eq("id", coupon_id).single().execute()
+        if coupon_row.data:
+            _record_coupon_usage(
+                db, coupon_row.data, payment.data["user_id"], payment_id,
+                float(payment.data.get("discount_amount") or 0),
+                payment.data.get("affiliate_id"),
+                float(payment.data.get("commission_amount") or 0),
+            )
+
     return {"success": True}
 
 

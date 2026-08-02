@@ -150,12 +150,23 @@ export default function CoursesPage() {
   const [showScrollTop, setShowScrollTop] = useState(false);
 
   const [courses, setCourses] = useState<Course[]>(defaultCourses);
+  const [bundles, setBundles] = useState<any[]>([]);
 
   useEffect(() => {
     const saved = localStorage.getItem("caliber_admin_courses");
     if (saved) {
       setCourses(JSON.parse(saved));
     }
+
+    // Fetch bundles from backend so we can evaluate exact combination discounts
+    async function loadBundles() {
+      try {
+        const url = process.env.NEXT_PUBLIC_API_URL || "";
+        const res = await fetch(`${url}/api/courses/bundles`);
+        if (res.ok) setBundles(await res.json());
+      } catch (e) { }
+    }
+    loadBundles();
   }, []);
 
   // Track page scroll to show "Back to Top" button
@@ -213,10 +224,10 @@ export default function CoursesPage() {
 
   return (
     <div className="pt-16 min-h-screen bg-paper dark:bg-ink-navy">
-      {/* ─── HEADER ─── */}
-      <section className="py-16 bg-white dark:bg-ink-navy border-b border-line-gray-light dark:border-line-gray-dark">
-        <div className="max-w-6xl mx-auto px-6 sm:px-8">
-          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+      {/* ─── HEADER WITH BUNDLE BUILDER ─── */}
+      <section className="py-12 md:py-16 bg-white dark:bg-ink-navy border-b border-line-gray-light dark:border-line-gray-dark overflow-hidden relative">
+        <div className="max-w-6xl mx-auto px-6 sm:px-8 grid lg:grid-cols-2 gap-10 items-center">
+          <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.4 }} className="z-10">
             <span className="text-xs font-semibold text-slate dark:text-paper/50 uppercase tracking-widest">Courses</span>
             <h1 className="font-heading font-extrabold text-4xl sm:text-5xl text-ink-navy dark:text-paper mt-2 leading-tight tracking-tight">
               Find your course
@@ -224,8 +235,21 @@ export default function CoursesPage() {
             <p className="mt-3 text-slate dark:text-paper/70 text-base max-w-xl">
               Mentorship, test series, and practice tools for CA Foundation, Intermediate &amp; Final. Pick the course that fits where you are.
             </p>
+            <div className="mt-6 flex items-center gap-3">
+              <button onClick={() => window.scrollTo({ top: 600, behavior: "smooth" })} className="px-5 py-2.5 bg-line-gray-light dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper font-semibold text-sm rounded-xl hover:bg-slate/10 transition-all border border-line-gray-light/35">
+                Browse Individuals
+              </button>
+            </div>
+          </motion.div>
+
+          {/* Bundle Builder Widget */}
+          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5, delay: 0.1 }} className="z-10">
+            <BundleBuilder courses={courses} bundles={bundles} onBuyIndividual={() => window.scrollTo({ top: 700, behavior: "smooth" })} />
           </motion.div>
         </div>
+
+        {/* Background blobs */}
+        <div className="absolute top-0 right-0 -mr-32 -mt-32 w-[600px] h-[600px] bg-gradient-to-br from-signal-emerald/5 to-blue-500/5 rounded-full blur-3xl opacity-60 mix-blend-multiply dark:mix-blend-screen pointer-events-none" />
       </section>
 
       {/* ─── MAIN CONTENT CONTAINER ─── */}
@@ -518,5 +542,133 @@ function CourseCard({ course, index }: { course: Course; index: number }) {
         </div>
       </Link>
     </motion.div>
+  );
+}
+// ─── BUNDLE BUILDER WIDGET ──────────────────────────────────────────────────
+function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[]; bundles: any[]; onBuyIndividual: () => void }) {
+  const [level, setLevel] = useState<string>("Intermediate");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  // Update selections when level changes (clear them so they don't buy mix-level bundles if not intended)
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [level]);
+
+  // Which courses apply to this level tab
+  const availableCourses = courses.filter(c => c.level === level && typeof c.price === "number" && c.price > 0);
+
+  // Compute logic
+  const toggleCourse = (id: string) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const rawPrice = selectedIds.reduce((sum, id) => {
+    const c = availableCourses.find(x => x.id === id);
+    return sum + (c ? Number(c.price) || 0 : 0);
+  }, 0);
+
+  // Evaluate if the exact selection forms a Bundle match
+  const selectedSorted = [...selectedIds].sort().join(",");
+  const exactBundleMatch = bundles.find(b => {
+    if (!b.course_ids) return false;
+    return [...b.course_ids].sort().join(",") === selectedSorted;
+  });
+
+  const isDiscounted = !!exactBundleMatch;
+  const finalPrice = isDiscounted ? Number(exactBundleMatch.price) : rawPrice;
+  const discountAmount = rawPrice - finalPrice;
+
+  return (
+    <div className="bg-white/80 dark:bg-line-gray-dark/40 backdrop-blur-md border border-line-gray-light dark:border-line-gray-dark rounded-2xl shadow-xl overflow-hidden shadow-emerald-500/5">
+      <div className="p-5 border-b border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/30 dark:bg-line-gray-dark/30">
+        <div className="flex items-center justify-between">
+          <h3 className="font-heading font-bold text-ink-navy dark:text-paper flex items-center gap-2">
+            <Zap className="w-4 h-4 text-signal-emerald" /> Bundle &amp; Save
+          </h3>
+          <span className="text-[10px] uppercase font-bold tracking-widest text-slate dark:text-paper/50">Custom Plan</span>
+        </div>
+        <p className="text-xs text-slate dark:text-paper/60 mt-1">Select your level, pick multiple courses, and watch the price drop automatically!</p>
+      </div>
+
+      <div className="p-5 space-y-5">
+        {/* Step 1: Level */}
+        <div className="space-y-2">
+          <label className="text-[10px] font-bold text-slate dark:text-paper/40 uppercase tracking-widest">1. Select Target Level</label>
+          <div className="flex gap-2">
+            {["Foundation", "Intermediate", "Final"].map(l => (
+              <button
+                key={l}
+                onClick={() => setLevel(l)}
+                className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all border ${level === l ? "border-signal-emerald bg-signal-emerald text-white shadow-sm" : "border-line-gray-light dark:border-line-gray-dark text-slate dark:text-paper/60 hover:border-slate/30"}`}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Step 2: Pick Courses */}
+        <div className="space-y-2">
+          <label className="text-[10px] font-bold text-slate dark:text-paper/40 uppercase tracking-widest flex justify-between">
+            <span>2. Select Courses</span>
+            <span>{selectedIds.length}/{availableCourses.length} selected</span>
+          </label>
+
+          <div className="max-h-[160px] overflow-y-auto no-scrollbar space-y-1.5 border border-line-gray-light dark:border-line-gray-dark p-2 rounded-xl bg-paper/50 dark:bg-black/10">
+            {availableCourses.length === 0 ? (
+              <p className="text-center text-xs text-slate/50 py-4 italic">No premium courses available yet for this level.</p>
+            ) : availableCourses.map(c => (
+              <div
+                key={c.id}
+                onClick={() => toggleCourse(c.id)}
+                className={`flex items-start gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors ${selectedIds.includes(c.id) ? "border-signal-emerald bg-signal-emerald/5" : "border-transparent hover:bg-white dark:hover:bg-line-gray-dark/40 hover:border-line-gray-light dark:hover:border-line-gray-dark"}`}
+              >
+                <div className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${selectedIds.includes(c.id) ? "bg-signal-emerald border-signal-emerald text-white" : "border-slate/40"}`}>
+                  {selectedIds.includes(c.id) && <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold text-ink-navy dark:text-paper truncate">{c.title}</p>
+                </div>
+                <div className="flex-shrink-0">
+                  <span className="text-xs font-mono font-semibold text-slate dark:text-paper/60">₹{c.price}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Checkout Row */}
+      <div className="p-5 border-t border-line-gray-light dark:border-line-gray-dark bg-slate-50/50 dark:bg-black/20">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <p className="text-[10px] font-bold text-slate dark:text-paper/40 uppercase tracking-widest">Total Price</p>
+            <div className="flex items-end gap-2">
+              <span className="font-heading font-extrabold text-2xl text-ink-navy dark:text-paper">₹{finalPrice.toLocaleString()}</span>
+              {isDiscounted && discountAmount > 0 && (
+                <span className="text-xs font-bold text-slate/40 line-through pb-1">₹{rawPrice.toLocaleString()}</span>
+              )}
+            </div>
+          </div>
+          {isDiscounted && (
+            <div className="px-2 py-1 bg-alert-coral text-white font-bold text-[9px] uppercase tracking-wider rounded">
+              Bundle Discount Applied
+            </div>
+          )}
+        </div>
+
+        <button
+          disabled={selectedIds.length === 0}
+          onClick={() => {
+            alert(`Simulation: Would redirect to checkout handling ${selectedIds.length} course(s). If backend Bundle checkout is ready, pass bundleId: ${exactBundleMatch?.id}`);
+          }}
+          className={`w-full py-3 rounded-xl font-bold text-sm transition-all focus:outline-none flex items-center justify-center gap-2 ${selectedIds.length > 0 ? "bg-signal-emerald text-white hover:opacity-90 active:scale-[0.98] shadow-md shadow-emerald-500/20" : "bg-line-gray-light dark:bg-line-gray-dark text-slate/50 cursor-not-allowed"}`}
+        >
+          {exactBundleMatch ? "Buy Complete Bundle" : selectedIds.length > 1 ? "Buy Selected Plan" : "Buy Course"}
+          <ArrowRight className="w-4 h-4" />
+        </button>
+        <p className="text-center mt-3 text-[10px] text-slate/60 hover:underline cursor-pointer" onClick={onBuyIndividual}>Prefer browsing individual courses instead?</p>
+      </div>
+    </div>
   );
 }

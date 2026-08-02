@@ -51,11 +51,12 @@ async def get_quiz(set_id: str, db: Client = Depends(get_db)):
             .eq("section_id", section["id"])
             .execute()
         )
-        # Map snake_case to camelCase
         mapped_questions = []
         for q in (questions_res.data or []):
             mapped_questions.append({
                 "id": q["id"],
+                "type": q.get("type", "normal"),
+                "caseText": q.get("case_text", ""),
                 "text": q["text"],
                 "options": q["options"],
                 "correctOptionIndex": q["correct_option_index"],

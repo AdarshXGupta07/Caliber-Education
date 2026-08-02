@@ -69,11 +69,17 @@ function QuizEngine({ set }: { set: MCQSet }) {
   const [phase, setPhase] = useState<QuizPhase>("in-progress");
   const [currentIndex, setCurrentIndex] = useState(0);
 
-  // userAnswers: null = unanswered/skipped, number = chosen option index
   const [userAnswers, setUserAnswers] = useState<(number | null)[]>(Array(total).fill(null));
   const [perQuestionTimes, setPerQuestionTimes] = useState<number[]>(Array(total).fill(0));
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [showFinishWarning, setShowFinishWarning] = useState(false);
+
+  // Track time per section
+  const [sectionElapsed, setSectionElapsed] = useState<Record<string, number>>(() => {
+    const acc: Record<string, number> = {};
+    for (const sec of set.sections) acc[sec.id] = 0;
+    return acc;
+  });
 
   // Timestamp (performance.now()) when each question was first shown
   const questionShownAt = useRef<number[]>(Array(total).fill(0));
@@ -91,9 +97,18 @@ function QuizEngine({ set }: { set: MCQSet }) {
   // Global test timer — keeps running even while navigating back/forth
   useEffect(() => {
     if (phase !== "in-progress") return;
-    const timer = window.setInterval(() => setElapsedSeconds((t) => t + 1), 1000);
+    const timer = window.setInterval(() => {
+      setElapsedSeconds((t) => t + 1);
+      const currentSecId = flatQuestions[currentIndex]?.sectionId;
+      if (currentSecId) {
+        setSectionElapsed(prev => ({
+          ...prev,
+          [currentSecId]: (prev[currentSecId] || 0) + 1
+        }));
+      }
+    }, 1000);
     return () => window.clearInterval(timer);
-  }, [phase]);
+  }, [phase, currentIndex, flatQuestions]);
 
   const currentEntry = flatQuestions[currentIndex];
   const currentQ = currentEntry.question;
@@ -182,9 +197,14 @@ function QuizEngine({ set }: { set: MCQSet }) {
     setUserAnswers(Array(total).fill(null));
     setPerQuestionTimes(Array(total).fill(0));
     setElapsedSeconds(0);
+    setSectionElapsed(() => {
+      const acc: Record<string, number> = {};
+      for (const sec of set.sections) acc[sec.id] = 0;
+      return acc;
+    });
     setShowFinishWarning(false);
     questionShownAt.current = [window.performance.now(), ...Array(total - 1).fill(0)];
-  }, [total]);
+  }, [total, set.sections]);
 
   if (phase === "results") {
     const score = userAnswers.reduce<number>(
@@ -205,151 +225,238 @@ function QuizEngine({ set }: { set: MCQSet }) {
   }
 
   return (
-    <div className="pt-16 min-h-screen bg-line-gray-light/20 dark:bg-line-gray-dark/10">
+    <div className="pt-16 min-h-screen flex flex-col bg-line-gray-light/20 dark:bg-line-gray-dark/10">
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        className="max-w-2xl mx-auto px-4 sm:px-6 py-10 space-y-5"
+        className="flex-1 w-full max-w-[1500px] mx-auto px-4 sm:px-6 py-8 flex flex-col"
       >
-        {/* Top bar */}
-        <div className="flex items-center justify-between">
-          <Link href="/mcq" className="flex items-center gap-1.5 text-xs text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors">
-            <ArrowLeft className="w-3.5 h-3.5" /> Exit
-          </Link>
-          <div className="flex items-center gap-1.5 font-mono text-sm font-bold text-ink-navy dark:text-paper">
-            <Clock className="w-4 h-4 text-slate" />
-            {formatTime(elapsedSeconds)}
-          </div>
-          <span className="font-mono text-xs text-slate dark:text-paper/50">
-            {answeredCount}/{total} answered
-          </span>
-        </div>
-
-        {/* Progress bar */}
-        <div className="w-full h-1.5 bg-line-gray-light dark:bg-line-gray-dark rounded-full overflow-hidden">
-          <motion.div
-            className="h-full bg-ink-navy dark:bg-paper rounded-full"
-            animate={{ width: `${(answeredCount / total) * 100}%` }}
-          />
-        </div>
-
-        {/* Question tracker dots — neutral colours only during test */}
-        <div className="flex gap-1.5 flex-wrap" aria-label="Question navigator">
-          {flatQuestions.map((_, index) => (
-            <button
-              key={index}
-              onClick={() => jumpTo(index)}
-              title={`Q${index + 1}${userAnswers[index] !== null ? " (answered)" : " (unanswered)"}`}
-              className={`w-6 h-6 rounded-md text-[9px] font-bold transition-all ${index === currentIndex
-                ? "bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy ring-2 ring-ink-navy/20 dark:ring-paper/20"
-                : userAnswers[index] !== null
-                  ? "bg-slate/30 dark:bg-slate/50 text-ink-navy dark:text-paper hover:bg-slate/50"
-                  : "bg-line-gray-light dark:bg-line-gray-dark text-slate/50 dark:text-paper/40 hover:bg-line-gray-light/80"
-                }`}
-            >
-              {index + 1}
-            </button>
-          ))}
-        </div>
-
-        {/* Section label */}
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-slate dark:text-paper/40">
-          {currentEntry.sectionTitle}
-        </p>
-
-        {/* Question card */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={currentIndex}
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -16 }}
-            className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl overflow-hidden shadow-lg"
-          >
-            <div className="px-6 pt-6 pb-4">
-              <p className="text-xs font-mono text-slate dark:text-paper/50 uppercase tracking-widest mb-3">
-                Question {currentIndex + 1} of {total}
-              </p>
-              <p className="text-base font-medium text-ink-navy dark:text-paper leading-relaxed">
-                {currentQ.text}
-              </p>
-            </div>
-
-            {/* Options — "selected" = neutral ink-navy highlight, "idle" = default */}
-            <div className="px-6 pb-4 space-y-2.5">
-              {currentQ.options.map((option, index) => (
-                <AnswerRevealOption
-                  key={index}
-                  label={String.fromCharCode(65 + index)}
-                  text={option}
-                  state={index === selectedOption ? "selected" : "idle"}
-                  onClick={(event) => selectOption(index, event.timeStamp)}
-                  disabled={false} // always enabled — student can change their answer
-                />
-              ))}
-            </div>
-
-            {/* Change-answer note + clear button */}
-            {selectedOption !== null && (
-              <div className="px-6 pb-2 flex items-center gap-2">
-                <p className="text-[10px] text-slate dark:text-paper/40 flex-1">
-                  Changed your mind? Select a different option above, or clear your answer.
-                </p>
-                <button
-                  onClick={clearAnswer}
-                  className="text-[10px] font-semibold text-slate dark:text-paper/50 hover:text-alert-coral transition-colors px-2 py-1 rounded-lg hover:bg-alert-coral/10"
-                >
-                  Clear
-                </button>
-              </div>
-            )}
-
-            {/* Navigation row */}
-            <div className="px-6 pb-6 pt-2 grid grid-cols-3 gap-2">
-              {/* Back */}
+        <div className="w-full max-w-7xl mx-auto space-y-4 mb-8">
+          {/* Section Tabs */}
+          <div className="flex gap-2 p-1 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-xl overflow-x-auto whitespace-nowrap " style={{ scrollbarWidth: "none" }}>
+            {set.sections.map(sec => (
               <button
-                onClick={goBack}
-                disabled={currentIndex === 0}
-                className="flex items-center justify-center gap-1.5 py-2.5 border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper text-xs font-semibold rounded-xl hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 active:scale-[0.98] transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                key={sec.id}
+                onClick={() => {
+                  const firstIdx = flatQuestions.findIndex(q => q.sectionId === sec.id);
+                  if (firstIdx !== -1) jumpTo(firstIdx);
+                }}
+                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${currentEntry.sectionId === sec.id ? 'bg-signal-emerald text-white shadow-sm' : 'text-slate dark:text-paper/60 hover:bg-line-gray-light/60 dark:hover:bg-line-gray-dark'}`}
               >
-                <ArrowLeft className="w-3.5 h-3.5" /> Back
+                {sec.title}
               </button>
+            ))}
+          </div>
 
-              {/* Skip (only shown if unanswered and not last question) */}
-              {selectedOption === null && currentIndex < total - 1 ? (
-                <button
-                  onClick={skipQuestion}
-                  className="flex items-center justify-center gap-1.5 py-2.5 border border-dashed border-slate/30 dark:border-paper/20 text-slate dark:text-paper/50 text-xs font-semibold rounded-xl hover:border-slate hover:text-ink-navy dark:hover:text-paper active:scale-[0.98] transition-all"
-                >
-                  <SkipForward className="w-3.5 h-3.5" /> Skip
-                </button>
-              ) : (
-                <div /> // spacer
-              )}
+          <div className="flex items-center justify-between">
+            <Link href="/mcq" className="flex items-center gap-1.5 text-xs text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors">
+              <ArrowLeft className="w-3.5 h-3.5" /> Exit
+            </Link>
 
-              {/* Next / Finish */}
-              {currentIndex < total - 1 ? (
-                <button
-                  onClick={goNext}
-                  className="flex items-center justify-center gap-1.5 py-2.5 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-bold rounded-xl hover:opacity-90 active:scale-[0.98] transition-all"
-                >
-                  Next <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              ) : (
-                <button
-                  onClick={tryFinish}
-                  className="flex items-center justify-center gap-1.5 py-2.5 bg-signal-emerald text-white text-xs font-bold rounded-xl hover:bg-signal-emerald/90 active:scale-[0.98] transition-all"
-                >
-                  <Trophy className="w-3.5 h-3.5" /> Finish
-                </button>
-              )}
+            {/* Timers */}
+            <div className="flex gap-6 sm:gap-8 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark px-6 py-2 rounded-xl shadow-sm">
+              <div className="flex flex-col items-center">
+                <span className="text-[9px] font-bold text-slate dark:text-paper/40 uppercase tracking-widest mb-0.5">Total Time</span>
+                <div className="flex items-center gap-1.5 font-mono text-base font-extrabold text-ink-navy dark:text-paper">
+                  <Clock className="w-3.5 h-3.5 text-signal-emerald" />
+                  {formatTime(elapsedSeconds)}
+                </div>
+              </div>
+              <div className="flex flex-col items-center pl-6 sm:pl-8 border-l border-line-gray-light dark:border-line-gray-dark">
+                <span className="text-[9px] font-bold text-slate dark:text-paper/40 uppercase tracking-widest mb-0.5">Section Time</span>
+                <div className="flex items-center gap-1.5 font-mono text-base font-bold text-ink-navy/80 dark:text-paper/80">
+                  <Clock className="w-3.5 h-3.5 text-slate" />
+                  {formatTime(sectionElapsed[currentEntry.sectionId] || 0)}
+                </div>
+              </div>
             </div>
-          </motion.div>
-        </AnimatePresence>
 
-        <p className="text-center text-xs text-slate dark:text-paper/40">
-          Results and full analysis shown after finishing. You can go back and change any answer.
-        </p>
+            <span className="font-mono text-xs font-bold bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy px-3 py-1.5 rounded-lg shadow-sm">
+              {answeredCount}/{total} <span className="font-sans font-normal opacity-70 ml-1">answered</span>
+            </span>
+          </div>
+
+          <div className="w-full h-1.5 bg-line-gray-light dark:bg-line-gray-dark rounded-full overflow-hidden">
+            <motion.div
+              className="h-full bg-signal-emerald rounded-full"
+              animate={{ width: `${(answeredCount / total) * 100}%` }}
+            />
+          </div>
+        </div>
+
+        {/* 3-Column Layout */}
+        <div className="grid lg:grid-cols-12 gap-6 items-start max-w-7xl mx-auto w-full">
+
+          {/* LEFT: Case Text & Question (col-span-5) */}
+          <div className="lg:col-span-5 space-y-4">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate dark:text-paper/40">
+              {currentEntry.sectionTitle}
+            </p>
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={`q-${currentIndex}`}
+                initial={{ opacity: 0, x: -16 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 16 }}
+                className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl overflow-hidden shadow-lg p-6 lg:min-h-[400px]"
+              >
+                {(!currentQ.type || currentQ.type === "case") && currentQ.caseText && (
+                  <div className="mb-6 pb-6 border-b border-line-gray-light dark:border-line-gray-dark">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate dark:text-paper/40 mb-3">Case Study / Passage</p>
+                    <div className="text-sm text-ink-navy dark:text-paper leading-relaxed whitespace-pre-wrap">
+                      {currentQ.caseText}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <p className="text-xs font-mono text-slate dark:text-paper/50 uppercase tracking-widest mb-3">
+                    Question {currentIndex + 1} of {total}
+                  </p>
+                  <p className="text-base font-medium text-ink-navy dark:text-paper leading-relaxed whitespace-pre-wrap">
+                    {currentQ.text}
+                  </p>
+                </div>
+              </motion.div>
+            </AnimatePresence>
+          </div>
+
+          {/* MIDDLE: Options & Actions (col-span-4) */}
+          <div className="lg:col-span-4 flex flex-col h-full space-y-4">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={`opts-${currentIndex}`}
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl overflow-hidden shadow-lg flex flex-col lg:min-h-[400px]"
+              >
+                <div className="p-6 flex-1 space-y-3">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate dark:text-paper/40 mb-1">Select an Option</p>
+                  {currentQ.options.map((option, index) => (
+                    <AnswerRevealOption
+                      key={index}
+                      label={String.fromCharCode(65 + index)}
+                      text={option}
+                      state={index === selectedOption ? "selected" : "idle"}
+                      onClick={(event) => selectOption(index, event.timeStamp)}
+                      disabled={false}
+                    />
+                  ))}
+                </div>
+
+                <div className="p-6 pt-0 border-t border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/10 dark:bg-line-gray-dark/10">
+                  {/* Change-answer note + clear button */}
+                  {selectedOption !== null && (
+                    <div className="flex items-center gap-2 mb-4 pt-4">
+                      <p className="text-[10px] text-slate dark:text-paper/40 flex-1">
+                        Changed your mind?
+                      </p>
+                      <button
+                        onClick={clearAnswer}
+                        className="text-[10px] font-semibold text-slate dark:text-paper/50 hover:text-alert-coral transition-colors px-2 py-1 rounded-lg hover:bg-alert-coral/10"
+                      >
+                        Clear Answer
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-3 gap-2 mt-4">
+                    {/* Back */}
+                    <button
+                      onClick={goBack}
+                      disabled={currentIndex === 0}
+                      className="flex items-center justify-center gap-1.5 py-2.5 border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper text-xs font-semibold rounded-xl hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 active:scale-[0.98] transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" /> Back
+                    </button>
+
+                    {/* Skip */}
+                    {selectedOption === null && currentIndex < total - 1 ? (
+                      <button
+                        onClick={skipQuestion}
+                        className="flex items-center justify-center gap-1.5 py-2.5 border border-dashed border-slate/30 dark:border-paper/20 text-slate dark:text-paper/50 text-xs font-semibold rounded-xl hover:border-slate hover:text-ink-navy dark:hover:text-paper active:scale-[0.98] transition-all"
+                      >
+                        <SkipForward className="w-3.5 h-3.5" /> Skip
+                      </button>
+                    ) : (
+                      <div />
+                    )}
+
+                    {/* Next / Finish */}
+                    {currentIndex < total - 1 ? (
+                      <button
+                        onClick={goNext}
+                        className="flex items-center justify-center gap-1.5 py-2.5 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-bold rounded-xl hover:opacity-90 active:scale-[0.98] transition-all"
+                      >
+                        Next <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={tryFinish}
+                        className="flex items-center justify-center gap-1.5 py-2.5 bg-signal-emerald text-white text-xs font-bold rounded-xl hover:bg-signal-emerald/90 active:scale-[0.98] transition-all"
+                      >
+                        <Trophy className="w-3.5 h-3.5" /> Finish
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            </AnimatePresence>
+          </div>
+
+          {/* RIGHT: Navigator Grid (col-span-3) */}
+          <div className="lg:col-span-3">
+            <div className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl p-5 shadow-lg lg:sticky lg:top-24">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate dark:text-paper/40 mb-4">
+                Question Navigator
+              </p>
+              <div className="grid grid-cols-5 sm:grid-cols-8 lg:grid-cols-5 gap-2" aria-label="Question navigator">
+                {flatQuestions.map((_, index) => {
+                  const qSectionId = flatQuestions[index].sectionId;
+                  // Optional: hide questions from other sections in the navigator, OR just style the active section ones differently.
+                  // For a true section filter, we only map the ones matching currentEntry.sectionId:
+                  if (qSectionId !== currentEntry.sectionId) return null;
+
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => jumpTo(index)}
+                      title={`Q${index + 1}${userAnswers[index] !== null ? " (answered)" : " (unanswered)"}`}
+                      className={`aspect-square flex items-center justify-center rounded-lg text-xs font-bold transition-all ${index === currentIndex
+                        ? "bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy ring-2 ring-ink-navy/20 dark:ring-paper/20 shadow-sm"
+                        : userAnswers[index] !== null
+                          ? "bg-signal-emerald/10 text-signal-emerald border border-signal-emerald/20 hover:bg-signal-emerald/20"
+                          : "bg-line-gray-light/50 dark:bg-line-gray-dark text-slate/60 dark:text-paper/50 hover:bg-line-gray-light dark:hover:bg-line-gray-dark/80"
+                        }`}
+                    >
+                      {index + 1}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-6 space-y-2 text-[10px] text-slate dark:text-paper/60">
+                <div className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded bg-signal-emerald/10 border border-signal-emerald/20 block" /> Answered
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded bg-ink-navy dark:bg-paper block" /> Current Status
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded bg-line-gray-light/50 dark:bg-line-gray-dark block" /> Unanswered
+                </div>
+              </div>
+
+              <div className="mt-8 pt-4 border-t border-line-gray-light dark:border-line-gray-dark">
+                <p className="text-center text-[10px] text-slate dark:text-paper/40 bg-line-gray-light/30 dark:bg-line-gray-dark/30 p-2 rounded-lg">
+                  Submit test anytime. Unanswered questions count as incorrect.
+                </p>
+              </div>
+            </div>
+          </div>
+
+        </div>
       </motion.div>
 
       {/* Finish-with-skips warning modal */}
@@ -679,10 +786,10 @@ function ResultsView({
           <RotateCcw className="w-4 h-4" /> Practice Again
         </button>
         <Link
-          href="/dashboard"
+          href="/mcq"
           className="flex-1 flex justify-center items-center gap-2 py-3 bg-signal-emerald text-white font-bold rounded-xl hover:opacity-90 active:scale-[0.98] transition-all"
         >
-          <LayoutDashboard className="w-4 h-4" /> Back to Dashboard
+          <LayoutDashboard className="w-4 h-4" /> Back to MCQs
         </Link>
       </div>
     </motion.main>

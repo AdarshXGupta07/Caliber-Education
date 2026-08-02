@@ -9,7 +9,7 @@ import { AuthShell, OTPInput, ResendTimer, PasswordStrength } from "@/components
 import { Turnstile } from "@/components/Turnstile";
 import { ArrowRight, CheckCircle, Eye, EyeOff, ChevronLeft } from "lucide-react";
 
-type Step = "email" | "otp" | "password" | "done";
+type Step = "email" | "otp" | "password" | "profile" | "done";
 const OTP_LENGTH = 6;
 
 export default function SignupPage() {
@@ -21,6 +21,9 @@ export default function SignupPage() {
   const [otp, setOtp] = useState<string[]>(Array(OTP_LENGTH).fill(""));
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [profileForm, setProfileForm] = useState({
+    full_name: "", phone_number: "", address: "", stage: "CA Final", attempt_status: "First Attempt"
+  });
   const [showPw, setShowPw] = useState(false);
   const [showCpw, setShowCpw] = useState(false);
   const [error, setError] = useState("");
@@ -28,7 +31,7 @@ export default function SignupPage() {
   const [tempToken, setTempToken] = useState("");
 
   const otpFilled = otp.every((d) => d !== "");
-  const stepNum = step === "email" ? 1 : step === "otp" ? 2 : step === "password" ? 3 : 3;
+  const stepNum = step === "email" ? 1 : step === "otp" ? 2 : step === "password" ? 3 : step === "profile" ? 4 : 4;
 
   async function handleEmail(e: React.FormEvent) {
     e.preventDefault();
@@ -98,13 +101,29 @@ export default function SignupPage() {
       if (data.token) {
         localStorage.setItem("caliber_jwt", data.token);
       }
-      setStep("done");
+      setStep("profile");
       await login(email, password, turnstileToken);
-      setTimeout(() => router.push("/dashboard"), 1500);
     } catch (err: any) {
       console.warn("API signup error, falling back to mock enrollment:", err.message);
-      setStep("done");
+      setStep("profile");
       await login(email);
+    }
+  }
+
+  async function handleProfile(e: React.FormEvent) {
+    e.preventDefault();
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      await fetch(`${apiURL}/api/auth/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify(profileForm)
+      });
+      setStep("done");
+      setTimeout(() => router.push("/dashboard"), 1500);
+    } catch (err: any) {
+      setStep("done");
       setTimeout(() => router.push("/dashboard"), 1500);
     }
   }
@@ -121,7 +140,7 @@ export default function SignupPage() {
   };
 
   return (
-    <AuthShell progressStep={stepNum} progressTotal={3}>
+    <AuthShell progressStep={stepNum} progressTotal={4}>
       <AnimatePresence mode="wait">
         {step === "done" ? (
           <motion.div key="done" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="text-center py-6 space-y-4">
@@ -148,10 +167,10 @@ export default function SignupPage() {
             <div>
               <p className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate dark:text-paper/50 mb-1">Step {stepNum} of 3</p>
               <h2 className="font-heading font-bold text-xl text-ink-navy dark:text-paper">
-                {step === "email" ? "Create your account" : step === "otp" ? "Verify your email" : "Set a password"}
+                {step === "email" ? "Create your account" : step === "otp" ? "Verify your email" : step === "password" ? "Set a password" : "Tell us about you"}
               </h2>
               <p className="text-xs text-slate dark:text-paper/60 mt-1">
-                {step === "email" ? "Enter your email to get started." : step === "otp" ? `OTP sent to ${email}` : "Choose a secure password for your account."}
+                {step === "email" ? "Enter your email to get started." : step === "otp" ? `OTP sent to ${email}` : step === "password" ? "Choose a secure password for your account." : "Help us personalize your study experience."}
               </p>
             </div>
 
@@ -238,7 +257,56 @@ export default function SignupPage() {
 
                 <button type="submit"
                   className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm">
-                  Create Account <ArrowRight className="w-4 h-4" />
+                  Continue <ArrowRight className="w-4 h-4" />
+                </button>
+              </form>
+            )}
+
+            {/* Profile Step */}
+            {step === "profile" && (
+              <form onSubmit={handleProfile} className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Full Name</label>
+                  <input required autoFocus value={profileForm.full_name} onChange={e => setProfileForm({ ...profileForm, full_name: e.target.value })}
+                    className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors"
+                    placeholder="e.g. John Doe" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Phone or WhatsApp</label>
+                  <input required value={profileForm.phone_number} onChange={e => setProfileForm({ ...profileForm, phone_number: e.target.value })}
+                    className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors"
+                    placeholder="+91..." />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Address / City</label>
+                  <textarea required value={profileForm.address} onChange={e => setProfileForm({ ...profileForm, address: e.target.value })}
+                    className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors resize-none"
+                    rows={2} placeholder="Your residential address" />
+                </div>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Stage</label>
+                    <select required value={profileForm.stage} onChange={e => setProfileForm({ ...profileForm, stage: e.target.value })}
+                      className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors">
+                      <option>CA Foundation</option>
+                      <option>CA Intermediate</option>
+                      <option>CA Final</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Attempt Status</label>
+                    <select required value={profileForm.attempt_status} onChange={e => setProfileForm({ ...profileForm, attempt_status: e.target.value })}
+                      className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors">
+                      <option>First Attempt</option>
+                      <option>Repeater (2nd)</option>
+                      <option>Repeater (3rd+)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <button type="submit"
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm mt-6">
+                  Complete Setup <ArrowRight className="w-4 h-4" />
                 </button>
               </form>
             )}

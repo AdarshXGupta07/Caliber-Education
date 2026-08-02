@@ -41,7 +41,7 @@ export default function DashboardPage() {
 
   const [accessCourseId, setAccessCourseId] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
-  const [activeTab, setActiveTab] = useState<"courses" | "sessions" | "tests">("courses");
+  const [activeTab, setActiveTab] = useState<"courses" | "mcqs" | "results">("courses");
 
   // 1:1 Sessions States
   const [sessions, setSessions] = useState<any[]>([]);
@@ -55,9 +55,61 @@ export default function DashboardPage() {
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
   const [submittingTest, setSubmittingTest] = useState(false);
 
+  // Profile States
+  const [profileDetails, setProfileDetails] = useState<any>({});
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    full_name: "", phone_number: "", address: "", stage: "CA Final", attempt_status: "First Attempt"
+  });
+
+  const [dbScrapedSeries, setDbScrapedSeries] = useState<any[]>([]);
+
+  useEffect(() => {
+    const fetchSeries = async () => {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const res = await fetch(`${apiURL}/api/mcq-series`);
+        if (res.ok) {
+          const data = await res.json();
+          setDbScrapedSeries(data);
+        }
+      } catch (e) {
+        console.warn("Failed to fetch MCQ series", e);
+      }
+    };
+    fetchSeries();
+  }, []);
+
   useEffect(() => {
     if (isMounted && !isAuthenticated) router.push("/login");
   }, [isMounted, isAuthenticated, router]);
+
+  // Load User Profile Data
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const fetchProfile = async () => {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+        const res = await fetch(`${apiURL}/api/auth/me`, { headers: { "Authorization": `Bearer ${token}` } });
+        if (res.ok) {
+          const data = await res.json();
+          setProfileDetails(data.user);
+          setProfileForm({
+            full_name: data.user.full_name || "",
+            phone_number: data.user.phone_number || "",
+            address: data.user.address || "",
+            stage: data.user.stage || "CA Final",
+            attempt_status: data.user.attempt_status || "First Attempt"
+          });
+        }
+      } catch (err) {
+        console.warn("Could not load user profile details");
+      }
+    };
+    fetchProfile();
+  }, [isAuthenticated]);
 
   // Load Sessions
   useEffect(() => {
@@ -245,6 +297,30 @@ export default function DashboardPage() {
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingProfile(true);
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/auth/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify(profileForm)
+      });
+      if (res.ok) {
+        setProfileDetails((prev: any) => ({ ...prev, ...profileForm }));
+        setShowProfileModal(false);
+      } else {
+        alert("Could not update profile because database schema was not updated yet. Please contact support.");
+      }
+    } catch (err) {
+      alert("Error saving profile");
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
   return (
     <div className="pt-16 pb-20 min-h-screen bg-paper dark:bg-ink-navy/10">
       <div className="max-w-6xl mx-auto px-6 sm:px-8 py-10 space-y-8">
@@ -255,9 +331,11 @@ export default function DashboardPage() {
             <div className="space-y-1">
               <p className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate dark:text-paper/40">Dashboard</p>
               <h1 className="font-heading font-extrabold text-2xl sm:text-3xl text-ink-navy dark:text-paper leading-none">
-                Welcome back 👋
+                Welcome back{profileDetails?.full_name ? `, ${profileDetails.full_name.split(' ')[0]}` : ''} 👋
               </h1>
-              <p className="text-xs text-slate dark:text-paper/60">{user.email}</p>
+              <div className="flex items-center gap-3">
+                <p className="text-xs font-semibold text-slate dark:text-paper/60">{user.email}</p>
+              </div>
             </div>
 
             {/* Admin Toggle switch */}
@@ -302,9 +380,9 @@ export default function DashboardPage() {
         {/* Dynamic Tab Selector Switch */}
         <div className="flex gap-4 border-b border-line-gray-light dark:border-line-gray-dark pb-px pt-2">
           {[
-            { id: "courses", label: "Courses & Practice" },
-            { id: "sessions", label: "1:1 Sessions" },
-            { id: "tests", label: "Tests & Evaluations" }
+            { id: "courses", label: "My Courses" },
+            { id: "mcqs", label: "My MCQs" },
+            { id: "results", label: "My Results Analysis" }
           ].map((tab) => (
             <button
               key={tab.id}
@@ -322,13 +400,24 @@ export default function DashboardPage() {
         {/* Render Active Tab Panels */}
         <AnimatePresence mode="wait">
           {activeTab === "courses" && (
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-8">
-
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-12">
               {/* My Courses */}
               <div className="space-y-4">
-                <div className="flex items-center justify-between border-b border-line-gray-light dark:border-line-gray-dark pb-2">
-                  <h2 className="font-heading font-bold text-base text-ink-navy dark:text-paper">My Courses</h2>
-                  <span className="text-xs text-slate dark:text-paper/45">{totalMyCourses} enrolled</span>
+                <div className="flex flex-col sm:flex-row sm:items-end justify-between border-b border-line-gray-light dark:border-line-gray-dark pb-3 gap-4">
+                  <div>
+                    <h2 className="font-heading font-bold text-base text-ink-navy dark:text-paper">Current Courses</h2>
+                    <span className="text-[10px] text-slate dark:text-paper/45 mt-0.5 block">{totalMyCourses} enrolled</span>
+                  </div>
+
+                  <div className="bg-gradient-to-r from-signal-emerald/20 to-emerald-400/10 px-4 py-2.5 rounded-xl border border-signal-emerald/30 inline-flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+                    <div className="text-center sm:text-left">
+                      <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400 leading-tight">Buy single course or buy more and get discount!</p>
+                      <p className="text-[9px] text-emerald-700/70 dark:text-emerald-400/70">Group 1 & 2 combinations are available.</p>
+                    </div>
+                    <Link href="/courses" className="px-3 py-1.5 bg-signal-emerald text-white text-xs font-bold rounded-lg hover:opacity-90 transition-all whitespace-nowrap shadow-sm border border-emerald-600/50">
+                      View Bundles
+                    </Link>
+                  </div>
                 </div>
 
                 {totalMyCourses === 0 ? (
@@ -392,7 +481,11 @@ export default function DashboardPage() {
                   </div>
                 )}
               </div>
+            </motion.div>
+          )}
 
+          {activeTab === "mcqs" && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-8">
               {/* Today's Set */}
               <div className="space-y-4">
                 <div className="flex items-center gap-2 mb-2">
@@ -420,24 +513,24 @@ export default function DashboardPage() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between border-b border-line-gray-light dark:border-line-gray-dark pb-2">
                   <h2 className="font-heading font-bold text-base text-ink-navy dark:text-paper">Practice Library</h2>
-                  <span className="text-xs text-slate dark:text-paper/45">{mcqSets.length} sets</span>
+                  <span className="text-xs text-slate dark:text-paper/45">{dbScrapedSeries.length} series</span>
                 </div>
 
                 <div className="grid sm:grid-cols-2 gap-4">
-                  {mcqSets.map((set, i) => (
+                  {dbScrapedSeries.map((series, i) => (
                     <div
-                      key={set.id}
+                      key={series.id}
                       className="flex items-center justify-between p-4 bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark rounded-xl hover:border-slate/50 dark:hover:border-paper transition-all duration-200 group"
                     >
                       <div className="flex items-center gap-4 min-w-0">
                         <div className="flex-shrink-0 w-10 h-10 rounded bg-line-gray-light/60 dark:bg-line-gray-dark/40 border border-line-gray-light/35 text-ink-navy dark:text-paper flex items-center justify-center text-xs font-bold font-mono">
-                          {set.subject.slice(0, 2).toUpperCase()}
+                          {(series.subject || "QQ").slice(0, 2).toUpperCase()}
                         </div>
 
                         <div className="min-w-0 space-y-0.5">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <p className="font-semibold text-xs text-ink-navy dark:text-paper truncate">{set.title}</p>
-                            {!set.isLocked ? (
+                            <p className="font-semibold text-xs text-ink-navy dark:text-paper truncate">{series.title}</p>
+                            {!series.isLocked && !series.is_locked ? (
                               <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-line-gray-light/50 dark:bg-line-gray-dark/60 text-slate dark:text-paper/70 flex-shrink-0">
                                 Free
                               </span>
@@ -448,185 +541,34 @@ export default function DashboardPage() {
                             )}
                           </div>
                           <p className="text-[10px] text-slate dark:text-paper/40">
-                            {set.sections.reduce((sum, s) => sum + s.questions.length, 0)} questions · {set.subject}
+                            {series.subject}
                           </p>
                         </div>
                       </div>
 
                       <div className="flex-shrink-0 pl-3">
-                        {!set.isLocked ? (
-                          <Link
-                            href={`/quiz/${set.id}`}
-                            className="flex items-center gap-1 text-xs font-semibold text-ink-navy dark:text-paper hover:underline"
-                          >
+                        <Link
+                          href={`/mcq/${series.id}`}
+                          className="flex items-center gap-1 text-xs font-semibold text-ink-navy dark:text-paper hover:underline"
+                        >
+                          {!series.isLocked && !series.is_locked ? (
                             <Unlock className="w-3 h-3 text-slate/50" />
-                            Attempt
-                            <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-                          </Link>
-                        ) : (
-                          <Link
-                            href="/practice"
-                            className="flex items-center gap-1 text-xs font-medium text-slate dark:text-paper/40 hover:text-ink-navy dark:hover:text-paper transition-colors"
-                          >
-                            <Lock className="w-3 h-3 text-slate/30" />
-                            Unlock
-                          </Link>
-                        )}
+                          ) : (
+                            <Lock className="w-3 h-3 text-slate/50" />
+                          )}
+                          Enter
+                          <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                        </Link>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
+
             </motion.div>
           )}
 
-          {activeTab === "sessions" && (
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
-
-              {/* Booking Action */}
-              <div className="p-6 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper">Book a new 1:1 session</h3>
-                  <p className="text-xs text-slate dark:text-paper/50">Schedule a private 30-min live session with our CA mentors to clear doubts.</p>
-                </div>
-                <div className="flex gap-2">
-                  <Link
-                    href="/book-session/somya-deep"
-                    className="px-4 py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
-                  >
-                    Somya Deep
-                  </Link>
-                  <Link
-                    href="/book-session/aditya-kanal"
-                    className="px-4 py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
-                  >
-                    Aditya Kanal
-                  </Link>
-                </div>
-              </div>
-
-              {/* Lists */}
-              <div className="space-y-6">
-                {/* Pending Session Requests */}
-                {sessions.filter(s => s.status === "pending_schedule").length > 0 && (
-                  <div className="space-y-3">
-                    <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper border-b border-line-gray-light dark:border-line-gray-dark pb-2">Pending Requests</h3>
-                    {sessions.filter(s => s.status === "pending_schedule").map(sess => (
-                      <div key={sess.id} className="p-4 border border-amber-200 dark:border-amber-800/40 rounded-lg bg-amber-50 dark:bg-amber-900/10 space-y-2">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <h4 className="font-heading font-bold text-xs text-ink-navy dark:text-paper">{sess.mentorName}</h4>
-                            <p className="text-[10px] text-slate dark:text-paper/45">{sess.specialty}</p>
-                          </div>
-                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Awaiting Schedule</span>
-                        </div>
-                        <p className="text-[11px] text-slate dark:text-paper/60 flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5" />
-                          Your mentor will email you a Google Meet link once scheduled.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => handleCancelSession(sess.id)}
-                          className="px-3 py-1.5 border border-line-gray-light dark:border-line-gray-dark text-slate hover:text-alert-coral dark:text-paper/50 rounded text-[11px] font-semibold active:scale-[0.98] transition-all"
-                        >
-                          Cancel Request
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Upcoming Confirmed Sessions */}
-                <div className="grid sm:grid-cols-2 gap-6">
-                  <div className="space-y-4">
-                    <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper border-b border-line-gray-light dark:border-line-gray-dark pb-2">Upcoming Sessions</h3>
-                    {loadingSessions ? (
-                      <p className="text-xs text-slate/50">Loading sessions...</p>
-                    ) : sessions.filter(s => s.status !== "pending_schedule" && new Date(s.datetime) > new Date()).length === 0 ? (
-                      <p className="text-xs text-slate dark:text-paper/40 py-4 italic">No confirmed upcoming sessions.</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {sessions.filter(s => s.status !== "pending_schedule" && new Date(s.datetime) > new Date()).map(sess => (
-                          <div key={sess.id} className="p-4 border border-line-gray-light dark:border-line-gray-dark rounded-lg bg-white dark:bg-line-gray-dark/20 space-y-3">
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <h4 className="font-heading font-bold text-xs text-ink-navy dark:text-paper">{sess.mentorName}</h4>
-                                <p className="text-[10px] text-slate dark:text-paper/45">{sess.specialty}</p>
-                              </div>
-                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-450">Confirmed</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-[11px] text-slate dark:text-paper/60 font-medium">
-                              <Calendar className="w-3.5 h-3.5" />
-                              <span>
-                                {new Date(sess.datetime).toLocaleDateString("en-IN", {
-                                  weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"
-                                })}
-                              </span>
-                            </div>
-                            <div className="flex gap-2">
-                              {sess.meetLink ? (
-                                <a
-                                  href={sess.meetLink}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="flex-1 py-1.5 text-center bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded text-[11px] active:scale-[0.98] transition-all hover:opacity-90 inline-flex items-center justify-center gap-1"
-                                >
-                                  <Video className="w-3 h-3" /> Join Meet
-                                </a>
-                              ) : (
-                                <span className="flex-1 py-1.5 text-center text-[11px] text-slate/50 border border-dashed border-line-gray-light dark:border-line-gray-dark rounded">Meet link coming soon</span>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => handleCancelSession(sess.id)}
-                                className="px-3 py-1.5 border border-line-gray-light dark:border-line-gray-dark text-slate hover:text-alert-coral dark:text-paper/50 rounded text-[11px] font-semibold active:scale-[0.98] transition-all"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Past Sessions */}
-                  <div className="space-y-4">
-                    <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper border-b border-line-gray-light dark:border-line-gray-dark pb-2">Past Sessions</h3>
-                    {loadingSessions ? (
-                      <p className="text-xs text-slate/50">Loading sessions...</p>
-                    ) : sessions.filter(s => new Date(s.datetime) <= new Date()).length === 0 ? (
-                      <p className="text-xs text-slate/40 dark:text-paper/40 py-4 italic text-[10px]">No past sessions on record.</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {sessions.filter(s => new Date(s.datetime) <= new Date()).map(sess => (
-                          <div key={sess.id} className="p-4 border border-line-gray-light dark:border-line-gray-dark rounded-lg bg-white dark:bg-line-gray-dark/20 space-y-2 opacity-75">
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <h4 className="font-heading font-bold text-xs text-ink-navy dark:text-paper">{sess.mentorName}</h4>
-                                <p className="text-[10px] text-slate dark:text-paper/45">{sess.specialty}</p>
-                              </div>
-                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-line-gray-light dark:bg-line-gray-dark/50 text-slate/60 dark:text-paper/45">Finished</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-[10px] text-slate dark:text-paper/60">
-                              <Calendar className="w-3.5 h-3.5" />
-                              <span>
-                                {new Date(sess.datetime).toLocaleDateString("en-IN", {
-                                  day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"
-                                })}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {activeTab === "tests" && (
+          {activeTab === "results" && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
 
               <div className="border-b border-line-gray-light dark:border-line-gray-dark pb-2">
@@ -811,6 +753,7 @@ export default function DashboardPage() {
         )}
       </AnimatePresence>
 
-    </div>
+
+    </div >
   );
 }

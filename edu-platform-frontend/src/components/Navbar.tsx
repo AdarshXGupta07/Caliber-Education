@@ -16,7 +16,7 @@ const navLinks = [
 
 export function Navbar() {
   const { theme, setTheme } = useTheme();
-  const { isAuthenticated, user, logout } = useAuth();
+  const { isAuthenticated, user, logout, purchasedCourseIds } = useAuth();
   const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -39,11 +39,15 @@ export function Navbar() {
         <div className="flex items-center justify-between h-16">
 
           {/* Logo */}
-          <Link href="/" className="flex items-center gap-2 group">
-            <div className="w-8 h-8 bg-signal-emerald rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform">
-              <BookOpen className="w-4 h-4 text-white" />
+          <Link href="/" className="flex items-center gap-3 group">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full overflow-hidden flex items-center justify-center group-hover:scale-105 transition-transform flex-shrink-0 relative bg-white/10">
+              <img
+                src={isAuthenticated && purchasedCourseIds?.length > 0 ? "/PREMIUM.jpg" : "/NORMAL.jpg"}
+                alt="Caliber Education Logo"
+                className="w-full h-full object-cover"
+              />
             </div>
-            <span className="font-heading font-bold text-lg text-ink-navy dark:text-paper tracking-tight">Caliber</span>
+            <span className="font-heading font-bold text-lg text-ink-navy dark:text-paper tracking-tight">CAliber</span>
           </Link>
 
           {/* Desktop Nav */}
@@ -74,6 +78,15 @@ export function Navbar() {
                 }`}>
               Team
             </Link>
+            {isAuthenticated && (
+              <Link href="/dashboard"
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isActive("/dashboard")
+                  ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold"
+                  : "text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
+                  }`}>
+                Dashboard
+              </Link>
+            )}
           </nav>
 
           {/* Desktop Actions */}
@@ -92,8 +105,8 @@ export function Navbar() {
                     <Shield className="w-3.5 h-3.5" /> Admin
                   </Link>
                 )}
-                <Link href="/dashboard" className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy rounded-lg hover:opacity-90 active:scale-[0.98] transition-all">
-                  <LayoutDashboard className="w-3.5 h-3.5" /> Dashboard
+                <Link href="/profile" className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy rounded-lg hover:opacity-90 active:scale-[0.98] transition-all">
+                  My Profile
                 </Link>
                 <button onClick={logout} className="p-2 rounded-lg text-slate dark:text-paper/70 hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors" aria-label="Logout">
                   <LogOut className="w-4 h-4" />

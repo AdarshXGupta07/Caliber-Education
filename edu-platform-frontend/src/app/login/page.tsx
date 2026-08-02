@@ -70,7 +70,7 @@ export default function LoginPage() {
           <motion.div key="form" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }} className="space-y-6">
             <div>
               <h2 className="font-heading font-bold text-xl text-ink-navy dark:text-paper">Sign in</h2>
-              <p className="text-xs text-slate dark:text-paper/60 mt-1">Welcome back to Caliber.</p>
+              <p className="text-xs text-slate dark:text-paper/60 mt-1">Welcome back to CAliber.</p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">

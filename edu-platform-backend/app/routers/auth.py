@@ -1,5 +1,6 @@
 import random
 import string
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -132,13 +133,15 @@ async def register(body: RegisterRequest, db: Client = Depends(get_db)):
     user_id = str(auth_res.user.id)
 
     # profiles row is created by Supabase trigger — ensure it exists
+    session_id = str(uuid.uuid4())
     db.table("profiles").upsert({
         "id": user_id,
         "email": body.email,
-        "role": "student"
+        "role": "student",
+        "active_session_id": session_id
     }).execute()
 
-    token = create_access_token({"sub": user_id, "email": body.email, "role": "student"})
+    token = create_access_token({"sub": user_id, "email": body.email, "role": "student", "session_id": session_id})
     return TokenResponse(
         token=token,
         user=UserResponse(id=user_id, email=body.email, role="student"),
@@ -165,7 +168,10 @@ async def login(body: LoginRequest, db: Client = Depends(get_db)):
     profile = db.table("profiles").select("*").eq("id", user_id).single().execute()
     role = profile.data.get("role", "student") if profile.data else "student"
 
-    token = create_access_token({"sub": user_id, "email": body.email, "role": role})
+    session_id = str(uuid.uuid4())
+    db.table("profiles").update({"active_session_id": session_id}).eq("id", user_id).execute()
+
+    token = create_access_token({"sub": user_id, "email": body.email, "role": role, "session_id": session_id})
     return TokenResponse(
         token=token,
         user=UserResponse(id=user_id, email=body.email, role=role),
@@ -204,18 +210,21 @@ async def google_exchange(body: GoogleExchangeRequest, db: Client = Depends(get_
         # Try to fetch existing profile without .single() to avoid exception on 0 rows
         profile_res = db.table("profiles").select("*").eq("id", user_id).execute()
         role = "student"
+        session_id = str(uuid.uuid4())
         
         if profile_res.data:
             role = profile_res.data[0].get("role", "student")
+            db.table("profiles").update({"active_session_id": session_id}).eq("id", user_id).execute()
         else:
             # Create profile safely if it doesn't exist
-            db.table("profiles").upsert({"id": user_id, "email": email, "role": "student"}).execute()
+            db.table("profiles").upsert({"id": user_id, "email": email, "role": "student", "active_session_id": session_id}).execute()
     except Exception as e:
         print(f"Database error during profile fetch/create: {e}")
         role = "student"
+        session_id = str(uuid.uuid4())
 
     # Generate custom caliber jwt
-    token = create_access_token({"sub": user_id, "email": email, "role": role})
+    token = create_access_token({"sub": user_id, "email": email, "role": role, "session_id": session_id})
     
     return TokenResponse(
         token=token,
@@ -240,11 +249,49 @@ async def me(current_user: dict = Depends(get_current_user), db: Client = Depend
         .execute()
     )
 
+    # Fetch extended profile info, safely falling back if missing
+    profile_data = {}
+    try:
+        profile = db.table("profiles").select("full_name, phone_number, address, stage, attempt_status").eq("id", user_id).single().execute()
+        if profile.data:
+            profile_data = profile.data
+    except Exception:
+        pass
+
     return {
-        "user": current_user,
+        "user": {**current_user, **profile_data},
         "purchases": enrolled_ids,
         "attempts": attempts.data or [],
     }
+
+class ProfileUpdateRequest(BaseModel):
+    full_name: str | None = None
+    phone_number: str | None = None
+    address: str | None = None
+    stage: str | None = None
+    attempt_status: str | None = None
+
+@router.put("/profile")
+async def update_profile(body: ProfileUpdateRequest, current_user: dict = Depends(get_current_user), db: Client = Depends(get_db)):
+    """Update user's extended profile details."""
+    user_id = current_user["id"]
+    update_data = {}
+    if body.full_name is not None: update_data["full_name"] = body.full_name
+    if body.phone_number is not None: update_data["phone_number"] = body.phone_number
+    if body.address is not None: update_data["address"] = body.address
+    if body.stage is not None: update_data["stage"] = body.stage
+    if body.attempt_status is not None: update_data["attempt_status"] = body.attempt_status
+    
+    if not update_data:
+        return {"success": True}
+
+    try:
+        db.table("profiles").update(update_data).eq("id", user_id).execute()
+    except Exception as e:
+        print(f"Profile update error: {e}")
+        raise HTTPException(status_code=500, detail="Could not update profile information")
+        
+    return {"success": True, "message": "Profile updated successfully"}
 
 
 @router.post("/forgot-password")

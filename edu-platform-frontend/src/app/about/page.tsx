@@ -2,26 +2,56 @@
 
 import { motion } from "framer-motion";
 import { Target, Heart, Lightbulb, MessageCircle, BookOpen, Award } from "lucide-react";
+import Image from "next/image";
+import { useState } from "react";
 
 const founders = [
   {
-    name: "Somya Deep",
-    role: "CA Accounting Specialist",
-    initials: "SD",
-    bio: "Chartered Accountant (CA). After clearing his exams, Somya realized that standard dropper courses focused too much on passive reading. He specializes in Financial Reporting and Advanced Accounting, helping repeaters build structural confidence in resolving timed exam papers.",
-    specialties: ["Financial Reporting", "Advanced Accounting", "Corporate Valuation"],
-    quote: "Exam confidence isn't about how many hours you study. It is about how many timed decisions you make under pressure.",
+    name: "Aditya Kanal",
+    role: "Founder",
+    initials: "AK",
+    image: "/MENTOR4.png",
+    bio: "Aditya is a first attempt Chartered Accountant and has passed level 1 of the CFA program. He is also an alumni of NMIMS, Mumbai, from where he studied Bsc Finance and passed out with a certificate of merit.\n\nHe works in valuations at a leading global advisory firm, where his day-to-day revolves around financial modelling, business valuation, and the kind of rigorous analytical work that CA students spend years training toward. Aditya also worked in valuations for his articleship, at a Big 4 firm.\n\nAlongside his practice, Aditya is an educator at heart — he built CAliber to bring that same rigour to CA aspirants, pairing real-world professional insight with structured mentorship and a results-driven approach. His goal is simple: help serious students not just clear their exams, but understand the “why” behind the numbers and walk into their careers genuinely prepared.",
+    specialties: ["Financial Modelling", "Business Valuation", "Mentorship"],
+    quote: "Help serious students not just clear their exams, but understand the “why” behind the numbers.",
   },
   {
-    name: "Aditya Kanal",
-    role: "CA Corporate Law & Audit Specialist",
-    initials: "AK",
-    bio: "Chartered Accountant (CA). Aditya specializes in translating heavy corporate law provisions and auditing standards into active mental retention schemas. His method relies on daily timed testing and live group discussions to lock in high-yielding ICAI exam topics.",
-    specialties: ["Business Laws", "Advanced Auditing", "Direct & Indirect Tax"],
-    quote: "If you practice without a timer, you're preparing for a homework assignment, not the CA exam.",
+    name: "CA Soumyadeep Pramanick",
+    role: "Founder",
+    initials: "SP",
+    image: "/MENTOR3.png",
+    bio: "Co-founder of CAliber Mentorships, CA Soumyadeep Pramanick is a finance professional with experience in Financial Due Diligence (FDD) and Startup Advisory through his articleship at Big5 and Boutique TAS Firm at Mumbai. He has secured exemptions in Direct Tax (DT), Indirect Tax (IDT), and Integrated Business Solutions (IBS) in the Chartered Accountancy course and is currently pursuing CPA Australia. Having mentored 50+ students and built a community of 10,000+ followers across social media, he is passionate about simplifying finance and guiding aspiring professionals through mentorship and industry-focused learning.",
+    specialties: ["Financial Due Diligence", "Startup Advisory", "Direct & Indirect Tax"],
+    quote: "Passionate about simplifying finance and guiding aspiring professionals.",
   },
 ];
 
+const mentors = [
+  {
+    name: "CA Madhya Jasani",
+    role: "Mentor",
+    initials: "MJ",
+    image: "/MENTOR1.png", // Provided photo
+    bio: "Hey everyone, I'm CA Madhya Jasani, and I'm super excited to help you all with your CA Final journey! I'm based in Mumbai and currently work as an AM for department Funds Practice and Transaction Advisory. I've been through this myself, so I know that passing the CA Final isn't just about how many hours you study—it's about how smart you are with those hours. We'll focus on studying smarter, not just harder. We'll work on realistic revision plans and use active recall techniques to make sure you remember everything for that crucial 1.5-day exam gap. I'll also help you with paper presentation and time management under pressure. If you're stuck on something or need help with your strategy, just reach out whenever you need me—let's make this effort count and get you to the finish line!",
+    specialties: ["Transaction Advisory", "Revision Planning", "Time Management"],
+  },
+  {
+    name: "CA Ishaan Wadekar",
+    role: "Mentor",
+    initials: "IW",
+    image: "/MENTOR2.png",
+    bio: "CA Ishaan Wadekar is an All India Rank 37 holder in the CA Final examination, having cleared all three levels of the Chartered Accountancy course on his first attempt. He secured exemptions in all six subjects at the CA Final level, including an outstanding 76 marks in Auditing, the highest among all his subjects. During his articleship at Deloitte, he gained exposure to statutory audits of listed and large private companies across multiple industries. As a mentor, Ishaan is passionate about helping CA students develop effective study strategies, strengthen conceptual understanding, and approach the examination with confidence and clarity, drawing from his own journey of consistent academic excellence.",
+    specialties: ["AIR 37 Holder", "Auditing", "Study Strategies"],
+  },
+  {
+    name: "CA Ishika Khurana",
+    role: "Mentor",
+    initials: "IK",
+    image: "/MENTOR5.png", // Uploaded photo
+    bio: "Ishika Khurana is a Chartered Accountant and finance professional with articleship experience in Business Valuation, having worked on valuation engagements for both listed and private companies across diverse sectors. A strong academic performer, she secured four exemptions in the CA Final examination, reflecting her dedication and technical proficiency.\n\nThrough structured guidance, practical study strategies, and continuous support, she aims to help students clear their examinations with confidence.",
+    specialties: ["Business Valuation", "Study Strategies", "Exemptions"],
+  }
+];
 const values = [
   { icon: <Target className="w-5 h-5" />, title: "Exam-first design", desc: "Every MCQ, every explanation, every timer is built to replicate actual CA exam conditions — not textbook reading." },
   { icon: <Heart className="w-5 h-5" />, title: "Student-centred", desc: "We obsess over the student experience. Mobile-first, no distractions, instant feedback on every question." },
@@ -30,8 +60,95 @@ const values = [
 ];
 
 export default function AboutPage() {
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
+
   return (
-    <div className="pt-16">
+    <div className="pt-6">
+      {/* ─── FOUNDERS & MENTORS ─── */}
+      <section id="mentors" className="pt-12 pb-24 bg-paper dark:bg-ink-navy/40 border-b border-line-gray-light dark:border-line-gray-dark">
+        <div className="max-w-6xl mx-auto px-6 sm:px-8">
+          <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-8">
+            <span className="text-xs font-semibold text-slate dark:text-paper/50 uppercase tracking-widest">Leadership & Mentors</span>
+            <h2 className="font-heading font-bold text-3xl sm:text-4xl text-ink-navy dark:text-paper mt-2">Meet the team</h2>
+          </motion.div>
+
+          {/* Founders Layer - Top 2 */}
+          <div className="max-w-6xl mx-auto mb-12">
+            <h3 className="font-heading font-bold text-xl text-center text-ink-navy dark:text-paper border-b border-line-gray-light dark:border-line-gray-dark pb-3 mb-6">Our Founders</h3>
+            <div className="grid md:grid-cols-2 gap-8">
+              {founders.map((f, i) => (
+                <motion.div key={f.name} initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}
+                  className="flex flex-col p-6 bg-white dark:bg-line-gray-dark/20 rounded-xl border border-line-gray-light dark:border-line-gray-dark">
+                  <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 mb-5">
+                    <div
+                      className="w-20 h-20 rounded-2xl border-4 border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/35 dark:bg-line-gray-dark/30 flex items-center justify-center text-ink-navy dark:text-paper font-heading font-bold text-2xl overflow-hidden relative shadow-sm flex-shrink-0 cursor-zoom-in hover:scale-105 transition-transform"
+                      onClick={() => { if (f.image) setZoomedImage(f.image); }}
+                    >
+                      {f.image ? (
+                        <Image src={f.image} alt={f.name} fill className="object-cover contrast-125 brightness-105" />
+                      ) : (
+                        f.initials
+                      )}
+                    </div>
+                    <div className="text-center sm:text-left mt-1 sm:mt-2">
+                      <p className="font-heading font-bold text-lg text-ink-navy dark:text-paper">{f.name}</p>
+                      <p className="text-[10px] font-bold text-signal-emerald uppercase mt-1">{f.role}</p>
+                    </div>
+                  </div>
+                  <div className="flex-1 flex flex-col space-y-4">
+                    <p className="text-xs text-slate dark:text-paper/70 leading-relaxed whitespace-pre-line max-h-[170px] overflow-y-auto pr-2 stylish-scrollbar">{f.bio}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {f.specialties.map((s) => (
+                        <span key={s} className="text-[9px] px-2.5 py-0.5 rounded bg-line-gray-light/60 dark:bg-line-gray-dark/40 text-slate dark:text-paper/60 font-semibold border border-line-gray-light/30">{s}</span>
+                      ))}
+                    </div>
+                    <blockquote className="border-l-2 border-amber-400 pl-4 text-[10px] italic font-medium text-slate dark:text-paper/80 pt-1 mt-auto">
+                      &ldquo;{f.quote}&rdquo;
+                    </blockquote>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+
+          {/* Mentors Layer - Bottom 3 */}
+          <div className="max-w-6xl mx-auto">
+            <h3 className="font-heading font-bold text-xl text-center text-ink-navy dark:text-paper border-b border-line-gray-light dark:border-line-gray-dark pb-3 mb-8">Expert Mentors</h3>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {mentors.map((m, i) => (
+                <motion.div key={m.name} initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}
+                  className="flex flex-col p-6 bg-white dark:bg-line-gray-dark/20 rounded-xl border border-line-gray-light dark:border-line-gray-dark hover:border-slate/40 dark:hover:border-paper/40 transition-colors">
+                  <div className="flex items-center gap-4 mb-4">
+                    <div
+                      className="w-16 h-16 rounded-xl border-2 border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/35 dark:bg-line-gray-dark/30 flex-shrink-0 flex items-center justify-center text-ink-navy dark:text-paper font-heading font-bold text-lg overflow-hidden relative shadow-sm cursor-zoom-in hover:scale-105 transition-transform"
+                      onClick={() => { if (m.image) setZoomedImage(m.image); }}
+                    >
+                      {m.image ? (
+                        <Image src={m.image} alt={m.name} fill className="object-cover contrast-125 brightness-105" />
+                      ) : (
+                        m.initials
+                      )}
+                    </div>
+                    <div>
+                      <p className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{m.name}</p>
+                      <p className="text-[10px] font-bold text-slate dark:text-paper/50 uppercase mt-0.5">{m.role}</p>
+                    </div>
+                  </div>
+                  <div className="flex-1 space-y-4">
+                    <p className="text-xs text-slate dark:text-paper/70 leading-relaxed max-h-[140px] overflow-y-auto pr-1 stylish-scrollbar">{m.bio}</p>
+                    <div className="flex flex-wrap gap-1.5 pt-2 border-t border-line-gray-light dark:border-line-gray-dark">
+                      {m.specialties.map((s) => (
+                        <span key={s} className="text-[9px] px-2 py-0.5 rounded bg-line-gray-light/60 dark:bg-line-gray-dark/40 text-slate dark:text-paper/60 font-semibold border border-line-gray-light/30">{s}</span>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ─── HERO ─── */}
       <section className="relative py-32 bg-paper dark:bg-ink-navy border-b border-line-gray-light dark:border-line-gray-dark">
         <div className="relative max-w-4xl mx-auto px-6 sm:px-8 text-center">
@@ -49,7 +166,7 @@ export default function AboutPage() {
         <div className="max-w-4xl mx-auto px-6 sm:px-8 space-y-8">
           <span className="text-xs font-semibold text-slate dark:text-paper/50 uppercase tracking-widest">Our Mission</span>
           <h2 className="font-heading font-bold text-3xl sm:text-4xl text-ink-navy dark:text-paper">
-            Why we built Caliber Education
+            Why we built CAliber Education
           </h2>
 
           <div className="grid sm:grid-cols-3 gap-6 mt-8">
@@ -69,49 +186,11 @@ export default function AboutPage() {
 
           <div className="mt-8 space-y-6 text-slate dark:text-paper/70 text-sm leading-relaxed">
             <p>
-              Somya and Aditya both cleared the rigorous CA examinations before co-founding Caliber. During their preparation and teaching tenures, they witnessed the same recurring issue: droppers who understood concepts perfectly still struggled to clear their examinations because they had not trained for the actual format.
+              Somya and Aditya both cleared the rigorous CA examinations before co-founding CAliber. During their preparation and teaching tenures, they witnessed the same recurring issue: droppers who understood concepts perfectly still struggled to clear their examinations because they had not trained for the actual format.
             </p>
             <p>
-              Traditional coaching courses rely heavily on passive lecture hours and massive textbook dumps. But pattern recognition and speed require active timed retrieval. Caliber provides exactly that—a streamlined workspace where every session behaves like a mock exam, complete with immediate explanations to help close knowledge gaps in real-time.
+              Traditional coaching courses rely heavily on passive lecture hours and massive textbook dumps. But pattern recognition and speed require active timed retrieval. CAliber provides exactly that—a streamlined workspace where every session behaves like a mock exam, complete with immediate explanations to help close knowledge gaps in real-time.
             </p>
-          </div>
-        </div>
-      </section>
-
-      {/* ─── FOUNDERS ─── */}
-      <section className="py-24 bg-paper dark:bg-ink-navy/40 border-b border-line-gray-light dark:border-line-gray-dark">
-        <div className="max-w-5xl mx-auto px-6 sm:px-8">
-          <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-16">
-            <span className="text-xs font-semibold text-slate dark:text-paper/50 uppercase tracking-widest">The Founders</span>
-            <h2 className="font-heading font-bold text-3xl sm:text-4xl text-ink-navy dark:text-paper mt-3">Meet the team</h2>
-          </motion.div>
-
-          <div className="space-y-8 max-w-4xl mx-auto">
-            {founders.map((f, i) => (
-              <motion.div key={f.name} initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}
-                className="flex flex-col sm:flex-row gap-6 p-6 sm:p-8 bg-white dark:bg-line-gray-dark/20 rounded-xl border border-line-gray-light dark:border-line-gray-dark">
-                <div className="flex-shrink-0 flex flex-col items-center gap-3">
-                  <div className="w-16 h-16 rounded-lg border border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/35 dark:bg-line-gray-dark/30 flex items-center justify-center text-ink-navy dark:text-paper font-heading font-bold text-xl">
-                    {f.initials}
-                  </div>
-                  <div className="text-center">
-                    <p className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{f.name}</p>
-                    <p className="text-[10px] font-bold text-slate dark:text-paper/50 uppercase mt-0.5">{f.role}</p>
-                  </div>
-                </div>
-                <div className="flex-1 space-y-4">
-                  <p className="text-xs text-slate dark:text-paper/70 leading-relaxed">{f.bio}</p>
-                  <div className="flex flex-wrap gap-2">
-                    {f.specialties.map((s) => (
-                      <span key={s} className="text-[10px] px-2.5 py-0.5 rounded bg-line-gray-light/60 dark:bg-line-gray-dark/40 text-slate dark:text-paper/60 font-semibold border border-line-gray-light/30">{s}</span>
-                    ))}
-                  </div>
-                  <blockquote className="border-l border-slate-350 dark:border-line-gray-dark pl-4 text-xs italic text-slate dark:text-paper/60">
-                    &ldquo;{f.quote}&rdquo;
-                  </blockquote>
-                </div>
-              </motion.div>
-            ))}
           </div>
         </div>
       </section>
@@ -156,6 +235,29 @@ export default function AboutPage() {
           </div>
         </div>
       </section>
+
+      {/* FULLSCREEN IMAGE MODAL */}
+      {zoomedImage && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-ink-navy/95 backdrop-blur-sm cursor-zoom-out p-4 sm:p-8"
+          onClick={() => setZoomedImage(null)}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="relative max-w-7xl max-h-[90vh] w-full h-full flex items-center justify-center"
+          >
+            <Image src={zoomedImage} alt="Zoomed view" fill className="object-contain drop-shadow-2xl contrast-125 brightness-105" />
+          </motion.div>
+          <button
+            onClick={() => setZoomedImage(null)}
+            className="absolute top-6 right-6 w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center text-white transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }

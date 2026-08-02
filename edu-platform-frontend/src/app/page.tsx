@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowRight, BookOpen, MessageCircle, Trophy, ChevronRight, Zap, Users, Star } from "lucide-react";
+import Image from "next/image";
 import { HeroMCQCard } from "@/components/HeroMCQCard";
 import { CourseCard } from "@/components/CourseCard";
 import { courses } from "@/lib/mockData";
@@ -17,21 +18,24 @@ const steps = [
 
 const founders = [
   {
-    name: "Somya Deep",
+    name: "CA Soumyadeep Pramanick",
     role: "CA Accounting & Finance Specialist",
     tagline: "Chartered Accountant. Specializes in building conceptual depth in Financial Reporting & Advanced Accounting for droppers.",
-    initials: "SD",
+    initials: "SP",
+    image: "/MENTOR3.png",
   },
   {
     name: "Aditya Kanal",
     role: "CA Law, Audit & Taxation Specialist",
     tagline: "Chartered Accountant. Decodes complex corporate laws and auditing standards through daily memory-retrieval practice.",
     initials: "AK",
+    image: "/MENTOR4.png",
   },
 ];
 
 export default function HomePage() {
   const previewCourses = courses.slice(0, 3);
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
 
   return (
     <div className="pt-16">
@@ -42,47 +46,56 @@ export default function HomePage() {
         </div>
 
         <div className="relative max-w-6xl mx-auto px-6 sm:px-8 py-10 w-full">
-          <div className="grid lg:grid-cols-12 gap-16 items-center">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: "easeOut" }} className="lg:col-span-7 space-y-10">
+          <div className="grid lg:grid-cols-2 gap-12 xl:gap-16 items-center">
+
+            {/* LEFT COLUMN: Flattering Text & CTA */}
+            <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5, ease: "easeOut" }} className="w-full text-center lg:text-left space-y-10">
               <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-line-gray-light/60 dark:bg-line-gray-dark/60 border border-line-gray-light dark:border-line-gray-dark rounded-full text-xs font-semibold text-slate dark:text-paper/70">
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-pulse" />
-                CA Foundation · Inter · Final — Dropper Prep 2026
+                <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse" />
+                Expert CA Mentorship
               </div>
               <div className="space-y-6">
-                <h1 className="font-heading text-4xl sm:text-5xl lg:text-6xl font-extrabold text-ink-navy dark:text-paper leading-[1.08] tracking-tight">
-                  Practice like <span className="underline decoration-line-gray-light dark:decoration-line-gray-dark">the exam</span>,{" "}
-                  <br className="hidden sm:block" />
-                  not like a textbook.
+                <h1 className="font-heading text-4xl sm:text-5xl lg:text-5xl xl:text-6xl font-extrabold text-ink-navy dark:text-paper leading-[1.08] tracking-tight">
+                  Guided by <span className="text-transparent bg-clip-text bg-gradient-to-r from-yellow-600 to-amber-400">the Masters.</span><br />
+                  Driven by your success.
                 </h1>
-                <p className="text-lg text-slate dark:text-paper/70 leading-relaxed max-w-xl">
-                  Timed MCQ sets that replicate real CA exam conditions. Built for droppers and serious repeaters who want results, not just notes.
+                <p className="text-lg text-slate dark:text-paper/70 leading-relaxed max-w-xl mx-auto lg:mx-0">
+                  Join the elite. Learn from India's most brilliant Chartered Accountants who combine unmatched industry expertise with an unwavering passion for mentoring. They don't just teach the syllabus—they inspire greatness and engineer your victory.
                 </p>
               </div>
-              <div className="flex flex-wrap gap-4">
-                <Link href="/courses" className="inline-flex items-center gap-2 px-6 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm">
-                  Browse Courses <ArrowRight className="w-4 h-4" />
+              <div className="flex flex-wrap gap-4 justify-center lg:justify-start">
+                <Link href="/about" className="inline-flex items-center gap-2 px-6 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm">
+                  Meet Your Mentors <ArrowRight className="w-4 h-4" />
                 </Link>
                 <Link href="/practice" className="inline-flex items-center gap-2 px-6 py-3 border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 font-semibold rounded-lg active:scale-[0.98] transition-all text-sm">
-                  <Zap className="w-4 h-4" /> Try Free MCQ Set
+                  <Zap className="w-4 h-4" /> Start Learning Free
                 </Link>
               </div>
-              <div className="flex items-center gap-8 pt-4 border-t border-line-gray-light dark:border-line-gray-dark max-w-md">
+
+              <div className="flex items-center justify-center lg:justify-start gap-8 pt-4 border-t border-line-gray-light dark:border-line-gray-dark w-full max-w-lg mx-auto lg:mx-0">
                 {[
-                  { val: "5,400+", label: "Students enrolled" },
+                  { val: "5,400+", label: "Students mentored" },
+                  { val: "Elite", label: "CA Faculty" },
                   { val: "4.8★", label: "Average rating" },
-                  { val: "1,200+", label: "MCQs in library" },
                 ].map((s, i) => (
-                  <div key={i} className="space-y-1">
-                    <div className="font-heading font-bold text-xl text-ink-navy dark:text-paper leading-none">{s.val}</div>
+                  <div key={i} className="space-y-1 text-center lg:text-left">
+                    <div className="font-heading font-bold text-2xl text-ink-navy dark:text-paper leading-none">{s.val}</div>
                     <div className="text-xs text-slate dark:text-paper/50">{s.label}</div>
                   </div>
                 ))}
               </div>
             </motion.div>
 
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: "easeOut", delay: 0.1 }} className="lg:col-span-5 flex justify-center lg:justify-end">
-              <HeroMCQCard />
+            {/* RIGHT COLUMN: The Mentors Photo */}
+            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.7, ease: "easeOut", delay: 0.2 }} className="w-full">
+              <div
+                className="relative w-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl shadow-ink-navy/10 dark:shadow-none border-[4px] sm:border-[8px] border-white dark:border-line-gray-dark/30 hover:scale-[1.02] transition-transform duration-500 cursor-zoom-in"
+                onClick={() => setZoomedImage("/CALIBER%20MENTORS.jpeg")}
+              >
+                <Image src="/CALIBER%20MENTORS.jpeg" alt="CAliber Mentors" width={1920} height={1080} className="w-full h-auto object-contain contrast-125 brightness-105" priority />
+              </div>
             </motion.div>
+
           </div>
         </div>
       </section>
@@ -121,7 +134,19 @@ export default function HomePage() {
               <motion.div key={f.name} initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}>
                 <Link href="/about" className="group block">
                   <div className="flex items-start gap-5 p-6 rounded-xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 hover:border-ink-navy dark:hover:border-paper transition-all duration-200">
-                    <div className="flex-shrink-0 w-12 h-12 rounded-lg border border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/35 dark:bg-line-gray-dark/30 flex items-center justify-center text-ink-navy dark:text-paper font-heading font-bold text-base">{f.initials}</div>
+                    <div
+                      className="flex-shrink-0 w-14 h-14 rounded-lg border border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/35 dark:bg-line-gray-dark/30 flex items-center justify-center text-ink-navy dark:text-paper font-heading font-bold text-base overflow-hidden relative shadow-sm cursor-zoom-in group-hover:scale-105 transition-transform"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (f.image) setZoomedImage(f.image);
+                      }}
+                    >
+                      {f.image ? (
+                        <Image src={f.image} alt={f.name} fill className="object-cover contrast-125 brightness-105" />
+                      ) : (
+                        f.initials
+                      )}
+                    </div>
                     <div className="flex-1 min-w-0 space-y-2">
                       <div className="flex items-center justify-between">
                         <h3 className="font-heading font-bold text-base text-ink-navy dark:text-paper">{f.name}</h3>
@@ -192,6 +217,29 @@ export default function HomePage() {
 
       {/* ─── FOOTER ─── */}
       <Footer />
+
+      {/* FULLSCREEN IMAGE MODAL */}
+      {zoomedImage && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-ink-navy/95 backdrop-blur-sm cursor-zoom-out p-4 sm:p-8"
+          onClick={() => setZoomedImage(null)}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="relative max-w-7xl max-h-[90vh] w-full h-full flex items-center justify-center"
+          >
+            <Image src={zoomedImage} alt="Zoomed view" fill className="object-contain drop-shadow-2xl contrast-125 brightness-105" />
+          </motion.div>
+          <button
+            onClick={() => setZoomedImage(null)}
+            className="absolute top-6 right-6 w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center text-white transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -234,7 +282,7 @@ function Footer() {
               <div className="w-8 h-8 bg-ink-navy dark:bg-paper rounded flex items-center justify-center">
                 <BookOpen className="w-4 h-4 text-paper dark:text-ink-navy" />
               </div>
-              <span className="font-heading font-bold text-lg">Caliber</span>
+              <span className="font-heading font-bold text-lg">CAliber</span>
             </div>
             <p className="text-xs text-slate dark:text-paper/60 leading-relaxed">Practice like the exam. Built by CAs who cracked it.</p>
             <p className="text-[10px] text-slate/40 dark:text-paper/40">Founded by Somya Deep & Aditya Kanal</p>
@@ -297,7 +345,7 @@ function Footer() {
           </div>
         </div>
         <div className="mt-16 pt-8 border-t border-line-gray-light dark:border-line-gray-dark flex flex-col sm:flex-row items-center justify-between gap-4 text-[10px] text-slate/40 dark:text-paper/40">
-          <span>© 2026 Caliber Education. All rights reserved.</span>
+          <span>© 2026 CAliber Education. All rights reserved.</span>
           <span>Made with ♥ for CA droppers & repeaters</span>
         </div>
       </div>

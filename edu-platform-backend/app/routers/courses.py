@@ -22,6 +22,11 @@ async def list_courses(
     result = query.execute()
     return result.data or []
 
+@router.get("/bundles", summary="Get all available course bundle discounts")
+async def list_course_bundles(db: Client = Depends(get_db)):
+    result = db.table("course_bundles").select("*").execute()
+    return result.data or []
+
 
 @router.get("/{course_id}")
 async def get_course(course_id: str, db: Client = Depends(get_db)):

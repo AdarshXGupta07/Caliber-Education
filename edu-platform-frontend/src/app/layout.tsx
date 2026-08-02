@@ -24,7 +24,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Caliber Education – CA Dropper Prep",
+  title: "CAliber Education",
   description:
     "Premium MCQ practice platform for CA Foundation, Intermediate & Final droppers. Timed mock sets, detailed explanations, and WhatsApp group access.",
 };

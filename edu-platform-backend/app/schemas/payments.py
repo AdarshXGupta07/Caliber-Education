@@ -4,6 +4,7 @@ from typing import Optional
 
 class CreateOrderRequest(BaseModel):
     courseId: str
+    couponCode: Optional[str] = None
 
 
 class CreateOrderResponse(BaseModel):

@@ -271,6 +271,8 @@ export const courses: Course[] = [
 
 export interface Question {
   id: number | string;
+  type?: "case" | "normal";
+  caseText?: string;
   text: string;
   options: string[];
   correctOptionIndex: number;

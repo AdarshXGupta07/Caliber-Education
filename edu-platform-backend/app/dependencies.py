@@ -22,6 +22,7 @@ def get_current_user(
     try:
         payload = decode_token(credentials.credentials)
         user_id: str = payload.get("sub")
+        session_id: str = payload.get("session_id")
         if not user_id:
             raise ValueError("Token missing sub claim")
     except (JWTError, ValueError):
@@ -36,6 +37,14 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
+        
+    # Enforce strictly 1 concurrent active session   
+    if session_id and result.data.get("active_session_id") and result.data.get("active_session_id") != session_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session concurrently expired: you have logged into this account from another device."
+        )
+        
     return result.data
 
 

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, CheckCircle, Lock, Users, Star, Clock,
-  BookOpen, MessageCircle, ChevronDown, ChevronRight, X, Zap, Copy, Check, Bell
+  BookOpen, MessageCircle, ChevronDown, ChevronRight, X, Zap, Copy, Check, Bell, Tag
 } from "lucide-react";
 import { courses as defaultCourses } from "@/lib/mockData";
 import { useAuth } from "@/context/AuthContext";
@@ -39,6 +39,55 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const [utrNumber, setUtrNumber] = useState("");
   const [utrLoading, setUtrLoading] = useState(false);
 
+  // ─── Coupon state ──────────────────────────────────────────────────────
+  const [couponCode, setCouponCode] = useState("");
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [appliedCoupon, setAppliedCoupon] = useState<{
+    code: string;
+    discount_amount: number;
+    message: string;
+  } | null>(null);
+  const [couponError, setCouponError] = useState("");
+
+  const handleApplyCoupon = async () => {
+    if (!couponCode.trim()) return;
+    setCouponLoading(true);
+    setCouponError("");
+    setAppliedCoupon(null);
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/coupons/validate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({ code: couponCode.trim(), course_id: course?.id }),
+      });
+      const data = await res.json();
+      if (data.valid) {
+        setAppliedCoupon({
+          code: data.code,
+          discount_amount: data.discount_amount,
+          message: data.message,
+        });
+      } else {
+        setCouponError(data.message || "Invalid coupon code.");
+      }
+    } catch {
+      setCouponError("Unable to validate coupon. Try again.");
+    } finally {
+      setCouponLoading(false);
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponCode("");
+    setCouponError("");
+  };
+
   const handleUpiSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!utrNumber || utrNumber.length < 10) {
@@ -56,7 +105,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
-        body: JSON.stringify({ courseId: course?.id, utrNumber }),
+        body: JSON.stringify({ courseId: course?.id, utrNumber, couponCode: appliedCoupon?.code || null }),
       });
 
       if (res.ok) {
@@ -120,7 +169,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
-        body: JSON.stringify({ courseId: course.id }),
+        body: JSON.stringify({ courseId: course.id, couponCode: appliedCoupon?.code || null }),
       });
 
       if (!res.ok) {
@@ -133,7 +182,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
         key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_xxxxxxx",
         amount: orderData.amount,
         currency: orderData.currency || "INR",
-        name: "Caliber Education",
+        name: "CAliber Education",
         description: course.title,
         order_id: orderData.orderId,
         handler: async function (response: any) {
@@ -341,17 +390,79 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                       {course.price === 0 ? (
                         <span className="font-heading font-extrabold text-3xl text-ink-navy dark:text-paper">Free</span>
                       ) : (
-                        <div className="flex items-baseline gap-2">
-                          <span className="font-heading font-extrabold text-3xl text-ink-navy dark:text-paper">
-                            {typeof course.price === "string" ? course.price : `₹${course.price.toLocaleString()}`}
-                          </span>
-                          {typeof course.price === "number" && (
-                            <span className="text-xs text-slate dark:text-paper/40 font-medium">one-time</span>
+                        <div className="space-y-1">
+                          <div className="flex items-baseline gap-2">
+                            {appliedCoupon ? (
+                              <>
+                                <span className="font-heading font-extrabold text-3xl text-ink-navy dark:text-paper">
+                                  ₹{(typeof course.price === "number" ? course.price - appliedCoupon.discount_amount : 0).toLocaleString()}
+                                </span>
+                                <span className="font-heading font-bold text-lg text-slate/40 line-through">
+                                  ₹{typeof course.price === "number" ? course.price.toLocaleString() : course.price}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="font-heading font-extrabold text-3xl text-ink-navy dark:text-paper">
+                                {typeof course.price === "string" ? course.price : `₹${course.price.toLocaleString()}`}
+                              </span>
+                            )}
+                            {typeof course.price === "number" && (
+                              <span className="text-xs text-slate dark:text-paper/40 font-medium">one-time</span>
+                            )}
+                          </div>
+                          {appliedCoupon && (
+                            <div className="flex items-center gap-1.5 text-xs font-bold text-signal-emerald">
+                              <Tag className="w-3.5 h-3.5" />
+                              You save ₹{appliedCoupon.discount_amount.toLocaleString()}
+                            </div>
                           )}
                         </div>
                       )}
                     </div>
                   </div>
+
+                  {/* ─── Coupon Code Input ─── */}
+                  {typeof course.price === "number" && course.price > 0 && !isComingSoon && !isPurchased && !isPending && (
+                    <div className="space-y-2">
+                      {appliedCoupon ? (
+                        <div className="flex items-center justify-between p-3 bg-signal-emerald/10 border border-signal-emerald/30 rounded-xl">
+                          <div className="flex items-center gap-2">
+                            <Tag className="w-4 h-4 text-signal-emerald" />
+                            <div>
+                              <p className="text-xs font-bold text-signal-emerald">{appliedCoupon.code}</p>
+                              <p className="text-[10px] text-signal-emerald/70">{appliedCoupon.message}</p>
+                            </div>
+                          </div>
+                          <button onClick={handleRemoveCoupon} className="p-1 rounded-lg text-signal-emerald/60 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={couponCode}
+                              onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                              placeholder="Coupon code"
+                              className="flex-1 px-3 py-2 text-xs font-mono uppercase border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/30 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors tracking-wider placeholder:lowercase placeholder:tracking-normal placeholder:font-sans"
+                              onKeyDown={(e) => e.key === "Enter" && handleApplyCoupon()}
+                            />
+                            <button
+                              onClick={handleApplyCoupon}
+                              disabled={couponLoading || !couponCode.trim()}
+                              className="px-4 py-2 text-xs font-bold border border-ink-navy dark:border-paper text-ink-navy dark:text-paper rounded-lg hover:bg-ink-navy/5 dark:hover:bg-paper/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              {couponLoading ? "..." : "Apply"}
+                            </button>
+                          </div>
+                          {couponError && (
+                            <p className="text-[10px] font-semibold text-alert-coral mt-1">{couponError}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Dynamic CTA logic */}
                   {isComingSoon ? (

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import React, { Fragment, useEffect, useState, createContext, useContext } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
@@ -13,10 +13,61 @@ import {
 import {
   Shield, ShieldOff, CheckCircle, XCircle, Upload, Plus, BookOpen,
   Users, Clock, CheckCheck, AlertTriangle, Trash2, ChevronDown,
-  ChevronRight, Edit2, X, GripVertical, RefreshCw,
+  ChevronRight, Edit2, X, GripVertical, RefreshCw, Download, Tag, UserCheck
 } from "lucide-react";
 
 const inp = "w-full px-3 py-2 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-xl focus:outline-none focus:border-signal-emerald transition-colors";
+
+const ConfirmContext = createContext<{ confirm: (msg: string) => Promise<boolean> } | null>(null);
+const useConfirm = () => {
+  const ctx = useContext(ConfirmContext);
+  if (!ctx) return async () => window.confirm("Please confirm action.");
+  return ctx.confirm;
+};
+
+function ConfirmProvider({ children }: { children: React.ReactNode }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [message, setMessage] = useState("");
+  const [resolver, setResolver] = useState<{ resolve: (val: boolean) => void } | null>(null);
+
+  const confirm = (msg: string) => {
+    setMessage(msg);
+    setIsOpen(true);
+    return new Promise<boolean>((resolve) => {
+      setResolver({ resolve });
+    });
+  };
+
+  const handleConfirm = () => {
+    setIsOpen(false);
+    if (resolver) resolver.resolve(true);
+  };
+
+  const handleCancel = () => {
+    setIsOpen(false);
+    if (resolver) resolver.resolve(false);
+  };
+
+  return (
+    <ConfirmContext.Provider value={{ confirm }}>
+      {children}
+      <AnimatePresence>
+        {isOpen && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-ink-navy/40 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white dark:bg-line-gray-dark border border-line-gray-light dark:border-line-gray-dark rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-xl">
+              <h3 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Confirm Action</h3>
+              <p className="text-sm text-slate dark:text-paper/60">{message}</p>
+              <div className="flex gap-3 justify-end pt-2">
+                <button onClick={handleCancel} className="px-4 py-2 text-sm font-semibold rounded-xl text-slate dark:text-paper/60 border border-line-gray-light dark:border-line-gray-dark hover:bg-line-gray-light dark:hover:bg-line-gray-dark/50 transition-colors">Cancel</button>
+                <button onClick={handleConfirm} className="px-4 py-2 text-sm font-semibold rounded-xl bg-alert-coral text-white hover:opacity-90 transition-colors">Confirm</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </ConfirmContext.Provider>
+  );
+}
 
 // ─── Root ────────────────────────────────────────────────────────────────
 export default function AdminPage() {
@@ -36,7 +87,11 @@ export default function AdminPage() {
     );
   }
   if (user.role !== "admin") return <AccessDenied onToggle={toggleRole} />;
-  return <AdminDashboard />;
+  return (
+    <ConfirmProvider>
+      <AdminDashboard />
+    </ConfirmProvider>
+  );
 }
 
 function AccessDenied({ onToggle }: { onToggle: () => void }) {
@@ -58,7 +113,7 @@ function AccessDenied({ onToggle }: { onToggle: () => void }) {
   );
 }
 
-type AdminTab = "payments" | "users" | "mcq" | "series" | "courses" | "evaluations";
+type AdminTab = "payments" | "users" | "mcq" | "series" | "courses" | "evaluations" | "coupons" | "affiliates";
 
 interface PendingEvaluation {
   id: string;
@@ -321,16 +376,44 @@ function EvaluationsTab() {
 
 function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<AdminTab>("payments");
-  const [series, setSeries] = useState<MCQSeries[]>(mcqSeries);
+  const [series, setSeries] = useState<MCQSeries[]>([]);
   const { verifications } = useAuth();
+
+  useEffect(() => {
+    async function loadSeries() {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+        const res = await fetch(`${apiURL}/api/admin/mcq-series`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          // Map DB snake_case if necessary, or just standard fields
+          setSeries(data.map((s: any) => ({
+            id: s.id,
+            title: s.title,
+            subject: s.subject || "",
+            description: s.description || "",
+            price: s.price || 0,
+            isLocked: s.is_locked || false
+          })));
+        }
+      } catch (e) { }
+    }
+    loadSeries();
+  }, []);
 
   const tabs: { id: AdminTab; label: string }[] = [
     { id: "payments", label: "Payments" },
     { id: "users", label: "Users" },
+    { id: "coupons", label: "Coupons" },
+    { id: "affiliates", label: "Affiliates" },
     { id: "mcq", label: "MCQ Sets" },
-    { id: "series", label: "Series" },
-    { id: "courses", label: "Courses" },
-    { id: "evaluations", label: "Evaluations" },
+    { id: "series" as any, label: "Series" },
+    { id: "courses" as any, label: "Courses" },
+    { id: "bundles" as any, label: "Bundles" },
+    { id: "evaluations" as any, label: "Evaluations" },
   ];
 
   return (
@@ -353,7 +436,7 @@ function AdminDashboard() {
             { icon: <Users className="w-4 h-4" />, value: registeredUsers.length.toString(), label: "Registered Users", color: "text-signal-emerald" },
             { icon: <BookOpen className="w-4 h-4" />, value: initialCourses.length.toString(), label: "Active Courses", color: "text-blue-500" },
             { icon: <Clock className="w-4 h-4" />, value: verifications.filter(v => v.status === "pending").length.toString(), label: "Pending Payments", color: "text-yellow-500" },
-            { icon: <Upload className="w-4 h-4" />, value: mcqSets.length.toString(), label: "MCQ Sets", color: "text-purple-500" },
+            { icon: <Upload className="w-4 h-4" />, value: "Active", label: "MCQ Sets", color: "text-purple-500" },
           ].map((s, i) => (
             <motion.div key={s.label} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
               className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl p-4">
@@ -364,10 +447,10 @@ function AdminDashboard() {
           ))}
         </div>
 
-        <div className="flex gap-1 p-1 bg-line-gray-light dark:bg-line-gray-dark rounded-xl w-fit flex-wrap">
+        <div className="flex gap-1 p-1 bg-line-gray-light dark:bg-line-gray-dark rounded-xl w-full sm:w-fit overflow-x-auto whitespace-nowrap" style={{ scrollbarWidth: "none" }}>
           {tabs.map((t) => (
             <button key={t.id} onClick={() => setActiveTab(t.id)}
-              className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${activeTab === t.id ? "bg-white dark:bg-ink-navy text-ink-navy dark:text-paper shadow-sm" : "text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper"
+              className={`flex-shrink-0 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${(activeTab as string) === t.id ? "bg-white dark:bg-ink-navy text-ink-navy dark:text-paper shadow-sm" : "text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper"
                 }`}>
               {t.label}
             </button>
@@ -375,12 +458,15 @@ function AdminDashboard() {
         </div>
 
         <AnimatePresence mode="wait">
-          {activeTab === "payments" && <PaymentsTab key="payments" />}
-          {activeTab === "users" && <UsersTab key="users" />}
-          {activeTab === "mcq" && <MCQSetsTab key="mcq" series={series} />}
-          {activeTab === "series" && <SeriesTab key="series" items={series} setItems={setSeries} />}
-          {activeTab === "courses" && <CoursesTab key="courses" series={series} />}
-          {activeTab === "evaluations" && <EvaluationsTab key="evaluations" />}
+          {(activeTab as string) === "payments" && <PaymentsTab key="payments" />}
+          {(activeTab as string) === "users" && <UsersTab key="users" />}
+          {(activeTab as string) === "coupons" && <CouponsTab key="coupons" />}
+          {(activeTab as string) === "affiliates" && <AffiliatesTab key="affiliates" />}
+          {(activeTab as string) === "mcq" && <MCQSetsTab key="mcq" series={series} />}
+          {(activeTab as string) === "series" && <SeriesTab key="series" items={series} setItems={setSeries} />}
+          {(activeTab as string) === "courses" && <CoursesTab key="courses" series={series} />}
+          {(activeTab as string) === "bundles" && <BundlesTab key="bundles" />}
+          {(activeTab as string) === "evaluations" && <EvaluationsTab key="evaluations" />}
         </AnimatePresence>
       </div>
     </div>
@@ -479,11 +565,114 @@ function PaymentsTab() {
 // ─── USERS TAB ───────────────────────────────────────────────────────────
 function UsersTab() {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [localUsers, setLocalUsers] = useState(registeredUsers);
+  const confirm = useConfirm();
+
+  const handleUnenrollFromUser = async (userId: string, pIndex: number, cTitle: string) => {
+    if (!(await confirm(`Are you sure you want to unenroll student from ${cTitle}?`))) return;
+    const newUsers = [...localUsers];
+    const uIndex = newUsers.findIndex(u => u.id === userId);
+    if (uIndex !== -1) {
+      const userCopy = { ...newUsers[uIndex] };
+      userCopy.purchases = [...userCopy.purchases];
+      userCopy.purchases.splice(pIndex, 1);
+      newUsers[uIndex] = userCopy;
+      setLocalUsers(newUsers);
+    }
+  };
+
+  const handleExportCSV = async () => {
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/users`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      let usersToExport = localUsers;
+      if (res.ok) {
+        usersToExport = await res.json();
+      }
+
+      const cMap = new Map<string, string>();
+      initialCourses.forEach(c => cMap.set(c.title, c.duration));
+
+      const headers = [
+        "ID", "Email", "Full Name", "Phone", "Address", "Stage", "Attempt Status",
+        "User Joined At", "Course Selected", "Enrollment Date", "End Date", "Total Duration"
+      ];
+      const csvRows = [headers.join(",")];
+
+      for (const user of usersToExport) {
+        const u = user as any;
+        const id = u.id || "";
+        const email = u.email || "";
+        const fullName = u.full_name || u.fullName || "";
+        const phone = u.phone_number || u.phoneNumber || "";
+        const address = `"${(u.address || "").replace(/"/g, '""')}"`;
+        const stage = u.stage || "";
+        const attempt = u.attempt_status || u.attemptStatus || "";
+        const joined = u.created_at || u.joinDate || "";
+
+        if (u.purchases && u.purchases.length > 0) {
+          for (const purchase of u.purchases) {
+            const courseTitle = `"${(purchase.courseTitle || "").replace(/"/g, '""')}"`;
+            const enrollDate = purchase.date || "";
+
+            let duration = cMap.get(purchase.courseTitle) || "";
+            let endDate = "";
+
+            if (duration && enrollDate) {
+              const dNum = parseInt(duration);
+              if (!isNaN(dNum)) {
+                const dateObj = new Date(enrollDate);
+                if (!isNaN(dateObj.getTime())) {
+                  if (duration.toLowerCase().includes("week")) {
+                    dateObj.setDate(dateObj.getDate() + dNum * 7);
+                    endDate = dateObj.toLocaleDateString("en-CA");
+                  } else if (duration.toLowerCase().includes("month")) {
+                    dateObj.setMonth(dateObj.getMonth() + dNum);
+                    endDate = dateObj.toLocaleDateString("en-CA");
+                  } else {
+                    endDate = "N/A";
+                  }
+                } else {
+                  endDate = "N/A";
+                }
+              } else {
+                endDate = "N/A";
+              }
+            }
+
+            csvRows.push([id, email, fullName, phone, address, stage, attempt, joined, courseTitle, enrollDate, endDate, duration].join(","));
+          }
+        } else {
+          csvRows.push([id, email, fullName, phone, address, stage, attempt, joined, "None", "", "", ""].join(","));
+        }
+      }
+
+      const blob = new Blob([csvRows.join("\n")], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `caliber_students_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      alert("Failed to export CSV. Try again later.");
+    }
+  };
+
   return (
     <motion.div key="users" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
-      <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Registered Users</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Registered Users</h2>
+        <button onClick={handleExportCSV} className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-signal-emerald text-white rounded-xl hover:bg-signal-emerald/90 transition-colors">
+          <Download className="w-3.5 h-3.5" /> Export to CSV
+        </button>
+      </div>
       <div className="space-y-2">
-        {registeredUsers.map((u, i) => (
+        {localUsers.map((u, i) => (
           <motion.div key={u.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
             className="rounded-2xl border border-line-gray-light dark:border-line-gray-dark overflow-hidden bg-white dark:bg-line-gray-dark/20">
             <button onClick={() => setExpanded(expanded === u.id ? null : u.id)}
@@ -506,9 +695,15 @@ function UsersTab() {
                       <p className="text-xs font-semibold text-ink-navy dark:text-paper uppercase tracking-wide mb-2">Purchases</p>
                       {u.purchases.length === 0 ? <p className="text-xs text-slate dark:text-paper/50">No purchases yet.</p> : (
                         <div className="space-y-1.5">{u.purchases.map((p, pi) => (
-                          <div key={pi} className="flex items-center justify-between text-xs">
-                            <span className="text-ink-navy dark:text-paper">{p.courseTitle}</span>
-                            <div className="flex items-center gap-3 text-slate dark:text-paper/50"><span className="font-mono font-semibold text-ink-navy dark:text-paper">₹{p.amount.toLocaleString()}</span><span>{p.date}</span></div>
+                          <div key={pi} className="flex items-center justify-between text-xs p-2 rounded border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/40">
+                            <span className="text-ink-navy dark:text-paper font-medium">{p.courseTitle}</span>
+                            <div className="flex items-center gap-3 text-slate dark:text-paper/50">
+                              <span className="font-mono font-semibold text-ink-navy dark:text-paper">₹{p.amount.toLocaleString()}</span>
+                              <span>{p.date}</span>
+                              <button onClick={() => handleUnenrollFromUser(u.id, pi, p.courseTitle)} className="p-1 rounded bg-alert-coral/10 text-alert-coral hover:bg-alert-coral/20 hover:text-alert-coral transition-colors" title="Unenroll student">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
                         ))}</div>
                       )}
@@ -542,7 +737,7 @@ type SetDraft = Omit<MCQSet, "sections"> & { sections: SectionDraft[] };
 type SectionDraft = { id: string; title: string; questions: Question[] };
 
 const emptyQuestion = (): Question => ({
-  id: crypto.randomUUID(), text: "", options: ["", "", "", ""], correctOptionIndex: 0, explanation: ""
+  id: crypto.randomUUID(), type: "case", caseText: "", text: "", options: ["", "", "", ""], correctOptionIndex: 0, explanation: ""
 });
 
 const emptySection = (sIndex: number): SectionDraft => ({
@@ -550,12 +745,29 @@ const emptySection = (sIndex: number): SectionDraft => ({
 });
 
 function MCQSetsTab({ series }: { series: MCQSeries[] }) {
-  const [sets, setSets] = useState<SetDraft[]>(
-    mcqSets.map(s => ({ ...s, sections: s.sections.map(sec => ({ ...sec, questions: sec.questions.map(q => ({ ...q, options: [...q.options] })) })) }))
-  );
+  const confirm = useConfirm();
+  const [sets, setSets] = useState<SetDraft[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SetDraft | null>(null);
   const [expandedSeries, setExpandedSeries] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadSets() {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+        const res = await fetch(`${apiURL}/api/admin/mcq-sets`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          // Enriched sets mapped nicely by backend 
+          setSets(data);
+        }
+      } catch (e) { }
+    }
+    loadSets();
+  }, []);
 
   function openNew() {
     const d: SetDraft = {
@@ -594,7 +806,7 @@ function MCQSetsTab({ series }: { series: MCQSeries[] }) {
   }
 
   async function deleteSet(id: string) {
-    if (!window.confirm("Delete MCQ Set permanently?")) return;
+    if (!(await confirm("Delete MCQ Set permanently?"))) return;
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const token = localStorage.getItem("caliber_jwt") || "";
@@ -719,6 +931,16 @@ function MCQSetsTab({ series }: { series: MCQSeries[] }) {
                         <button onClick={() => removeQuestion(si, qi)} className="p-1 rounded hover:bg-alert-coral/10 text-slate dark:text-paper/50 hover:text-alert-coral transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
                     </div>
+                    <div className="flex items-center gap-4 mb-3">
+                      <label className="text-xs font-medium text-slate dark:text-paper/70">Question Type:</label>
+                      <select className={`${inp} w-auto`} value={q.type || "case"} onChange={e => updateQuestion(si, qi, { ...q, type: e.target.value as "case" | "normal" })}>
+                        <option value="case">Case Based (Default)</option>
+                        <option value="normal">Normal MCQ</option>
+                      </select>
+                    </div>
+                    {(!q.type || q.type === "case") && (
+                      <div className="mb-3"><label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Case / Passage Text</label><textarea className={`${inp} resize-y`} minLength={20} rows={4} value={q.caseText || ""} onChange={e => updateQuestion(si, qi, { ...q, caseText: e.target.value })} /></div>
+                    )}
                     <div><label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Question Text</label><textarea className={`${inp} resize-none`} rows={2} value={q.text} onChange={e => updateQuestion(si, qi, { ...q, text: e.target.value })} /></div>
                     <div className="grid sm:grid-cols-2 gap-2">
                       {q.options.map((opt, oi) => (
@@ -811,6 +1033,7 @@ function MCQSetsTab({ series }: { series: MCQSeries[] }) {
 
 // ─── SERIES TAB ──────────────────────────────────────────────────────────
 function SeriesTab({ items, setItems }: { items: MCQSeries[]; setItems: React.Dispatch<React.SetStateAction<MCQSeries[]>> }) {
+  const confirm = useConfirm();
   const [draft, setDraft] = useState<MCQSeries | null>(null);
   const startNew = () => setDraft({ id: crypto.randomUUID(), title: "", subject: "", description: "", price: 0, isLocked: false });
   const save = async () => {
@@ -836,7 +1059,7 @@ function SeriesTab({ items, setItems }: { items: MCQSeries[]; setItems: React.Di
   };
 
   const removeSeries = async (id: string) => {
-    if (!window.confirm("Delete series permanently?")) return;
+    if (!(await confirm("Delete series permanently?"))) return;
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const token = localStorage.getItem("caliber_jwt") || "";
@@ -913,6 +1136,7 @@ interface EnrolledStudentItem {
 }
 
 function EnrolledStudentsPanel({ courseId }: { courseId: string }) {
+  const confirm = useConfirm();
   const [enrolled, setEnrolled] = useState<EnrolledStudentItem[]>([]);
   const [users, setUsers] = useState<{ id: string; email: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1008,8 +1232,7 @@ function EnrolledStudentsPanel({ courseId }: { courseId: string }) {
   };
 
   const handleRemoveStudent = async (enrollmentId: string) => {
-    const confirm = window.confirm("Are you sure you want to remove this student's access?");
-    if (!confirm) return;
+    if (!(await confirm("Are you sure you want to remove this student's access?"))) return;
 
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
@@ -1161,6 +1384,7 @@ function EnrolledStudentsPanel({ courseId }: { courseId: string }) {
 }
 
 function CoursesTab({ series }: { series: MCQSeries[] }) {
+  const confirm = useConfirm();
   const [courseList, setCourseList] = useState<CourseDraft[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<CourseDraft | null>(null);
@@ -1226,7 +1450,7 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
   }
 
   async function deleteCourse(id: string) {
-    if (!window.confirm("Delete course permanently from database?")) return;
+    if (!(await confirm("Delete course permanently from database?"))) return;
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const token = localStorage.getItem("caliber_jwt") || "";
@@ -1378,3 +1602,699 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
     </motion.div>
   );
 }
+
+// ─── COUPONS TAB ─────────────────────────────────────────────────────────
+interface CouponItem {
+  id: string;
+  code: string;
+  discount_type: "percent" | "flat";
+  discount_value: number;
+  affiliate_id: string | null;
+  affiliates?: { name: string; email: string } | null;
+  max_uses: number | null;
+  used_count: number;
+  max_uses_per_user: number;
+  valid_from: string | null;
+  valid_until: string | null;
+  applicable_course_ids: string[];
+  is_active: boolean;
+  created_at: string;
+}
+
+interface CouponDraft {
+  code: string;
+  discount_type: "percent" | "flat";
+  discount_value: number;
+  affiliate_id: string;
+  max_uses: string;
+  max_uses_per_user: number;
+  valid_from: string;
+  valid_until: string;
+  applicable_course_ids: string[];
+  is_active: boolean;
+}
+
+function CouponsTab() {
+  const confirm = useConfirm();
+  const [coupons, setCoupons] = useState<CouponItem[]>([]);
+  const [affiliates, setAffiliates] = useState<{ id: string; name: string; email: string }[]>([]);
+  const [courses, setCourses] = useState<{ id: string; title: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<CouponDraft>({
+    code: "", discount_type: "percent", discount_value: 10,
+    affiliate_id: "", max_uses: "", max_uses_per_user: 1,
+    valid_from: "", valid_until: "", applicable_course_ids: [], is_active: true,
+  });
+
+  const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+  const token = typeof window !== "undefined" ? localStorage.getItem("caliber_jwt") || "" : "";
+  const headers = { "Content-Type": "application/json", "Authorization": `Bearer ${token}` };
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        const [cRes, aRes, coRes] = await Promise.all([
+          fetch(`${apiURL}/api/admin/coupons`, { headers }),
+          fetch(`${apiURL}/api/admin/affiliates`, { headers }),
+          fetch(`${apiURL}/api/admin/courses`, { headers }),
+        ]);
+        if (cRes.ok) setCoupons(await cRes.json());
+        if (aRes.ok) setAffiliates(await aRes.json());
+        if (coRes.ok) {
+          const courseData = await coRes.json();
+          setCourses(courseData.map((c: any) => ({ id: c.id, title: c.title })));
+        }
+      } catch { /* fallback */ }
+      finally { setLoading(false); }
+    };
+    load();
+  }, []);
+
+  const resetDraft = () => {
+    setDraft({
+      code: "", discount_type: "percent", discount_value: 10,
+      affiliate_id: "", max_uses: "", max_uses_per_user: 1,
+      valid_from: "", valid_until: "", applicable_course_ids: [], is_active: true,
+    });
+    setEditingId(null);
+    setShowForm(false);
+  };
+
+  const openEdit = (c: CouponItem) => {
+    setDraft({
+      code: c.code,
+      discount_type: c.discount_type,
+      discount_value: c.discount_value,
+      affiliate_id: c.affiliate_id || "",
+      max_uses: c.max_uses?.toString() || "",
+      max_uses_per_user: c.max_uses_per_user,
+      valid_from: c.valid_from?.slice(0, 16) || "",
+      valid_until: c.valid_until?.slice(0, 16) || "",
+      applicable_course_ids: c.applicable_course_ids || [],
+      is_active: c.is_active,
+    });
+    setEditingId(c.id);
+    setShowForm(true);
+  };
+
+  const handleSave = async () => {
+    if (!draft.code.trim()) return;
+    const payload: any = {
+      code: draft.code.trim(),
+      discount_type: draft.discount_type,
+      discount_value: draft.discount_value,
+      affiliate_id: draft.affiliate_id || null,
+      max_uses: draft.max_uses ? parseInt(draft.max_uses) : null,
+      max_uses_per_user: draft.max_uses_per_user,
+      valid_from: draft.valid_from || null,
+      valid_until: draft.valid_until || null,
+      applicable_course_ids: draft.applicable_course_ids,
+      is_active: draft.is_active,
+    };
+    try {
+      const url = editingId ? `${apiURL}/api/admin/coupons/${editingId}` : `${apiURL}/api/admin/coupons`;
+      const method = editingId ? "PATCH" : "POST";
+      const res = await fetch(url, { method, headers, body: JSON.stringify(payload) });
+      if (res.ok) {
+        const saved = await res.json();
+        if (editingId) {
+          setCoupons(prev => prev.map(c => c.id === editingId ? { ...c, ...saved } : c));
+        } else {
+          setCoupons(prev => [saved, ...prev]);
+        }
+        resetDraft();
+      } else {
+        const err = await res.json();
+        alert(err.detail || "Failed to save coupon.");
+      }
+    } catch { alert("Error contacting server."); }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!(await confirm("Delete this coupon permanently?"))) return;
+    try {
+      const res = await fetch(`${apiURL}/api/admin/coupons/${id}`, { method: "DELETE", headers });
+      if (res.ok) setCoupons(prev => prev.filter(c => c.id !== id));
+    } catch { alert("Error deleting coupon."); }
+  };
+
+  const toggleCourseInDraft = (courseId: string) => {
+    setDraft(prev => ({
+      ...prev,
+      applicable_course_ids: prev.applicable_course_ids.includes(courseId)
+        ? prev.applicable_course_ids.filter(id => id !== courseId)
+        : [...prev.applicable_course_ids, courseId],
+    }));
+  };
+
+  return (
+    <motion.div key="coupons" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Coupon Codes</h2>
+          <p className="text-xs text-slate dark:text-paper/50">Create discount codes and link them to affiliates.</p>
+        </div>
+        <button onClick={() => { resetDraft(); setShowForm(true); }} className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-signal-emerald text-white rounded-xl hover:bg-signal-emerald/90 transition-colors">
+          <Plus className="w-3.5 h-3.5" /> New Coupon
+        </button>
+      </div>
+
+      {/* Form */}
+      <AnimatePresence>
+        {showForm && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+            <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase tracking-wide">{editingId ? "Edit Coupon" : "Create Coupon"}</p>
+                <button onClick={resetDraft} className="p-1 rounded hover:bg-line-gray-light dark:hover:bg-line-gray-dark"><X className="w-4 h-4 text-slate dark:text-paper/60" /></button>
+              </div>
+              <div className="grid sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Code</label>
+                  <input className={inp} placeholder="e.g. RAHUL20" value={draft.code} onChange={e => setDraft({ ...draft, code: e.target.value.toUpperCase() })} disabled={!!editingId} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Discount Type</label>
+                  <select className={inp} value={draft.discount_type} onChange={e => setDraft({ ...draft, discount_type: e.target.value as "percent" | "flat" })}>
+                    <option value="percent">Percentage (%)</option>
+                    <option value="flat">Flat (₹)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Discount Value</label>
+                  <input type="number" min="0" className={inp} value={draft.discount_value} onChange={e => setDraft({ ...draft, discount_value: Number(e.target.value) })} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Linked Affiliate</label>
+                  <select className={inp} value={draft.affiliate_id} onChange={e => setDraft({ ...draft, affiliate_id: e.target.value })}>
+                    <option value="">None (standalone coupon)</option>
+                    {affiliates.map(a => <option key={a.id} value={a.id}>{a.name} ({a.email})</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Max Total Uses</label>
+                  <input type="number" min="0" className={inp} placeholder="Unlimited" value={draft.max_uses} onChange={e => setDraft({ ...draft, max_uses: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Max Uses / User</label>
+                  <input type="number" min="1" className={inp} value={draft.max_uses_per_user} onChange={e => setDraft({ ...draft, max_uses_per_user: Number(e.target.value) })} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Valid From</label>
+                  <input type="datetime-local" className={inp} value={draft.valid_from} onChange={e => setDraft({ ...draft, valid_from: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Valid Until</label>
+                  <input type="datetime-local" className={inp} value={draft.valid_until} onChange={e => setDraft({ ...draft, valid_until: e.target.value })} />
+                </div>
+                <div className="flex items-end pb-0.5">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={draft.is_active} onChange={e => setDraft({ ...draft, is_active: e.target.checked })} className="accent-signal-emerald w-4 h-4" />
+                    <span className="text-ink-navy dark:text-paper font-medium">Active</span>
+                  </label>
+                </div>
+              </div>
+              {courses.length > 0 && (
+                <div>
+                  <label className="text-xs font-medium text-slate dark:text-paper/70 mb-2 block">Applicable Courses (empty = all courses)</label>
+                  <div className="flex flex-wrap gap-2">
+                    {courses.map(c => (
+                      <button key={c.id} type="button" onClick={() => toggleCourseInDraft(c.id)}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${draft.applicable_course_ids.includes(c.id) ? "bg-signal-emerald/10 border-signal-emerald/40 text-signal-emerald" : "border-line-gray-light dark:border-line-gray-dark text-slate dark:text-paper/60 hover:border-signal-emerald/30"}`}>
+                        {c.title}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button onClick={handleSave} className="px-5 py-2 text-xs font-bold bg-signal-emerald text-white rounded-xl hover:bg-signal-emerald/90 transition-colors">{editingId ? "Update Coupon" : "Create Coupon"}</button>
+                <button onClick={resetDraft} className="px-5 py-2 text-xs font-bold border border-line-gray-light dark:border-line-gray-dark text-slate dark:text-paper/60 rounded-xl hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors">Cancel</button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Table */}
+      {loading ? (
+        <div className="text-center py-10 text-xs text-slate/50">Loading coupons...</div>
+      ) : coupons.length === 0 ? (
+        <div className="p-8 text-center border border-dashed border-line-gray-light dark:border-line-gray-dark rounded-2xl text-xs text-slate/50">No coupons created yet.</div>
+      ) : (
+        <div className="overflow-x-auto rounded-2xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20">
+          <table className="w-full text-xs text-left">
+            <thead>
+              <tr className="bg-line-gray-light/50 dark:bg-line-gray-dark/50 text-slate dark:text-paper/40 font-semibold uppercase tracking-wider">
+                {["Code", "Discount", "Affiliate", "Uses", "Status", "Validity", "Actions"].map(h => <th key={h} className="px-4 py-3">{h}</th>)}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line-gray-light dark:divide-line-gray-dark">
+              {coupons.map((c, i) => (
+                <motion.tr key={c.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }} className="hover:bg-line-gray-light/20 dark:hover:bg-line-gray-dark/20">
+                  <td className="px-4 py-3 font-mono font-bold text-ink-navy dark:text-paper">{c.code}</td>
+                  <td className="px-4 py-3">
+                    <span className="font-semibold text-ink-navy dark:text-paper">{c.discount_type === "percent" ? `${c.discount_value}%` : `₹${c.discount_value}`}</span>
+                  </td>
+                  <td className="px-4 py-3 text-slate dark:text-paper/60">{c.affiliates?.name || "—"}</td>
+                  <td className="px-4 py-3 font-mono">
+                    <span className="text-ink-navy dark:text-paper">{c.used_count}</span>
+                    <span className="text-slate dark:text-paper/40">/{c.max_uses ?? "∞"}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {c.is_active ? (
+                      <span className="px-2 py-0.5 rounded-full bg-signal-emerald/10 text-signal-emerald font-bold text-[10px]">Active</span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full bg-slate/10 text-slate font-bold text-[10px]">Inactive</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-[10px] text-slate dark:text-paper/40 font-mono">
+                    {c.valid_until ? new Date(c.valid_until).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "No expiry"}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-1">
+                      <button onClick={() => openEdit(c)} className="p-1.5 rounded-lg text-slate/50 hover:text-signal-emerald hover:bg-signal-emerald/10 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => handleDelete(c.id)} className="p-1.5 rounded-lg text-slate/50 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </div>
+                  </td>
+                </motion.tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+
+// ─── AFFILIATES TAB ─────────────────────────────────────────────────────
+interface AffiliateItem {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  commission_type: "percent" | "flat";
+  commission_value: number;
+  payout_details: string | null;
+  is_active: boolean;
+}
+
+interface AffPerf {
+  affiliate_id: string;
+  name: string;
+  email: string;
+  sales: number;
+  revenue: number;
+  commission_owed: number;
+}
+
+function AffiliatesTab() {
+  const confirm = useConfirm();
+  const [affiliates, setAffiliates] = useState<AffiliateItem[]>([]);
+  const [performance, setPerformance] = useState<AffPerf[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"list" | "performance">("list");
+  const [draft, setDraft] = useState({
+    name: "", email: "", phone: "", commission_type: "percent" as "percent" | "flat",
+    commission_value: 10, payout_details: "",
+  });
+
+  const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+  const token = typeof window !== "undefined" ? localStorage.getItem("caliber_jwt") || "" : "";
+  const headers = { "Content-Type": "application/json", "Authorization": `Bearer ${token}` };
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        const [aRes, pRes] = await Promise.all([
+          fetch(`${apiURL}/api/admin/affiliates`, { headers }),
+          fetch(`${apiURL}/api/admin/affiliates/performance`, { headers }),
+        ]);
+        if (aRes.ok) setAffiliates(await aRes.json());
+        if (pRes.ok) setPerformance(await pRes.json());
+      } catch { /* fallback */ }
+      finally { setLoading(false); }
+    };
+    load();
+  }, []);
+
+  const resetDraft = () => {
+    setDraft({ name: "", email: "", phone: "", commission_type: "percent", commission_value: 10, payout_details: "" });
+    setEditingId(null);
+    setShowForm(false);
+  };
+
+  const openEdit = (a: AffiliateItem) => {
+    setDraft({
+      name: a.name, email: a.email, phone: a.phone || "",
+      commission_type: a.commission_type, commission_value: a.commission_value,
+      payout_details: a.payout_details || "",
+    });
+    setEditingId(a.id);
+    setShowForm(true);
+  };
+
+  const handleSave = async () => {
+    if (!draft.name.trim() || !draft.email.trim()) return;
+    try {
+      const url = editingId ? `${apiURL}/api/admin/affiliates/${editingId}` : `${apiURL}/api/admin/affiliates`;
+      const method = editingId ? "PATCH" : "POST";
+      const res = await fetch(url, { method, headers, body: JSON.stringify(draft) });
+      if (res.ok) {
+        const saved = await res.json();
+        if (editingId) setAffiliates(prev => prev.map(a => a.id === editingId ? { ...a, ...saved } : a));
+        else setAffiliates(prev => [saved, ...prev]);
+        resetDraft();
+      } else {
+        const err = await res.json();
+        alert(err.detail || "Failed to save affiliate.");
+      }
+    } catch { alert("Error contacting server."); }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!(await confirm("Delete this affiliate permanently?"))) return;
+    try {
+      const res = await fetch(`${apiURL}/api/admin/affiliates/${id}`, { method: "DELETE", headers });
+      if (res.ok) setAffiliates(prev => prev.filter(a => a.id !== id));
+    } catch { alert("Error deleting affiliate."); }
+  };
+
+  const handleExportPerformance = () => {
+    const csvHeaders = ["Affiliate Name", "Email", "Total Sales", "Total Revenue (₹)", "Commission Owed (₹)"];
+    const rows = [csvHeaders.join(",")];
+    for (const p of performance) {
+      rows.push([
+        `"${p.name}"`, `"${p.email}"`, p.sales.toString(),
+        p.revenue.toFixed(2), p.commission_owed.toFixed(2),
+      ].join(","));
+    }
+    const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `affiliate_performance_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  return (
+    <motion.div key="affiliates" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Affiliates</h2>
+          <p className="text-xs text-slate dark:text-paper/50">Manage affiliate partners and track their performance.</p>
+        </div>
+        <div className="flex gap-2">
+          <div className="flex gap-1 p-0.5 bg-line-gray-light dark:bg-line-gray-dark rounded-lg">
+            <button onClick={() => setViewMode("list")} className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${viewMode === "list" ? "bg-white dark:bg-ink-navy text-ink-navy dark:text-paper shadow-sm" : "text-slate dark:text-paper/60"}`}>Manage</button>
+            <button onClick={() => setViewMode("performance")} className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${viewMode === "performance" ? "bg-white dark:bg-ink-navy text-ink-navy dark:text-paper shadow-sm" : "text-slate dark:text-paper/60"}`}>Performance</button>
+          </div>
+          {viewMode === "list" && (
+            <button onClick={() => { resetDraft(); setShowForm(true); }} className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-signal-emerald text-white rounded-xl hover:bg-signal-emerald/90 transition-colors">
+              <Plus className="w-3.5 h-3.5" /> Add Affiliate
+            </button>
+          )}
+          {viewMode === "performance" && performance.length > 0 && (
+            <button onClick={handleExportPerformance} className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-signal-emerald text-white rounded-xl hover:bg-signal-emerald/90 transition-colors">
+              <Download className="w-3.5 h-3.5" /> Export to Excel
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Affiliate Form */}
+      <AnimatePresence>
+        {showForm && viewMode === "list" && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+            <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase tracking-wide">{editingId ? "Edit Affiliate" : "Add Affiliate"}</p>
+                <button onClick={resetDraft} className="p-1 rounded hover:bg-line-gray-light dark:hover:bg-line-gray-dark"><X className="w-4 h-4 text-slate dark:text-paper/60" /></button>
+              </div>
+              <div className="grid sm:grid-cols-3 gap-3">
+                <div><label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Name</label><input className={inp} placeholder="Rahul Sharma" value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} /></div>
+                <div><label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Email</label><input type="email" className={inp} placeholder="rahul@example.com" value={draft.email} onChange={e => setDraft({ ...draft, email: e.target.value })} /></div>
+                <div><label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Phone</label><input className={inp} placeholder="+91 98765 43210" value={draft.phone} onChange={e => setDraft({ ...draft, phone: e.target.value })} /></div>
+                <div>
+                  <label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Commission Type</label>
+                  <select className={inp} value={draft.commission_type} onChange={e => setDraft({ ...draft, commission_type: e.target.value as "percent" | "flat" })}>
+                    <option value="percent">Percentage (%)</option>
+                    <option value="flat">Flat (₹)</option>
+                  </select>
+                </div>
+                <div><label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Commission Value</label><input type="number" min="0" className={inp} value={draft.commission_value} onChange={e => setDraft({ ...draft, commission_value: Number(e.target.value) })} /></div>
+                <div><label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Payout Details (UPI/Bank)</label><input className={inp} placeholder="UPI: rahul@upi" value={draft.payout_details} onChange={e => setDraft({ ...draft, payout_details: e.target.value })} /></div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={handleSave} className="px-5 py-2 text-xs font-bold bg-signal-emerald text-white rounded-xl hover:bg-signal-emerald/90 transition-colors">{editingId ? "Update" : "Add Affiliate"}</button>
+                <button onClick={resetDraft} className="px-5 py-2 text-xs font-bold border border-line-gray-light dark:border-line-gray-dark text-slate dark:text-paper/60 rounded-xl hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors">Cancel</button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {loading ? (
+        <div className="text-center py-10 text-xs text-slate/50">Loading affiliates...</div>
+      ) : viewMode === "list" ? (
+        /* ─── Affiliate List ─── */
+        affiliates.length === 0 ? (
+          <div className="p-8 text-center border border-dashed border-line-gray-light dark:border-line-gray-dark rounded-2xl text-xs text-slate/50">No affiliates added yet.</div>
+        ) : (
+          <div className="space-y-2">
+            {affiliates.map((a, i) => (
+              <motion.div key={a.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
+                className="flex items-center justify-between p-4 bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark rounded-xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-purple-600 dark:text-purple-400">
+                    <UserCheck className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-ink-navy dark:text-paper">{a.name}</p>
+                    <p className="text-[10px] text-slate dark:text-paper/40">{a.email}{a.phone ? ` · ${a.phone}` : ""}</p>
+                    <p className="text-[10px] text-slate dark:text-paper/40 mt-0.5">
+                      Commission: <span className="font-bold text-ink-navy dark:text-paper">{a.commission_type === "percent" ? `${a.commission_value}%` : `₹${a.commission_value}`}</span>
+                      {a.payout_details && <> · Payout: {a.payout_details}</>}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-1">
+                  <button onClick={() => openEdit(a)} className="p-1.5 rounded-lg text-slate/50 hover:text-signal-emerald hover:bg-signal-emerald/10 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => handleDelete(a.id)} className="p-1.5 rounded-lg text-slate/50 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )
+      ) : (
+        /* ─── Performance Dashboard ─── */
+        performance.length === 0 ? (
+          <div className="p-8 text-center border border-dashed border-line-gray-light dark:border-line-gray-dark rounded-2xl text-xs text-slate/50">No affiliate sales recorded yet. Performance data will appear once coupons are used in transactions.</div>
+        ) : (
+          <div className="space-y-4">
+            {/* Summary cards */}
+            <div className="grid grid-cols-3 gap-4">
+              {[
+                { label: "Total Affiliate Sales", value: performance.reduce((s, p) => s + p.sales, 0).toString(), color: "text-signal-emerald" },
+                { label: "Total Revenue via Affiliates", value: `₹${performance.reduce((s, p) => s + p.revenue, 0).toLocaleString()}`, color: "text-blue-500" },
+                { label: "Total Commission Owed", value: `₹${performance.reduce((s, p) => s + p.commission_owed, 0).toLocaleString()}`, color: "text-purple-500" },
+              ].map(card => (
+                <div key={card.label} className="p-4 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl">
+                  <div className={`font-heading font-bold text-2xl ${card.color}`}>{card.value}</div>
+                  <div className="text-xs text-slate dark:text-paper/50 mt-0.5">{card.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Leaderboard table */}
+            <div className="overflow-x-auto rounded-2xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20">
+              <table className="w-full text-xs text-left">
+                <thead>
+                  <tr className="bg-line-gray-light/50 dark:bg-line-gray-dark/50 text-slate dark:text-paper/40 font-semibold uppercase tracking-wider">
+                    {["#", "Affiliate", "Email", "Sales", "Revenue (₹)", "Commission Owed (₹)"].map(h => <th key={h} className="px-5 py-3">{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line-gray-light dark:divide-line-gray-dark">
+                  {performance.map((p, i) => (
+                    <motion.tr key={p.affiliate_id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.04 }} className="hover:bg-line-gray-light/20 dark:hover:bg-line-gray-dark/20">
+                      <td className="px-5 py-3 font-mono font-bold text-slate dark:text-paper/50">{i + 1}</td>
+                      <td className="px-5 py-3 font-semibold text-ink-navy dark:text-paper">{p.name}</td>
+                      <td className="px-5 py-3 text-slate dark:text-paper/60">{p.email}</td>
+                      <td className="px-5 py-3 font-mono font-bold text-ink-navy dark:text-paper">{p.sales}</td>
+                      <td className="px-5 py-3 font-mono font-bold text-signal-emerald">₹{p.revenue.toLocaleString()}</td>
+                      <td className="px-5 py-3 font-mono font-bold text-purple-600 dark:text-purple-400">₹{p.commission_owed.toLocaleString()}</td>
+                    </motion.tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      )}
+    </motion.div>
+  );
+}
+
+// ─── BUNDLES TAB ────────────────────────────────────────────────────────
+
+function BundlesTab() {
+  const [bundles, setBundles] = useState<any[]>([]);
+  const [courses, setCourses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [draft, setDraft] = useState<any | null>(null);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+        const resB = await fetch(`${apiURL}/api/admin/course-bundles`, { headers: { "Authorization": `Bearer ${token}` } });
+        const resC = await fetch(`${apiURL}/api/courses`, { headers: { "Authorization": `Bearer ${token}` } });
+        if (resB.ok) setBundles(await resB.json());
+        if (resC.ok) setCourses(await resC.json());
+      } catch (e) { }
+      setLoading(false);
+    }
+    load();
+  }, []);
+
+  async function saveBundle() {
+    if (!draft.title || !draft.price) return;
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/course-bundles`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify(draft)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setBundles(prev => {
+          const exists = prev.find(b => b.id === draft.id);
+          if (exists) return prev.map(b => b.id === draft.id ? draft : b);
+          return [...prev, { ...draft, id: data.id }];
+        });
+        setDraft(null);
+      }
+    } catch (e) {
+      alert("Save failed");
+    }
+  }
+
+  async function deleteBundle(id: string) {
+    if (!window.confirm("Delete this bundle pricing module?")) return;
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      await fetch(`${apiURL}/api/admin/course-bundles/${id}`, {
+        method: "DELETE", headers: { "Authorization": `Bearer ${token}` }
+      });
+      setBundles(prev => prev.filter(b => b.id !== id));
+    } catch (e) { }
+  }
+
+  function toggleCourse(courseId: string) {
+    setDraft((prev: any) => {
+      const ids = prev.courseIds || [];
+      if (ids.includes(courseId)) return { ...prev, courseIds: ids.filter((id: string) => id !== courseId) };
+      return { ...prev, courseIds: [...ids, courseId] };
+    });
+  }
+
+  if (loading) return <div className="p-10 text-center text-xs">Loading bundles...</div>;
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      {!draft ? (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Tiered Pricing Modules</h2>
+            <button onClick={() => setDraft({ title: "", description: "", level: "Multiple", courseIds: [], price: 0 })} className="flex items-center gap-1.5 px-4 py-2 bg-signal-emerald text-white font-bold text-xs rounded-lg hover:bg-emerald-600 transition-colors">
+              <Plus className="w-3.5 h-3.5" /> Create Bundle
+            </button>
+          </div>
+          <div className="grid gap-4">
+            {bundles.length === 0 ? (
+              <p className="text-xs text-slate dark:text-paper/50 italic py-6 text-center bg-white dark:bg-line-gray-dark/20 rounded-xl border border-line-gray-light dark:border-line-gray-dark border-dashed">No bundles configured.</p>
+            ) : bundles.map(b => (
+              <div key={b.id} className="p-4 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-xl flex items-start justify-between">
+                <div>
+                  <h3 className="font-bold text-ink-navy dark:text-paper">{b.title}</h3>
+                  <p className="text-xs text-slate dark:text-paper/60 mt-1">{b.description || "No description"} — {b.courseIds?.length || 0} courses included</p>
+                  <p className="font-mono text-sm font-bold text-signal-emerald mt-2">₹{b.price}</p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setDraft(b)} className="p-1.5 text-slate hover:text-signal-emerald"><Edit2 className="w-4 h-4" /></button>
+                  <button onClick={() => deleteBundle(b.id)} className="p-1.5 text-slate hover:text-alert-coral"><Trash2 className="w-4 h-4" /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-heading font-bold text-lg">Edit Bundle</h3>
+            <button onClick={() => setDraft(null)} className="p-1.5 hover:bg-line-gray-light dark:hover:bg-line-gray-dark rounded-xl"><X className="w-4 h-4" /></button>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-semibold mb-1 block">Bundle Title</label>
+              <input className={inp} value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} placeholder="e.g. CA Inter Group 1 Complete" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold mb-1 block">Discounted Price (₹)</label>
+              <input type="number" className={inp} value={draft.price} onChange={e => setDraft({ ...draft, price: Number(e.target.value) })} />
+            </div>
+            <div>
+              <label className="text-xs font-semibold mb-1 block">Bundle Level</label>
+              <select className={inp} value={draft.level || "Intermediate"} onChange={e => setDraft({ ...draft, level: e.target.value })}>
+                <option value="Foundation">Foundation</option>
+                <option value="Intermediate">Intermediate</option>
+                <option value="Final">Final</option>
+                <option value="Others">Others</option>
+              </select>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs font-semibold mb-1 block">Description</label>
+              <textarea className={`${inp} resize-none`} rows={2} value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-semibold mb-2 block border-t border-line-gray-light dark:border-line-gray-dark pt-4">Select Courses to Bundle</label>
+            <div className="grid sm:grid-cols-2 gap-2 max-h-[300px] overflow-y-auto pr-2">
+              {courses.filter(c => (draft.level === "Others" ? c.level === null : c.level === (draft.level || "Intermediate"))).map(c => (
+                <div key={c.id} onClick={() => toggleCourse(c.id)} className={`p-3 rounded-lg border flex gap-3 items-start cursor-pointer transition-colors ${draft.courseIds?.includes(c.id) ? "border-signal-emerald bg-signal-emerald/5" : "border-line-gray-light dark:border-line-gray-dark hover:border-slate/40"}`}>
+                  <div className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center ${draft.courseIds?.includes(c.id) ? "bg-signal-emerald border-signal-emerald text-white" : "border-slate/40"}`}>
+                    {draft.courseIds?.includes(c.id) && <CheckCircle className="w-3 h-3" />}
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold">{c.title}</p>
+                    <p className="text-[10px] text-slate opacity-70">₹{c.price}</p>
+                  </div>
+                </div>
+              ))}
+              {courses.filter(c => (draft.level === "Others" ? c.level === null : c.level === (draft.level || "Intermediate"))).length === 0 && (
+                <p className="text-xs text-slate/50 py-4 col-span-2 text-center border border-dashed rounded-lg">No courses available for this level.</p>
+              )}
+            </div>
+          </div>
+          <div className="pt-2 flex justify-end">
+            <button onClick={saveBundle} className="px-5 py-2 bg-ink-navy text-white font-bold text-sm rounded-xl hover:bg-opacity-90">Save Bundle</button>
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+

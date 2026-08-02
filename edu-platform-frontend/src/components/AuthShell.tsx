@@ -19,7 +19,7 @@ export function AuthShell({ children, progressStep, progressTotal }: AuthShellPr
             <div className="w-8 h-8 bg-signal-emerald rounded-lg flex items-center justify-center">
               <BookOpen className="w-4 h-4 text-white" />
             </div>
-            <span className="font-heading font-bold text-xl text-ink-navy dark:text-paper">Caliber</span>
+            <span className="font-heading font-bold text-xl text-ink-navy dark:text-paper">CAliber</span>
           </Link>
         </div>
 

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.routers import auth, courses, payments, mcq, sessions, tests, contact, admin
+from app.routers.coupons import router as coupons_router, admin_router as coupons_admin_router
 
 settings = get_settings()
 
@@ -32,6 +33,8 @@ app.include_router(sessions.router)
 app.include_router(tests.router)
 app.include_router(contact.router)
 app.include_router(admin.router)
+app.include_router(coupons_router)
+app.include_router(coupons_admin_router)
 
 
 @app.get("/", tags=["Health"])

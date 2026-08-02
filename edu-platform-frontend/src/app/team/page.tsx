@@ -71,7 +71,7 @@ export default function TeamPage() {
                             Our Educators & founders
                         </span>
                         <h1 className="font-heading font-extrabold text-4xl sm:text-5xl text-ink-navy dark:text-paper mt-6 leading-tight tracking-tight">
-                            Meet the Team Behind Caliber
+                            Meet the Team Behind CAliber
                         </h1>
                         <p className="text-base text-slate dark:text-paper/70 mt-4 max-w-xl mx-auto leading-relaxed">
                             Founded by Chartered Accountants who cracked the exams themselves. We are structured to replace passive lectures with active, timed mental recall.
