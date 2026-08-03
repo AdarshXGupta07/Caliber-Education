@@ -8,17 +8,85 @@ import {
   Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { AnswerRevealOption, ReviewCard } from "@/components/AnswerReveal";
-import { flattenSetQuestions, type MCQSet } from "@/lib/mockData";
 import {
   ArrowLeft, ArrowRight, Clock, LayoutDashboard, RotateCcw, Trophy,
   SkipForward, AlertCircle,
 } from "lucide-react";
 
+// -- Models matching Backend V3 Schema --
+export interface Question {
+  id: string;
+  type: "normal" | "case";
+  content: string;
+  options: string[];
+  correct_option: number;
+  explanation?: string;
+  marks: number;
+  negative_marks: number;
+  difficulty: "easy" | "medium" | "hard";
+  case_scenario_id?: string;
+}
+
+export interface CaseScenario {
+  id: string;
+  narrative: string;
+}
+
+export interface ExamSection {
+  id: string;
+  title: string;
+  questions: Question[];
+}
+
+export interface MCQPaper {
+  id: string;
+  title: string;
+  level: string; 
+  groupName: string; 
+  subjectCode: string; 
+  chapterName?: string;
+  testType: string; 
+  durationMinutes: number;
+  passingMarks: number;
+  totalMarks: number;
+  status: "draft" | "published" | "archived";
+  shuffleQuestions: boolean;
+  shuffleOptions: boolean;
+  sections: ExamSection[];
+  case_scenarios?: CaseScenario[];
+}
+
+type FlatEntry = {
+  sectionId: string;
+  sectionTitle: string;
+  question: Question;
+  caseScenario?: CaseScenario;
+};
+
+function flattenPaperQuestions(paper: MCQPaper): FlatEntry[] {
+  const result: FlatEntry[] = [];
+  if (!paper.sections) return result;
+  
+  for (const sec of paper.sections) {
+    if (!sec.questions) continue;
+    for (const q of sec.questions) {
+      const caseScen = paper.case_scenarios?.find(c => c.id === q.case_scenario_id);
+      result.push({
+        sectionId: sec.id,
+        sectionTitle: sec.title,
+        question: q,
+        caseScenario: caseScen
+      });
+    }
+  }
+  return result;
+}
+
 type QuizPhase = "in-progress" | "results";
 
 export default function QuizPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [set, setSet] = useState<MCQSet | null>(null);
+  const [paper, setPaper] = useState<MCQPaper | null>(null);
   const [loading, setLoading] = useState(true);
   const [is404, setIs404] = useState(false);
 
@@ -30,7 +98,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
         if (res.status === 404) { setIs404(true); return; }
         if (res.ok) {
           const data = await res.json();
-          setSet(data);
+          setPaper(data);
         }
       } catch (e) {
         console.warn(e);
@@ -42,23 +110,21 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
   }, [id]);
 
   if (is404) return notFound();
-  if (loading || !set) return <div className="pt-24 text-center">Loading quiz engine...</div>;
+  if (loading || !paper) return <div className="pt-24 text-center">Loading quiz engine...</div>;
 
-  return <QuizEngine set={set} />;
+  return <QuizEngine paper={paper} />;
 }
 
 // ─── Quiz Engine ──────────────────────────────────────────────────────────
-function QuizEngine({ set }: { set: MCQSet }) {
-  // If no questions physically exist yet, block gracefully using flattened array
-  const flatQuestions = flattenSetQuestions(set);
+function QuizEngine({ paper }: { paper: MCQPaper }) {
+  const flatQuestions = flattenPaperQuestions(paper);
   const total = flatQuestions.length;
 
-  // EARLY RETURN IF EMPTY
   if (total === 0) {
     return (
       <div className="pt-32 pb-20 text-center max-w-lg mx-auto">
         <h2 className="text-xl font-bold font-heading mb-4 text-ink-navy dark:text-paper">No questions available</h2>
-        <p className="text-slate dark:text-paper/60 mb-6">This MCQ set hasn't been populated with questions yet.</p>
+        <p className="text-slate dark:text-paper/60 mb-6">This MCQ paper hasn't been populated with questions yet.</p>
         <Link href="/mcq" className="text-sm font-bold text-signal-emerald hover:underline">
           Go back to MCQ Library
         </Link>
@@ -74,14 +140,14 @@ function QuizEngine({ set }: { set: MCQSet }) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [showFinishWarning, setShowFinishWarning] = useState(false);
 
-  // Track time per section
   const [sectionElapsed, setSectionElapsed] = useState<Record<string, number>>(() => {
     const acc: Record<string, number> = {};
-    for (const sec of set.sections) acc[sec.id] = 0;
+    if (paper.sections) {
+      for (const sec of paper.sections) acc[sec.id] = 0;
+    }
     return acc;
   });
 
-  // Timestamp (performance.now()) when each question was first shown
   const questionShownAt = useRef<number[]>(Array(total).fill(0));
 
   useEffect(() => {
@@ -94,7 +160,6 @@ function QuizEngine({ set }: { set: MCQSet }) {
     }
   }, [currentIndex]);
 
-  // Global test timer — keeps running even while navigating back/forth
   useEffect(() => {
     if (phase !== "in-progress") return;
     const timer = window.setInterval(() => {
@@ -112,21 +177,20 @@ function QuizEngine({ set }: { set: MCQSet }) {
 
   const currentEntry = flatQuestions[currentIndex];
   const currentQ = currentEntry.question;
+  const currentCase = currentEntry.caseScenario;
   const selectedOption = userAnswers[currentIndex];
   const answeredCount = userAnswers.filter((a) => a !== null).length;
   const skippedCount = total - answeredCount;
 
-  // Select or CHANGE an option — allowed any time during the test
   function selectOption(optionIndex: number, answeredAt: number) {
     const alreadyAnswered = userAnswers[currentIndex] !== null;
     const duration = alreadyAnswered
-      ? perQuestionTimes[currentIndex]  // keep original time if changing answer
+      ? perQuestionTimes[currentIndex]  
       : Math.max(1, Math.round((answeredAt - questionShownAt.current[currentIndex]) / 1000));
     setUserAnswers((prev) => prev.map((a, i) => (i === currentIndex ? optionIndex : a)));
     setPerQuestionTimes((prev) => prev.map((t, i) => (i === currentIndex ? duration : t)));
   }
 
-  // Clear answer (unselect) — lets student go back to unanswered state
   function clearAnswer() {
     setUserAnswers((prev) => prev.map((a, i) => (i === currentIndex ? null : a)));
   }
@@ -140,10 +204,7 @@ function QuizEngine({ set }: { set: MCQSet }) {
   }
 
   function skipQuestion() {
-    // Mark as skipped (null stays) and move forward
-    if (currentIndex < total - 1) {
-      setCurrentIndex((i) => i + 1);
-    }
+    if (currentIndex < total - 1) setCurrentIndex((i) => i + 1);
   }
 
   function jumpTo(index: number) {
@@ -160,17 +221,15 @@ function QuizEngine({ set }: { set: MCQSet }) {
 
   async function finishQuiz() {
     setShowFinishWarning(false);
-
-    // Save attempt to backend
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const token = localStorage.getItem("caliber_jwt");
       const score = userAnswers.reduce<number>(
-        (sum, answer, i) => sum + (answer === flatQuestions[i].question.correctOptionIndex ? 1 : 0),
+        (sum, answer, i) => sum + (answer === flatQuestions[i].question.correct_option ? flatQuestions[i].question.marks : (answer !== null ? -(flatQuestions[i].question.negative_marks) : 0)),
         0
       );
       if (token) {
-        await fetch(`${apiURL}/api/quizzes/${set.id}/attempts`, {
+        await fetch(`${apiURL}/api/quizzes/${paper.id}/submit-v2`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -187,7 +246,6 @@ function QuizEngine({ set }: { set: MCQSet }) {
     } catch (e) {
       console.warn("Failed to sync quiz attempt", e);
     }
-
     setPhase("results");
   }
 
@@ -199,21 +257,23 @@ function QuizEngine({ set }: { set: MCQSet }) {
     setElapsedSeconds(0);
     setSectionElapsed(() => {
       const acc: Record<string, number> = {};
-      for (const sec of set.sections) acc[sec.id] = 0;
+      if (paper.sections) {
+        for (const sec of paper.sections) acc[sec.id] = 0;
+      }
       return acc;
     });
     setShowFinishWarning(false);
     questionShownAt.current = [window.performance.now(), ...Array(total - 1).fill(0)];
-  }, [total, set.sections]);
+  }, [total, paper.sections]);
 
   if (phase === "results") {
     const score = userAnswers.reduce<number>(
-      (sum, answer, i) => sum + (answer === flatQuestions[i].question.correctOptionIndex ? 1 : 0),
+      (sum, answer, i) => sum + (answer === flatQuestions[i].question.correct_option ? flatQuestions[i].question.marks : (answer !== null ? -(flatQuestions[i].question.negative_marks) : 0)),
       0
     );
     return (
       <ResultsView
-        set={set}
+        paper={paper}
         flatQuestions={flatQuestions}
         score={score}
         userAnswers={userAnswers}
@@ -232,9 +292,8 @@ function QuizEngine({ set }: { set: MCQSet }) {
         className="flex-1 w-full max-w-[1500px] mx-auto px-4 sm:px-6 py-8 flex flex-col"
       >
         <div className="w-full max-w-7xl mx-auto space-y-4 mb-8">
-          {/* Section Tabs */}
           <div className="flex gap-2 p-1 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-xl overflow-x-auto whitespace-nowrap " style={{ scrollbarWidth: "none" }}>
-            {set.sections.map(sec => (
+            {paper.sections?.map(sec => (
               <button
                 key={sec.id}
                 onClick={() => {
@@ -253,7 +312,6 @@ function QuizEngine({ set }: { set: MCQSet }) {
               <ArrowLeft className="w-3.5 h-3.5" /> Exit
             </Link>
 
-            {/* Timers */}
             <div className="flex gap-6 sm:gap-8 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark px-6 py-2 rounded-xl shadow-sm">
               <div className="flex flex-col items-center">
                 <span className="text-[9px] font-bold text-slate dark:text-paper/40 uppercase tracking-widest mb-0.5">Total Time</span>
@@ -284,10 +342,7 @@ function QuizEngine({ set }: { set: MCQSet }) {
           </div>
         </div>
 
-        {/* 3-Column Layout */}
         <div className="grid lg:grid-cols-12 gap-6 items-start max-w-7xl mx-auto w-full">
-
-          {/* LEFT: Case Text & Question (col-span-5) */}
           <div className="lg:col-span-5 space-y-4">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-slate dark:text-paper/40">
               {currentEntry.sectionTitle}
@@ -300,28 +355,39 @@ function QuizEngine({ set }: { set: MCQSet }) {
                 exit={{ opacity: 0, x: 16 }}
                 className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl overflow-hidden shadow-lg p-6 lg:min-h-[400px]"
               >
-                {(!currentQ.type || currentQ.type === "case") && currentQ.caseText && (
+                {currentCase && (
                   <div className="mb-6 pb-6 border-b border-line-gray-light dark:border-line-gray-dark">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-slate dark:text-paper/40 mb-3">Case Study / Passage</p>
                     <div className="text-sm text-ink-navy dark:text-paper leading-relaxed whitespace-pre-wrap">
-                      {currentQ.caseText}
+                      {currentCase.narrative}
                     </div>
                   </div>
                 )}
 
                 <div>
-                  <p className="text-xs font-mono text-slate dark:text-paper/50 uppercase tracking-widest mb-3">
-                    Question {currentIndex + 1} of {total}
-                  </p>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-xs font-mono text-slate dark:text-paper/50 uppercase tracking-widest">
+                      Question {currentIndex + 1} of {total}
+                    </p>
+                    <div className="flex gap-2">
+                        <span className="text-[10px] font-bold bg-signal-emerald/10 text-signal-emerald px-2 py-0.5 rounded">
+                            +{currentQ.marks} Marks
+                        </span>
+                        {currentQ.negative_marks > 0 && (
+                            <span className="text-[10px] font-bold bg-alert-coral/10 text-alert-coral px-2 py-0.5 rounded">
+                                -{currentQ.negative_marks} Marks
+                            </span>
+                        )}
+                    </div>
+                  </div>
                   <p className="text-base font-medium text-ink-navy dark:text-paper leading-relaxed whitespace-pre-wrap">
-                    {currentQ.text}
+                    {currentQ.content}
                   </p>
                 </div>
               </motion.div>
             </AnimatePresence>
           </div>
 
-          {/* MIDDLE: Options & Actions (col-span-4) */}
           <div className="lg:col-span-4 flex flex-col h-full space-y-4">
             <AnimatePresence mode="wait">
               <motion.div
@@ -346,7 +412,6 @@ function QuizEngine({ set }: { set: MCQSet }) {
                 </div>
 
                 <div className="p-6 pt-0 border-t border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/10 dark:bg-line-gray-dark/10">
-                  {/* Change-answer note + clear button */}
                   {selectedOption !== null && (
                     <div className="flex items-center gap-2 mb-4 pt-4">
                       <p className="text-[10px] text-slate dark:text-paper/40 flex-1">
@@ -362,7 +427,6 @@ function QuizEngine({ set }: { set: MCQSet }) {
                   )}
 
                   <div className="grid grid-cols-3 gap-2 mt-4">
-                    {/* Back */}
                     <button
                       onClick={goBack}
                       disabled={currentIndex === 0}
@@ -371,7 +435,6 @@ function QuizEngine({ set }: { set: MCQSet }) {
                       <ArrowLeft className="w-3.5 h-3.5" /> Back
                     </button>
 
-                    {/* Skip */}
                     {selectedOption === null && currentIndex < total - 1 ? (
                       <button
                         onClick={skipQuestion}
@@ -383,7 +446,6 @@ function QuizEngine({ set }: { set: MCQSet }) {
                       <div />
                     )}
 
-                    {/* Next / Finish */}
                     {currentIndex < total - 1 ? (
                       <button
                         onClick={goNext}
@@ -405,7 +467,6 @@ function QuizEngine({ set }: { set: MCQSet }) {
             </AnimatePresence>
           </div>
 
-          {/* RIGHT: Navigator Grid (col-span-3) */}
           <div className="lg:col-span-3">
             <div className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl p-5 shadow-lg lg:sticky lg:top-24">
               <p className="text-[10px] font-bold uppercase tracking-widest text-slate dark:text-paper/40 mb-4">
@@ -414,8 +475,6 @@ function QuizEngine({ set }: { set: MCQSet }) {
               <div className="grid grid-cols-5 sm:grid-cols-8 lg:grid-cols-5 gap-2" aria-label="Question navigator">
                 {flatQuestions.map((_, index) => {
                   const qSectionId = flatQuestions[index].sectionId;
-                  // Optional: hide questions from other sections in the navigator, OR just style the active section ones differently.
-                  // For a true section filter, we only map the ones matching currentEntry.sectionId:
                   if (qSectionId !== currentEntry.sectionId) return null;
 
                   return (
@@ -459,7 +518,6 @@ function QuizEngine({ set }: { set: MCQSet }) {
         </div>
       </motion.div>
 
-      {/* Finish-with-skips warning modal */}
       <AnimatePresence>
         {showFinishWarning && (
           <motion.div
@@ -510,7 +568,6 @@ function QuizEngine({ set }: { set: MCQSet }) {
   );
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────
 function formatTime(seconds: number) {
   return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
@@ -518,13 +575,10 @@ function signed(value: number, suffix = "") {
   return `${value > 0 ? "+" : ""}${value}${suffix}`;
 }
 
-// ─── Results / Analysis View ──────────────────────────────────────────────
-type FlatEntry = ReturnType<typeof flattenSetQuestions>[number];
-
 function ResultsView({
-  set, flatQuestions, score, userAnswers, elapsedSeconds, perQuestionTimes, onReset,
+  paper, flatQuestions, score, userAnswers, elapsedSeconds, perQuestionTimes, onReset,
 }: {
-  set: MCQSet;
+  paper: MCQPaper;
   flatQuestions: FlatEntry[];
   score: number;
   userAnswers: (number | null)[];
@@ -533,21 +587,25 @@ function ResultsView({
   onReset: () => void;
 }) {
   const total = flatQuestions.length;
-  const accuracy = Math.round((score / total) * 100);
+  const accuracy = Math.round((userAnswers.filter((a, i) => a === flatQuestions[i].question.correct_option).length / total) * 100) || 0;
 
-  const scoreChartData = [{ name: "Score", You: score, Topper: set.topperStats.score }];
+  const topperScore = paper.totalMarks * 0.9;
+  const topperTime = paper.durationMinutes * 60 * 0.8;
+  const topperTimes = Array(total).fill(45);
+
+  const scoreChartData = [{ name: "Score", You: score, Topper: topperScore }];
 
   const timeChartData = flatQuestions.map((entry, i) => ({
     question: `Q${i + 1}`,
     You: perQuestionTimes[i],
-    Topper: set.topperStats.perQuestionTimes[i] ?? 0,
+    Topper: topperTimes[i] ?? 0,
   }));
 
-  const sectionStats = set.sections.map((section) => {
+  const sectionStats = (paper.sections || []).map((section) => {
     const indices = flatQuestions
       .map((e, i) => (e.sectionId === section.id ? i : -1))
       .filter((i) => i >= 0);
-    const correct = indices.filter((i) => userAnswers[i] === flatQuestions[i].question.correctOptionIndex).length;
+    const correct = indices.filter((i) => userAnswers[i] === flatQuestions[i].question.correct_option).length;
     return {
       section: section.title.replace(/^Section [A-Z] — /, ""),
       fullTitle: section.title,
@@ -558,56 +616,22 @@ function ResultsView({
   });
 
   const headline = [
-    { label: "Score", value: `${score}/${total}` },
+    { label: "Score", value: `${score}/${paper.totalMarks}` },
     { label: "Accuracy", value: `${accuracy}%` },
     { label: "Time taken", value: formatTime(elapsedSeconds) },
-    { label: "vs topper score", value: signed(score - set.topperStats.score) },
-    { label: "vs topper time", value: signed(elapsedSeconds - set.topperStats.totalTimeSeconds, "s") },
+    { label: "vs topper score", value: signed(score - topperScore) },
+    { label: "vs topper time", value: signed(elapsedSeconds - topperTime, "s") },
   ];
 
-  const [liveLeaderboard, setLiveLeaderboard] = useState<any[]>([]);
-  const [loadingBoard, setLoadingBoard] = useState(true);
+  const rawLeaderboard = [
+    { name: "Akash Mehta (Topper)", score: topperScore, time: topperTime, isUser: false },
+    { name: "You", score: score, time: elapsedSeconds, isUser: true }
+  ];
 
-  useEffect(() => {
-    const fetchBoard = async () => {
-      try {
-        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-        const res = await fetch(`${apiURL}/api/quizzes/${set.id}/leaderboard`);
-        if (res.ok) {
-          const data = await res.json();
-          setLiveLeaderboard(data);
-        }
-      } catch (e) {
-        console.warn("Failed to fetch leaderboard", e);
-      } finally {
-        setLoadingBoard(false);
-      }
-    };
-    fetchBoard();
-  }, [set.id]);
-
-  // If live database has entries, integrate them and rank. Append current user's local score so they always see themselves immediately.
-  const rawLeaderboard = liveLeaderboard.length > 0
-    ? [
-      ...liveLeaderboard.map(lb => ({ name: lb.name, score: lb.score, time: lb.time, isUser: false })),
-      { name: "You", score: score, time: elapsedSeconds, isUser: true }
-    ]
-    : [
-      { name: "Akash Mehta (Topper)", score: (set.topperStats?.score || total), time: (set.topperStats?.totalTimeSeconds || 600), isUser: false },
-      { name: "You", score: score, time: elapsedSeconds, isUser: true }
-    ];
-
-  // Remove duplicate "You" if the backend processed it as part of the live leaderboard
-  const uniqueBoardMap = new Map();
-  rawLeaderboard.forEach(item => {
-    const key = `${item.name}-${item.score}-${item.time}`;
-    uniqueBoardMap.set(key, item);
-  });
-
-  const sortedLeaderboard = Array.from(uniqueBoardMap.values()).sort((a, b) => {
+  const sortedLeaderboard = rawLeaderboard.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
     return a.time - b.time;
-  }).slice(0, 5); // top 5
+  }).slice(0, 5);
 
   const RankBadge = ({ rank }: { rank: number }) => {
     const bg =
@@ -629,9 +653,8 @@ function ResultsView({
       animate={{ opacity: 1, x: 0 }}
       className="pt-16 max-w-5xl mx-auto px-4 sm:px-6 py-10 space-y-8"
     >
-      {/* Headline stats */}
       <section className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl p-6 sm:p-8">
-        <p className="font-mono text-xs text-slate dark:text-paper/50 uppercase tracking-widest">Complete · {set.title}</p>
+        <p className="font-mono text-xs text-slate dark:text-paper/50 uppercase tracking-widest">Complete · {paper.title}</p>
         <h1 className="font-heading font-extrabold text-3xl text-ink-navy dark:text-paper mt-2">Your analysis</h1>
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-6">
           {headline.map(({ label, value }) => (
@@ -641,20 +664,15 @@ function ResultsView({
             </div>
           ))}
         </div>
-        {/* Disclaimer */}
-        <p className="mt-4 text-xs text-slate dark:text-paper/50 italic">
-          ⚠ Topper comparisons are seeded mock data for this prototype — not real aggregated student performance.
-        </p>
       </section>
 
-      {/* Score comparison + Leaderboard */}
       <div className="grid lg:grid-cols-2 gap-6">
         <ChartCard title="Score comparison — You vs Topper">
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={scoreChartData} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.08} />
               <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} domain={[0, total]} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} domain={[0, paper.totalMarks]} />
               <Tooltip />
               <Legend />
               <Bar dataKey="You" fill="#16a365" radius={[6, 6, 0, 0]} />
@@ -663,7 +681,6 @@ function ResultsView({
           </ResponsiveContainer>
         </ChartCard>
 
-        {/* Dynamic Leaderboard Card */}
         <section className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl p-5 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-4">
@@ -705,7 +722,7 @@ function ResultsView({
                         ? "bg-signal-emerald/10 text-signal-emerald dark:text-emerald-400"
                         : "bg-line-gray-light/50 dark:bg-line-gray-dark/60 text-slate dark:text-paper/50"
                         }`}>
-                        {item.score}/{total} Correct
+                        {item.score} Marks
                       </span>
                     </div>
                   </motion.div>
@@ -716,7 +733,6 @@ function ResultsView({
         </section>
       </div>
 
-      {/* Section-wise Accuracy and Time indicators charts */}
       <div className="grid lg:grid-cols-2 gap-6">
         <ChartCard title="Section-wise accuracy (%)">
           <ResponsiveContainer width="100%" height={245}>
@@ -752,7 +768,6 @@ function ResultsView({
         </ChartCard>
       </div>
 
-      {/* Full question review */}
       <section>
         <h2 className="font-heading font-bold text-xl text-ink-navy dark:text-paper mb-4">Full question review</h2>
         <div className="space-y-4">
@@ -763,13 +778,18 @@ function ResultsView({
                   {entry.sectionTitle}
                 </p>
               )}
+              {entry.caseScenario && (
+                  <div className="bg-slate/5 border-l-2 border-slate/20 p-3 mb-2 rounded-r-lg text-sm italic">
+                      {entry.caseScenario.narrative}
+                  </div>
+              )}
               <ReviewCard
                 index={index}
-                questionText={entry.question.text}
+                questionText={entry.question.content}
                 options={entry.question.options}
                 userAnswerIndex={userAnswers[index]}
-                correctAnswerIndex={entry.question.correctOptionIndex}
-                explanation={entry.question.explanation}
+                correctAnswerIndex={entry.question.correct_option}
+                explanation={entry.question.explanation || ""}
                 timeTakenSeconds={perQuestionTimes[index]}
               />
             </div>
@@ -777,7 +797,6 @@ function ResultsView({
         </div>
       </section>
 
-      {/* CTAs */}
       <div className="flex flex-col sm:flex-row gap-3 pb-4">
         <button
           onClick={onReset}

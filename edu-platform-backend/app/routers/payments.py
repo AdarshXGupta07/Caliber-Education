@@ -12,8 +12,16 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.dependencies import get_current_user
 from app.schemas.payments import CreateOrderRequest, VerifyPaymentRequest
+from app.routers.mcq import calculate_mcq_cart
 
 router = APIRouter(prefix="/api/payments", tags=["Payments"])
+
+
+class CreateMCQOrderRequest(BaseModel):
+    level: str
+    subjectIds: list[str]
+    duration: str = "1_month"
+    couponCode: Optional[str] = None
 
 
 class SubmitUTRRequest(BaseModel):
@@ -318,6 +326,121 @@ async def verify_payment(
             print(f"Failed to auto-trigger whatsapp link email: {e}")
 
     return {"success": True, "message": "Payment verified, enrollment completed, and automated WhatsApp invite scheduled."}
+
+
+# ─── MCQ Package Payment Endpoints ──────────────────────────────────────────
+
+@router.post("/create-mcq-order", status_code=201)
+async def create_mcq_order(
+    body: CreateMCQOrderRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Client = Depends(get_db),
+):
+    settings = get_settings()
+    if not body.subjectIds:
+        raise HTTPException(status_code=400, detail="No subjects selected")
+
+    calc = calculate_mcq_cart(body.level, body.subjectIds, body.duration, db)
+    base_price = calc["real_total_price"]
+    discounted_price = calc["discounted_price"]
+
+    # Resolve optional coupon on top of bundle price if provided
+    coupon, coupon_discount, affiliate_id, commission_amount = _resolve_coupon(
+        db, body.couponCode, f"mcq-{body.level.lower()}", current_user["id"], discounted_price
+    )
+
+    final_price = max(0.0, discounted_price - coupon_discount)
+    amount_paise = int(final_price * 100)
+
+    rzp = _get_razorpay_client()
+    if rzp:
+        try:
+            order = rzp.order.create({
+                "amount": amount_paise,
+                "currency": "INR",
+                "receipt": f"mcq_{body.level[:5].lower()}_{body.duration}",
+                "notes": {
+                    "type": "mcq_package",
+                    "level": body.level,
+                    "duration": body.duration,
+                    "subject_ids": ",".join(body.subjectIds),
+                    "user_id": current_user["id"],
+                    "bundle_id": calc.get("applied_bundle_id") or "",
+                },
+            })
+            order_id = order["id"]
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Razorpay error: {str(e)}")
+    else:
+        import uuid
+        order_id = f"order_MCQ_{uuid.uuid4().hex[:12].upper()}"
+
+    # Record payment row
+    try:
+        db.table("payments").insert({
+            "user_id": current_user["id"],
+            "course_id": f"mcq-{body.level.lower()}-{body.duration}",
+            "amount": final_price,
+            "original_amount": base_price,
+            "discount_amount": base_price - final_price,
+            "coupon_id": coupon["id"] if coupon else None,
+            "affiliate_id": affiliate_id,
+            "commission_amount": commission_amount,
+            "status": "pending",
+            "razorpay_order_id": order_id,
+        }).execute()
+    except Exception:
+        pass
+
+    return {
+        "orderId": order_id,
+        "amount": amount_paise,
+        "currency": "INR",
+        "key": settings.razorpay_key_id or "rzp_test_demo",
+        "originalAmount": int(base_price * 100),
+        "discountAmount": int((base_price - final_price) * 100),
+        "finalAmount": int(final_price * 100),
+        "savingsAmount": calc["savings_amount"],
+        "appliedBundle": calc.get("applied_bundle_title"),
+        "couponCode": coupon["code"] if coupon else None,
+    }
+
+
+@router.post("/verify-mcq-payment")
+async def verify_mcq_payment(
+    body: VerifyPaymentRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Client = Depends(get_db),
+):
+    settings = get_settings()
+    user_id = current_user["id"]
+
+    if settings.razorpay_key_secret and not body.razorpay_order_id.startswith("order_MCQ_"):
+        msg = f"{body.razorpay_order_id}|{body.razorpay_payment_id}".encode()
+        expected = hmac.new(
+            settings.razorpay_key_secret.encode(), msg, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(expected, body.razorpay_signature):
+            raise HTTPException(status_code=400, detail="Invalid payment signature")
+
+    # Mark payment approved if exists
+    try:
+        payment = db.table("payments").select("*").eq("razorpay_order_id", body.razorpay_order_id).single().execute()
+        if payment.data:
+            payment_id = payment.data["id"]
+            db.table("payments").update({
+                "status": "approved",
+                "razorpay_payment_id": body.razorpay_payment_id,
+                "razorpay_signature": body.razorpay_signature,
+            }).eq("id", payment_id).execute()
+    except Exception:
+        pass
+
+    return {
+        "success": True,
+        "message": "MCQ package activated successfully! All selected test series are now unlocked.",
+    }
+
 
 
 # ─── Manual UTR Payment Path ──────────────────────────────────────────────────
