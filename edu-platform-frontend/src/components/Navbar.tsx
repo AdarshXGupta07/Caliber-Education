@@ -10,7 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 
 const navLinks = [
   { href: "/", label: "Home" },
-  { href: "/about", label: "About" },
+  { href: "/about", label: "Team" },
   { href: "/courses", label: "Courses" },
 ];
 
@@ -70,14 +70,7 @@ export function Navbar() {
               <Zap className="w-3.5 h-3.5" />
               MCQ
             </Link>
-            {/* Team */}
-            <Link href="/team"
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isActive("/team")
-                ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold"
-                : "text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
-                }`}>
-              Team
-            </Link>
+
             {isAuthenticated && (
               <Link href="/dashboard"
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isActive("/dashboard")
@@ -156,11 +149,7 @@ export function Navbar() {
                   }`}>
                 <Zap className="w-3.5 h-3.5" /> MCQ
               </Link>
-              <Link href="/team" onClick={() => setMenuOpen(false)}
-                className={`block px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive("/team") ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold" : "text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
-                  }`}>
-                Team
-              </Link>
+
               <div className="pt-2 border-t border-line-gray-light dark:border-line-gray-dark">
                 {isAuthenticated ? (
                   <div className="space-y-1">

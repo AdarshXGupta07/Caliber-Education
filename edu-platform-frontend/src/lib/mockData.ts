@@ -273,6 +273,11 @@ export interface Question {
   id: number | string;
   type?: "case" | "normal";
   caseText?: string;
+  caseId?: string;
+  chapterTag?: string;
+  difficulty?: "easy" | "medium" | "hard";
+  marks?: number;
+  negativeMarks?: number;
   text: string;
   options: string[];
   correctOptionIndex: number;
@@ -286,31 +291,55 @@ export interface SetSection {
   questions: Question[];
 }
 
+export type ICAIQuestionState = 
+  | "unvisited" 
+  | "unanswered" 
+  | "answered" 
+  | "marked_review" 
+  | "answered_marked_review";
+
+export interface SubjectChapter {
+  id?: string;
+  level: string;
+  group_name: string;
+  subject_code: string;
+  subject_name: string;
+  chapter_number: number;
+  chapter_title: string;
+}
+
 /**
- * A single test Set inside a Series.
- * topperStats is MOCK/SEED DATA ONLY — not aggregated from real student attempts.
- * Replace with backend aggregation before going to production.
+ * A single test Set inside a Series or CA Subject Catalog.
  */
 export interface MCQSet {
   id: string;
-  seriesId: string;
+  seriesId?: string;
   title: string;
+  level?: "FINAL" | "INTERMEDIATE" | "FOUNDATIONS" | string;
+  groupName?: "GROUP_1" | "GROUP_2" | "BOTH" | "NONE" | string;
+  subjectCode?: string;
+  testType?: "COMPLETE_GROUP" | "FULL_SUBJECT" | "CHAPTER_WISE" | string;
+  chapterName?: string;
+  durationMinutes?: number;
+  passingMarks?: number;
+  totalMarks?: number;
+  status?: "draft" | "published" | "archived" | string;
+  shuffleQuestions?: boolean;
+  shuffleOptions?: boolean;
+  allowRetake?: boolean;
+  maxAttempts?: number | null;
   isLocked: boolean;
   price: number;
   sections: SetSection[];
-  /**
-   * ⚠ MOCK DATA — seed fixture only.
-   * perQuestionTimes is indexed across all questions in section order (section 0 first, then section 1, etc.).
-   * Replace with real backend aggregation before production.
-   */
-  topperStats: {
+  topperStats?: {
     score: number;
     totalTimeSeconds: number;
     perQuestionTimes: number[];
   };
-  // Display helpers — derived from sections
   description: string;
   subject: string;
+  sectionCount?: number;
+  questionCount?: number;
 }
 
 /** @deprecated Alias for MCQSet — kept for any legacy references. Use MCQSet instead. */

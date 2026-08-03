@@ -308,7 +308,7 @@ function Footer() {
             <h4 className="font-heading font-semibold text-xs text-ink-navy dark:text-paper mb-4 uppercase tracking-wider">Company</h4>
             <ul className="space-y-2.5">
               {[
-                { href: "/about", label: "About Us" },
+                { href: "/about", label: "Team" },
                 { href: "/login", label: "Sign In" },
                 { href: "/signup", label: "Sign Up" },
               ].map((l) => (
