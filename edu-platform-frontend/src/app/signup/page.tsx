@@ -14,7 +14,7 @@ const OTP_LENGTH = 6;
 
 export default function SignupPage() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { setSession, markProfileComplete } = useAuth();
 
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
@@ -28,6 +28,7 @@ export default function SignupPage() {
   const [showCpw, setShowCpw] = useState(false);
   const [error, setError] = useState("");
   const [turnstileToken, setTurnstileToken] = useState("");
+  const [turnstileKey, setTurnstileKey] = useState(0);
   const [tempToken, setTempToken] = useState("");
 
   const otpFilled = otp.every((d) => d !== "");
@@ -36,6 +37,7 @@ export default function SignupPage() {
   async function handleEmail(e: React.FormEvent) {
     e.preventDefault();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError("Enter a valid email address."); return; }
+    if (!turnstileToken) { setError("Security verification in progress. Please wait a moment and try again."); return; }
 
     setError("");
     try {
@@ -45,11 +47,19 @@ export default function SignupPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, turnstileToken }),
       });
-      if (!res.ok) throw new Error("Failed to initialize registration");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to initialize registration.");
+      }
       setOtp(Array(OTP_LENGTH).fill(""));
       setStep("otp");
-    } catch {
-      setError("Server error. Please ensure backend is running.");
+    } catch (err: any) {
+      // A Turnstile token is single-use — whatever the failure, the token
+      // that was just spent is now dead. Force a fresh widget so a retry
+      // actually has a valid token instead of failing bot-check again.
+      setTurnstileToken("");
+      setTurnstileKey((k) => k + 1);
+      setError(err.message || "Server error. Please check your connection and try again.");
     }
   }
 
@@ -77,14 +87,38 @@ export default function SignupPage() {
     }
   }
 
+  async function handleResendOTP() {
+    if (!turnstileToken) {
+      setError("Security verification in progress. Please wait a moment and try again.");
+      return;
+    }
+    setError("");
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const res = await fetch(`${apiURL}/api/auth/register-init`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, turnstileToken }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Couldn't resend the code.");
+      }
+      setOtp(Array(OTP_LENGTH).fill(""));
+    } catch (err: any) {
+      setError(err.message || "Couldn't resend the code. Please try again.");
+    } finally {
+      // Whether it succeeded or not, that token is spent — a second resend
+      // needs a fresh one.
+      setTurnstileToken("");
+      setTurnstileKey((k) => k + 1);
+    }
+  }
+
   async function handlePassword(e: React.FormEvent) {
     e.preventDefault();
     if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
     if (password !== confirmPassword) { setError("Passwords do not match."); return; }
-    if (!turnstileToken) {
-      setError("Security verification in progress. Please wait.");
-      return;
-    }
     setError("");
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
@@ -95,36 +129,41 @@ export default function SignupPage() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Signup failed");
+        throw new Error(err.detail || "Signup failed");
       }
       const data = await res.json();
-      if (data.token) {
-        localStorage.setItem("caliber_jwt", data.token);
+      // register already returns a valid session — hydrate directly instead
+      // of calling login() again, which would reuse this same single-use
+      // Turnstile token a second time and fail.
+      if (data.token && data.user) {
+        setSession(data.token, data.user);
       }
       setStep("profile");
-      await login(email, password, turnstileToken);
     } catch (err: any) {
-      console.warn("API signup error, falling back to mock enrollment:", err.message);
-      setStep("profile");
-      await login(email);
+      setError(err.message || "Signup failed. Please try again.");
     }
   }
 
   async function handleProfile(e: React.FormEvent) {
     e.preventDefault();
+    setError("");
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const token = localStorage.getItem("caliber_jwt") || "";
-      await fetch(`${apiURL}/api/auth/profile`, {
+      const res = await fetch(`${apiURL}/api/auth/profile`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify(profileForm)
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Couldn't save your details. Please try again.");
+      }
+      markProfileComplete();
       setStep("done");
       setTimeout(() => router.push("/dashboard"), 1500);
     } catch (err: any) {
-      setStep("done");
-      setTimeout(() => router.push("/dashboard"), 1500);
+      setError(err.message || "Couldn't save your details. Please try again.");
     }
   }
 
@@ -182,8 +221,15 @@ export default function SignupPage() {
                   <input type="email" placeholder="you@example.com" value={email} onChange={(e) => { setEmail(e.target.value); setError(""); }} autoFocus
                     className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors" required />
                 </div>
+
+                {/* Invisible Turnstile widget — must be mounted before the
+                    "Send OTP" submit fires, since register-init requires it.
+                    key forces a fresh widget (and fresh single-use token)
+                    after any failed attempt. */}
+                <Turnstile key={turnstileKey} onVerify={setTurnstileToken} />
+
                 {error && <p className="text-xs text-alert-coral">{error}</p>}
-                <button type="submit" className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm animate-pulse">
+                <button type="submit" disabled={!turnstileToken} className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:animate-none animate-pulse">
                   Send OTP <ArrowRight className="w-4 h-4" />
                 </button>
 
@@ -214,13 +260,15 @@ export default function SignupPage() {
             {step === "otp" && (
               <form onSubmit={handleOTP} className="space-y-5">
                 <OTPInput value={otp} onChange={(v) => { setOtp(v); setError(""); }} />
-                <p className="text-[10px] text-center text-slate dark:text-paper/50">Check your console for the test OTP (Hint: 123456)</p>
+                {/* Fresh widget for the resend action — the step-1 token was
+                    already spent on the original register-init call. */}
+                <Turnstile key={turnstileKey} onVerify={setTurnstileToken} />
                 {error && <p className="text-xs text-alert-coral text-center">{error}</p>}
                 <button type="submit" disabled={!otpFilled}
                   className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed">
                   Verify <ArrowRight className="w-4 h-4" />
                 </button>
-                <ResendTimer onResend={() => { }} />
+                <ResendTimer onResend={handleResendOTP} />
               </form>
             )}
 
@@ -251,9 +299,6 @@ export default function SignupPage() {
                   </div>
                 </div>
                 {error && <p className="text-xs text-alert-coral">{error}</p>}
-
-                {/* Invisible Turnstile widget */}
-                <Turnstile onVerify={setTurnstileToken} />
 
                 <button type="submit"
                   className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm">
@@ -303,6 +348,8 @@ export default function SignupPage() {
                     </select>
                   </div>
                 </div>
+
+                {error && <p className="text-xs text-alert-coral">{error}</p>}
 
                 <button type="submit"
                   className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm mt-6">

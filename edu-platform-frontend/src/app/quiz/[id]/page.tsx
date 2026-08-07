@@ -1,7 +1,7 @@
 "use client";
 
-import { use, useCallback, useEffect, useRef, useState } from "react";
-import { notFound } from "next/navigation";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { notFound, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -10,21 +10,61 @@ import {
 import { AnswerRevealOption, ReviewCard } from "@/components/AnswerReveal";
 import {
   ArrowLeft, ArrowRight, Clock, LayoutDashboard, RotateCcw, Trophy,
-  SkipForward, AlertCircle,
+  SkipForward, AlertCircle, Sun, Moon
 } from "lucide-react";
+import { useTheme } from "next-themes";
 
 // -- Models matching Backend V3 Schema --
 export interface Question {
   id: string;
   type: "normal" | "case";
-  content: string;
+  text: string;
   options: string[];
-  correct_option: number;
+  // Not present until after submission — the quiz-taking endpoint never
+  // returns the answer key. Populated from the submit-v2 response instead.
+  correctOptionIndex?: number;
   explanation?: string;
   marks: number;
-  negative_marks: number;
+  negativeMarks: number;
   difficulty: "easy" | "medium" | "hard";
-  case_scenario_id?: string;
+  case_narrative?: string;
+}
+
+interface QuestionAnalysisEntry {
+  questionIndex: number;
+  questionId: string;
+  status: "correct" | "incorrect" | "skipped";
+  userSelected: number | null;
+  correctOptionIndex: number;
+  marks: number;
+  negativeMarks: number;
+  marksEarned: number;
+  timeTakenSeconds: number;
+  explanation: string;
+}
+
+interface SubmissionResult {
+  submissionId: string;
+  score: number;
+  totalMarks: number;
+  percentage: number;
+  isPassed: boolean;
+  correctCount: number;
+  incorrectCount: number;
+  skippedCount: number;
+  accuracyPercentage: number;
+  totalTimeSeconds: number;
+  rank: number;
+  totalCompetitors: number;
+  percentile: number;
+  questionAnalysis: QuestionAnalysisEntry[];
+}
+
+interface LeaderboardEntry {
+  name: string;
+  score: number;
+  time: number;
+  isUser: boolean;
 }
 
 export interface CaseScenario {
@@ -41,11 +81,11 @@ export interface ExamSection {
 export interface MCQPaper {
   id: string;
   title: string;
-  level: string; 
-  groupName: string; 
-  subjectCode: string; 
+  level: string;
+  groupName: string;
+  subjectCode: string;
   chapterName?: string;
-  testType: string; 
+  testType: string;
   durationMinutes: number;
   passingMarks: number;
   totalMarks: number;
@@ -60,67 +100,138 @@ type FlatEntry = {
   sectionId: string;
   sectionTitle: string;
   question: Question;
-  caseScenario?: CaseScenario;
 };
 
 function flattenPaperQuestions(paper: MCQPaper): FlatEntry[] {
   const result: FlatEntry[] = [];
   if (!paper.sections) return result;
-  
+
   for (const sec of paper.sections) {
     if (!sec.questions) continue;
     for (const q of sec.questions) {
-      const caseScen = paper.case_scenarios?.find(c => c.id === q.case_scenario_id);
       result.push({
         sectionId: sec.id,
         sectionTitle: sec.title,
-        question: q,
-        caseScenario: caseScen
+        question: q
       });
     }
   }
   return result;
 }
 
-type QuizPhase = "in-progress" | "results";
+// Shuffles standalone normal-MCQ entries among themselves. Case-study
+// sub-questions are grouped into contiguous blocks (by shared case_narrative)
+// that keep both their internal order and their original position slot in
+// the sequence — a case's questions never get split up or mixed with others.
+function shuffleFlatQuestions(entries: FlatEntry[]): FlatEntry[] {
+  type Block =
+    | { kind: "case"; entries: FlatEntry[] }
+    | { kind: "normal"; entry: FlatEntry };
+
+  const blocks: Block[] = [];
+  let i = 0;
+  while (i < entries.length) {
+    const e = entries[i];
+    if (e.question.type === "case") {
+      const caseKey = e.question.case_narrative;
+      const group: FlatEntry[] = [e];
+      let j = i + 1;
+      while (
+        j < entries.length &&
+        entries[j].question.type === "case" &&
+        entries[j].question.case_narrative === caseKey
+      ) {
+        group.push(entries[j]);
+        j++;
+      }
+      blocks.push({ kind: "case", entries: group });
+      i = j;
+    } else {
+      blocks.push({ kind: "normal", entry: e });
+      i++;
+    }
+  }
+
+  const normalBlockIndices = blocks
+    .map((b, idx) => (b.kind === "normal" ? idx : -1))
+    .filter((idx) => idx !== -1);
+  const normalEntries = normalBlockIndices.map(
+    (idx) => (blocks[idx] as { kind: "normal"; entry: FlatEntry }).entry
+  );
+  for (let k = normalEntries.length - 1; k > 0; k--) {
+    const j = Math.floor(Math.random() * (k + 1));
+    [normalEntries[k], normalEntries[j]] = [normalEntries[j], normalEntries[k]];
+  }
+  normalBlockIndices.forEach((blockIdx, k) => {
+    blocks[blockIdx] = { kind: "normal", entry: normalEntries[k] };
+  });
+
+  const result: FlatEntry[] = [];
+  for (const b of blocks) {
+    if (b.kind === "case") result.push(...b.entries);
+    else result.push(b.entry);
+  }
+  return result;
+}
+
+type QuizPhase = "in-progress" | "submitting" | "results";
 
 export default function QuizPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const [paper, setPaper] = useState<MCQPaper | null>(null);
   const [loading, setLoading] = useState(true);
   const [is404, setIs404] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     const fetchQuiz = async () => {
       try {
         const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-        const res = await fetch(`${apiURL}/api/quizzes/${id}`);
-        if (res.status === 404) { setIs404(true); return; }
-        if (res.ok) {
-          const data = await res.json();
-          setPaper(data);
+        const token = localStorage.getItem("caliber_jwt") || "";
+        if (!token) {
+          router.push(`/login?next=/quiz/${id}`);
+          return;
         }
+        const res = await fetch(`${apiURL}/api/quizzes/${id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.status === 404) { setIs404(true); return; }
+        if (res.status === 401) { router.push(`/login?next=/quiz/${id}`); return; }
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          setLoadError(err.detail || "Couldn't load this quiz. Please try again.");
+          return;
+        }
+        const data = await res.json();
+        setPaper(data);
       } catch (e) {
-        console.warn(e);
+        setLoadError("Couldn't load this quiz. Please check your connection and try again.");
       } finally {
         setLoading(false);
       }
     };
     fetchQuiz();
-  }, [id]);
+  }, [id, router]);
 
   if (is404) return notFound();
+  if (loadError) {
+    return (
+      <div className="pt-32 pb-20 text-center max-w-lg mx-auto">
+        <h2 className="text-xl font-bold font-heading mb-4 text-ink-navy dark:text-paper">Couldn&apos;t load this quiz</h2>
+        <p className="text-slate dark:text-paper/60 mb-6">{loadError}</p>
+        <Link href="/mcq" className="text-sm font-bold text-signal-emerald hover:underline">
+          Go back to MCQ Library
+        </Link>
+      </div>
+    );
+  }
   if (loading || !paper) return <div className="pt-24 text-center">Loading quiz engine...</div>;
 
-  return <QuizEngine paper={paper} />;
-}
-
-// ─── Quiz Engine ──────────────────────────────────────────────────────────
-function QuizEngine({ paper }: { paper: MCQPaper }) {
-  const flatQuestions = flattenPaperQuestions(paper);
-  const total = flatQuestions.length;
-
-  if (total === 0) {
+  // Checked here, before QuizEngine (and its hooks) ever mounts — a paper
+  // with 0 questions must never reach QuizEngine, since flatQuestions.length
+  // drives array sizing for several of QuizEngine's hooks below.
+  if (flattenPaperQuestions(paper).length === 0) {
     return (
       <div className="pt-32 pb-20 text-center max-w-lg mx-auto">
         <h2 className="text-xl font-bold font-heading mb-4 text-ink-navy dark:text-paper">No questions available</h2>
@@ -132,6 +243,26 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
     );
   }
 
+  return <QuizEngine paper={paper} />;
+}
+
+// ─── Quiz Engine ──────────────────────────────────────────────────────────
+// Precondition: paper has at least one question (enforced by the caller above).
+function QuizEngine({ paper }: { paper: MCQPaper }) {
+  const { theme, setTheme, resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Computed once per quiz load (stable across re-renders like the timer
+  // tick) so question order never changes mid-attempt.
+  const flatQuestions = useMemo(() => {
+    const base = flattenPaperQuestions(paper);
+    return paper.shuffleQuestions ? shuffleFlatQuestions(base) : base;
+  }, [paper]);
+  const total = flatQuestions.length;
+
   const [phase, setPhase] = useState<QuizPhase>("in-progress");
   const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -139,6 +270,9 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
   const [perQuestionTimes, setPerQuestionTimes] = useState<number[]>(Array(total).fill(0));
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [showFinishWarning, setShowFinishWarning] = useState(false);
+  const [submissionResult, setSubmissionResult] = useState<SubmissionResult | null>(null);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const [sectionElapsed, setSectionElapsed] = useState<Record<string, number>>(() => {
     const acc: Record<string, number> = {};
@@ -175,9 +309,19 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
     return () => window.clearInterval(timer);
   }, [phase, currentIndex, flatQuestions]);
 
+  useEffect(() => {
+    if (phase !== "in-progress") return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [phase]);
+
   const currentEntry = flatQuestions[currentIndex];
   const currentQ = currentEntry.question;
-  const currentCase = currentEntry.caseScenario;
+  const currentCase = currentEntry.question.case_narrative;
   const selectedOption = userAnswers[currentIndex];
   const answeredCount = userAnswers.filter((a) => a !== null).length;
   const skippedCount = total - answeredCount;
@@ -185,7 +329,7 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
   function selectOption(optionIndex: number, answeredAt: number) {
     const alreadyAnswered = userAnswers[currentIndex] !== null;
     const duration = alreadyAnswered
-      ? perQuestionTimes[currentIndex]  
+      ? perQuestionTimes[currentIndex]
       : Math.max(1, Math.round((answeredAt - questionShownAt.current[currentIndex]) / 1000));
     setUserAnswers((prev) => prev.map((a, i) => (i === currentIndex ? optionIndex : a)));
     setPerQuestionTimes((prev) => prev.map((t, i) => (i === currentIndex ? duration : t)));
@@ -221,32 +365,48 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
 
   async function finishQuiz() {
     setShowFinishWarning(false);
+    setSubmitError(null);
+    setPhase("submitting");
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const token = localStorage.getItem("caliber_jwt");
-      const score = userAnswers.reduce<number>(
-        (sum, answer, i) => sum + (answer === flatQuestions[i].question.correct_option ? flatQuestions[i].question.marks : (answer !== null ? -(flatQuestions[i].question.negative_marks) : 0)),
-        0
-      );
-      if (token) {
-        await fetch(`${apiURL}/api/quizzes/${paper.id}/submit-v2`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            score: score,
-            totalQuestions: total,
-            totalTimeSeconds: elapsedSeconds,
-            perQuestionTimes: perQuestionTimes
-          })
-        });
+      if (!token) {
+        setSubmitError("You've been signed out. Please log in again to submit this attempt.");
+        setPhase("in-progress");
+        return;
       }
+      const res = await fetch(`${apiURL}/api/quizzes/${paper.id}/submit-v2`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          answers: userAnswers,
+          perQuestionTimes: perQuestionTimes,
+          elapsedSeconds: elapsedSeconds,
+        })
+      });
+      if (!res.ok) {
+        throw new Error("Server rejected the submission");
+      }
+      const data: SubmissionResult = await res.json();
+      setSubmissionResult(data);
+      setPhase("results");
+
+      // Best-effort — the results view works fine without it, just shows
+      // no leaderboard/topper comparison if this fails.
+      try {
+        const lbRes = await fetch(`${apiURL}/api/quizzes/${paper.id}/leaderboard`, {
+          headers: { "Authorization": `Bearer ${token}` },
+        });
+        if (lbRes.ok) setLeaderboard(await lbRes.json());
+      } catch { /* leaderboard is optional */ }
     } catch (e) {
-      console.warn("Failed to sync quiz attempt", e);
+      console.warn("Failed to submit quiz attempt", e);
+      setSubmitError("Couldn't submit your attempt — check your connection and try again. Your answers are still saved.");
+      setPhase("in-progress");
     }
-    setPhase("results");
   }
 
   const reset = useCallback(() => {
@@ -263,25 +423,27 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
       return acc;
     });
     setShowFinishWarning(false);
+    setSubmissionResult(null);
+    setLeaderboard([]);
+    setSubmitError(null);
     questionShownAt.current = [window.performance.now(), ...Array(total - 1).fill(0)];
   }, [total, paper.sections]);
 
-  if (phase === "results") {
-    const score = userAnswers.reduce<number>(
-      (sum, answer, i) => sum + (answer === flatQuestions[i].question.correct_option ? flatQuestions[i].question.marks : (answer !== null ? -(flatQuestions[i].question.negative_marks) : 0)),
-      0
-    );
+  if (phase === "results" && submissionResult) {
     return (
       <ResultsView
         paper={paper}
         flatQuestions={flatQuestions}
-        score={score}
-        userAnswers={userAnswers}
-        elapsedSeconds={elapsedSeconds}
+        result={submissionResult}
+        leaderboard={leaderboard}
         perQuestionTimes={perQuestionTimes}
         onReset={reset}
       />
     );
+  }
+
+  if (phase === "submitting") {
+    return <div className="pt-24 text-center">Submitting your attempt...</div>;
   }
 
   return (
@@ -308,9 +470,21 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
           </div>
 
           <div className="flex items-center justify-between">
-            <Link href="/mcq" className="flex items-center gap-1.5 text-xs text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors">
-              <ArrowLeft className="w-3.5 h-3.5" /> Exit
-            </Link>
+            <div className="flex items-center gap-4">
+              <Link href="/mcq" className="flex items-center gap-1.5 text-xs text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark px-4 py-2 rounded-xl shadow-sm">
+                <ArrowLeft className="w-3.5 h-3.5" /> Exit
+              </Link>
+              {mounted && (
+                <button
+                  onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+                  className="p-2 rounded-xl bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark text-slate dark:text-paper/70 hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-all shadow-sm flex items-center justify-center gap-2 text-[10px] font-bold"
+                  title="Toggle Light/Dark Mode"
+                >
+                  {resolvedTheme === "dark" ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-500" />}
+                  {resolvedTheme === "dark" ? "Light Mode" : "Dark Mode"}
+                </button>
+              )}
+            </div>
 
             <div className="flex gap-6 sm:gap-8 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark px-6 py-2 rounded-xl shadow-sm">
               <div className="flex flex-col items-center">
@@ -340,55 +514,44 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
               animate={{ width: `${(answeredCount / total) * 100}%` }}
             />
           </div>
+
+          {submitError && (
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-alert-coral/10 border border-alert-coral/30 text-alert-coral text-xs font-semibold">
+              <AlertCircle className="w-4 h-4 shrink-0" /> {submitError}
+            </div>
+          )}
         </div>
 
         <div className="grid lg:grid-cols-12 gap-6 items-start max-w-7xl mx-auto w-full">
-          <div className="lg:col-span-5 space-y-4">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate dark:text-paper/40">
-              {currentEntry.sectionTitle}
-            </p>
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={`q-${currentIndex}`}
-                initial={{ opacity: 0, x: -16 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 16 }}
-                className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl overflow-hidden shadow-lg p-6 lg:min-h-[400px]"
-              >
-                {currentCase && (
-                  <div className="mb-6 pb-6 border-b border-line-gray-light dark:border-line-gray-dark">
+          {currentCase && (
+            <div className="lg:col-span-5 space-y-4">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-slate dark:text-paper/40">
+                {currentEntry.sectionTitle}
+              </p>
+              <div className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl overflow-hidden shadow-lg lg:min-h-[400px]">
+                {/* Keyed on the case's own text, not currentIndex — this stays
+                    the same DOM node (no remount/re-animate) across every
+                    sub-question of the same case, and only actually animates
+                    when the case itself changes. */}
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={`case-${currentCase}`}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="p-6"
+                  >
                     <p className="text-[10px] font-bold uppercase tracking-widest text-slate dark:text-paper/40 mb-3">Case Study / Passage</p>
                     <div className="text-sm text-ink-navy dark:text-paper leading-relaxed whitespace-pre-wrap">
-                      {currentCase.narrative}
+                      {currentCase}
                     </div>
-                  </div>
-                )}
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+            </div>
+          )}
 
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <p className="text-xs font-mono text-slate dark:text-paper/50 uppercase tracking-widest">
-                      Question {currentIndex + 1} of {total}
-                    </p>
-                    <div className="flex gap-2">
-                        <span className="text-[10px] font-bold bg-signal-emerald/10 text-signal-emerald px-2 py-0.5 rounded">
-                            +{currentQ.marks} Marks
-                        </span>
-                        {currentQ.negative_marks > 0 && (
-                            <span className="text-[10px] font-bold bg-alert-coral/10 text-alert-coral px-2 py-0.5 rounded">
-                                -{currentQ.negative_marks} Marks
-                            </span>
-                        )}
-                    </div>
-                  </div>
-                  <p className="text-base font-medium text-ink-navy dark:text-paper leading-relaxed whitespace-pre-wrap">
-                    {currentQ.content}
-                  </p>
-                </div>
-              </motion.div>
-            </AnimatePresence>
-          </div>
-
-          <div className="lg:col-span-4 flex flex-col h-full space-y-4">
+          <div className={`${currentCase ? "lg:col-span-4" : "lg:col-span-9"} flex flex-col h-full space-y-4`}>
             <AnimatePresence mode="wait">
               <motion.div
                 key={`opts-${currentIndex}`}
@@ -398,6 +561,29 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
                 className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl overflow-hidden shadow-lg flex flex-col lg:min-h-[400px]"
               >
                 <div className="p-6 flex-1 space-y-3">
+                  {!currentCase && (
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-slate dark:text-paper/40 mb-1">
+                      {currentEntry.sectionTitle}
+                    </p>
+                  )}
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-xs font-mono text-slate dark:text-paper/50 uppercase tracking-widest">
+                      Question {currentIndex + 1} of {total}
+                    </p>
+                    <div className="flex gap-2">
+                      <span className="text-[10px] font-bold bg-signal-emerald/10 text-signal-emerald px-2 py-0.5 rounded">
+                        +{currentQ.marks || 1} Marks
+                      </span>
+                      {(currentQ.negativeMarks || 0) > 0 && (
+                        <span className="text-[10px] font-bold bg-alert-coral/10 text-alert-coral px-2 py-0.5 rounded">
+                          -{(currentQ.negativeMarks || 0)} Marks
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-base font-medium text-ink-navy dark:text-paper leading-relaxed whitespace-pre-wrap mb-4 pb-4 border-b border-line-gray-light dark:border-line-gray-dark">
+                    {currentQ.text}
+                  </p>
                   <p className="text-[10px] font-bold uppercase tracking-widest text-slate dark:text-paper/40 mb-1">Select an Option</p>
                   {currentQ.options.map((option, index) => (
                     <AnswerRevealOption
@@ -571,41 +757,43 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
 function formatTime(seconds: number) {
   return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
-function signed(value: number, suffix = "") {
-  return `${value > 0 ? "+" : ""}${value}${suffix}`;
-}
 
 function ResultsView({
-  paper, flatQuestions, score, userAnswers, elapsedSeconds, perQuestionTimes, onReset,
+  paper, flatQuestions, result, leaderboard, perQuestionTimes, onReset,
 }: {
   paper: MCQPaper;
   flatQuestions: FlatEntry[];
-  score: number;
-  userAnswers: (number | null)[];
-  elapsedSeconds: number;
+  result: SubmissionResult;
+  leaderboard: LeaderboardEntry[];
   perQuestionTimes: number[];
   onReset: () => void;
 }) {
   const total = flatQuestions.length;
-  const accuracy = Math.round((userAnswers.filter((a, i) => a === flatQuestions[i].question.correct_option).length / total) * 100) || 0;
+  const analysis = result.questionAnalysis;
+  const score = result.score;
+  const actualTotalMarks = result.totalMarks;
+  const accuracy = Math.round(result.accuracyPercentage);
+  const elapsedSeconds = result.totalTimeSeconds;
 
-  const topperScore = paper.totalMarks * 0.9;
-  const topperTime = paper.durationMinutes * 60 * 0.8;
-  const topperTimes = Array(total).fill(45);
+  // Real top scorer from the actual leaderboard — undefined if this is the
+  // first attempt on this paper (nothing to compare against yet), in which
+  // case comparison UI is hidden rather than showing invented numbers.
+  const topper = leaderboard.length > 0 ? leaderboard[0] : null;
 
-  const scoreChartData = [{ name: "Score", You: score, Topper: topperScore }];
+  const scoreChartData = topper
+    ? [{ name: "Score", You: score, Topper: topper.score }]
+    : [{ name: "Score", You: score }];
 
   const timeChartData = flatQuestions.map((entry, i) => ({
     question: `Q${i + 1}`,
     You: perQuestionTimes[i],
-    Topper: topperTimes[i] ?? 0,
   }));
 
   const sectionStats = (paper.sections || []).map((section) => {
     const indices = flatQuestions
       .map((e, i) => (e.sectionId === section.id ? i : -1))
       .filter((i) => i >= 0);
-    const correct = indices.filter((i) => userAnswers[i] === flatQuestions[i].question.correct_option).length;
+    const correct = indices.filter((i) => analysis[i]?.status === "correct").length;
     return {
       section: section.title.replace(/^Section [A-Z] — /, ""),
       fullTitle: section.title,
@@ -616,22 +804,15 @@ function ResultsView({
   });
 
   const headline = [
-    { label: "Score", value: `${score}/${paper.totalMarks}` },
+    { label: "Score", value: `${score}/${actualTotalMarks}` },
     { label: "Accuracy", value: `${accuracy}%` },
     { label: "Time taken", value: formatTime(elapsedSeconds) },
-    { label: "vs topper score", value: signed(score - topperScore) },
-    { label: "vs topper time", value: signed(elapsedSeconds - topperTime, "s") },
+    { label: "Rank", value: result.totalCompetitors > 0 ? `#${result.rank} of ${result.totalCompetitors}` : "—" },
+    { label: "Percentile", value: result.totalCompetitors > 0 ? `Top ${(100 - result.percentile).toFixed(0)}%` : "—" },
   ];
 
-  const rawLeaderboard = [
-    { name: "Akash Mehta (Topper)", score: topperScore, time: topperTime, isUser: false },
-    { name: "You", score: score, time: elapsedSeconds, isUser: true }
-  ];
-
-  const sortedLeaderboard = rawLeaderboard.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    return a.time - b.time;
-  }).slice(0, 5);
+  // Real attempts only — server already sorts by score desc, time asc.
+  const sortedLeaderboard = leaderboard.slice(0, 10);
 
   const RankBadge = ({ rank }: { rank: number }) => {
     const bg =
@@ -667,16 +848,16 @@ function ResultsView({
       </section>
 
       <div className="grid lg:grid-cols-2 gap-6">
-        <ChartCard title="Score comparison — You vs Topper">
+        <ChartCard title={topper ? "Score comparison — You vs Topper" : "Your score"}>
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={scoreChartData} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.08} />
               <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} domain={[0, paper.totalMarks]} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} domain={[0, actualTotalMarks || 1]} />
               <Tooltip />
               <Legend />
               <Bar dataKey="You" fill="#16a365" radius={[6, 6, 0, 0]} />
-              <Bar dataKey="Topper" fill="#64748b" radius={[6, 6, 0, 0]} />
+              {topper && <Bar dataKey="Topper" fill="#64748b" radius={[6, 6, 0, 0]} />}
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -693,11 +874,16 @@ function ResultsView({
             </div>
 
             <div className="space-y-2">
+              {sortedLeaderboard.length === 0 && (
+                <p className="text-xs text-slate dark:text-paper/50 text-center py-4">
+                  You're the first to attempt this paper — rankings will fill in as more students take it.
+                </p>
+              )}
               {sortedLeaderboard.map((item, idx) => {
                 const rank = idx + 1;
                 return (
                   <motion.div
-                    key={item.name}
+                    key={`${item.name}-${idx}`}
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: idx * 0.05 }}
@@ -753,7 +939,7 @@ function ResultsView({
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Time per question (seconds) — You vs Topper">
+        <ChartCard title="Time per question (seconds)">
           <ResponsiveContainer width="100%" height={245}>
             <BarChart data={timeChartData} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.08} />
@@ -762,7 +948,6 @@ function ResultsView({
               <Tooltip />
               <Legend />
               <Bar dataKey="You" fill="#16a365" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="Topper" fill="#94a3b8" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -778,18 +963,18 @@ function ResultsView({
                   {entry.sectionTitle}
                 </p>
               )}
-              {entry.caseScenario && (
-                  <div className="bg-slate/5 border-l-2 border-slate/20 p-3 mb-2 rounded-r-lg text-sm italic">
-                      {entry.caseScenario.narrative}
-                  </div>
+              {entry.question.case_narrative && (
+                <div className="bg-slate/5 border-l-2 border-slate/20 p-3 mb-2 rounded-r-lg text-sm italic">
+                  {entry.question.case_narrative}
+                </div>
               )}
               <ReviewCard
                 index={index}
-                questionText={entry.question.content}
+                questionText={entry.question.text}
                 options={entry.question.options}
-                userAnswerIndex={userAnswers[index]}
-                correctAnswerIndex={entry.question.correct_option}
-                explanation={entry.question.explanation || ""}
+                userAnswerIndex={analysis[index]?.userSelected ?? null}
+                correctAnswerIndex={analysis[index]?.correctOptionIndex ?? -1}
+                explanation={analysis[index]?.explanation || ""}
                 timeTakenSeconds={perQuestionTimes[index]}
               />
             </div>

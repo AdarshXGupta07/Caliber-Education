@@ -1,0 +1,29 @@
+name: Purge old submission files
+
+# Deletes answer-sheet and checked-copy PDFs older than 7 days from Supabase
+# Storage (marks and remarks are kept). Runs daily on GitHub's free tier.
+#
+# Requires two repository secrets (Settings → Secrets and variables → Actions):
+#   BACKEND_URL         e.g. https://caliber-api.onrender.com
+#   MAINTENANCE_SECRET  same value as the backend's MAINTENANCE_SECRET env var
+
+on:
+  schedule:
+    - cron: "30 20 * * *"   # 02:00 IST daily
+  workflow_dispatch:         # allows manual runs from the Actions tab
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call purge endpoint
+        run: |
+          code=$(curl -s -o /tmp/out.json -w "%{http_code}" \
+            -X POST "${{ secrets.BACKEND_URL }}/api/admin/maintenance/purge-old-files" \
+            -H "X-Maintenance-Secret: ${{ secrets.MAINTENANCE_SECRET }}")
+          echo "HTTP $code"
+          cat /tmp/out.json
+          if [ "$code" != "200" ]; then
+            echo "Purge failed"
+            exit 1
+          fi

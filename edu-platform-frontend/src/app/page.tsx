@@ -5,14 +5,12 @@ import { motion } from "framer-motion";
 import { ArrowRight, BookOpen, MessageCircle, Trophy, ChevronRight, Zap, Users, Star } from "lucide-react";
 import Image from "next/image";
 import { HeroMCQCard } from "@/components/HeroMCQCard";
-import { CourseCard } from "@/components/CourseCard";
-import { courses } from "@/lib/mockData";
 import { useState } from "react";
 import { Turnstile } from "@/components/Turnstile";
 
 const steps = [
   { num: "01", icon: <BookOpen className="w-5 h-5" />, title: "Enroll", desc: "Choose a CA course that matches your exam level. Pay once, access forever." },
-  { num: "02", icon: <Zap className="w-5 h-5" />, title: "Practice", desc: "Attempt timed MCQ sets daily. Every question mirrors the CA exam pattern." },
+  { num: "02", icon: <Zap className="w-5 h-5" />, title: "Practice MCQs", desc: "Attempt timed MCQ sets daily. Every question mirrors the CA exam pattern." },
   { num: "03", icon: <MessageCircle className="w-5 h-5" />, title: "Get WhatsApp Access", desc: "After enrolment, join our exclusive WhatsApp group for live doubt resolution." },
 ];
 
@@ -34,7 +32,6 @@ const founders = [
 ];
 
 export default function HomePage() {
-  const previewCourses = courses.slice(0, 3);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
 
   return (
@@ -67,7 +64,7 @@ export default function HomePage() {
                 <Link href="/about" className="inline-flex items-center gap-2 px-6 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm">
                   Meet Your Mentors <ArrowRight className="w-4 h-4" />
                 </Link>
-                <Link href="/practice" className="inline-flex items-center gap-2 px-6 py-3 border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 font-semibold rounded-lg active:scale-[0.98] transition-all text-sm">
+                <Link href="/mcq" className="inline-flex items-center gap-2 px-6 py-3 border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 font-semibold rounded-lg active:scale-[0.98] transition-all text-sm">
                   <Zap className="w-4 h-4" /> Start Learning Free
                 </Link>
               </div>
@@ -92,7 +89,7 @@ export default function HomePage() {
                 className="relative w-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl shadow-ink-navy/10 dark:shadow-none border-[4px] sm:border-[8px] border-white dark:border-line-gray-dark/30 hover:scale-[1.02] transition-transform duration-500 cursor-zoom-in"
                 onClick={() => setZoomedImage("/CALIBER%20MENTORS.jpeg")}
               >
-                <Image src="/CALIBER%20MENTORS.jpeg" alt="CAliber Mentors" width={1920} height={1080} className="w-full h-auto object-contain contrast-125 brightness-105" priority />
+                <Image src="/CALIBER%20MENTORS.jpeg" alt="CAliber Mentors" width={1920} height={1080} className="w-full h-auto object-contain" quality={95} priority />
               </div>
             </motion.div>
 
@@ -142,7 +139,7 @@ export default function HomePage() {
                       }}
                     >
                       {f.image ? (
-                        <Image src={f.image} alt={f.name} fill className="object-cover contrast-125 brightness-105" />
+                        <Image src={f.image} alt={f.name} fill className="object-cover" quality={95} />
                       ) : (
                         f.initials
                       )}
@@ -168,26 +165,6 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ─── COURSE PREVIEW ─── */}
-      <section className="py-32 bg-paper dark:bg-ink-navy/40 border-b border-line-gray-light dark:border-line-gray-dark">
-        <div className="max-w-6xl mx-auto px-6 sm:px-8">
-          <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="flex flex-col sm:flex-row sm:items-end justify-between mb-16 gap-4">
-            <div className="space-y-2">
-              <span className="text-xs font-semibold text-slate dark:text-paper/50 uppercase tracking-widest">Courses</span>
-              <h2 className="font-heading font-bold text-3xl sm:text-4xl text-ink-navy dark:text-paper">Start with what matters</h2>
-            </div>
-            <Link href="/courses" className="inline-flex items-center gap-1.5 text-xs font-semibold text-ink-navy dark:text-paper hover:gap-2.5 transition-all flex-shrink-0">
-              All courses <ArrowRight className="w-4 h-4" />
-            </Link>
-          </motion.div>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8">
-            {previewCourses.map((course, i) => (
-              <CourseCard key={course.id} course={course} index={i} />
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* ─── FREE PRACTICE CTA ─── */}
       <section className="py-32 bg-paper dark:bg-ink-navy">
         <div className="max-w-6xl mx-auto px-6 sm:px-8">
@@ -203,7 +180,7 @@ export default function HomePage() {
                 30 real CA exam-pattern Accounting questions. Full explanations. The same experience our paid students get.
               </p>
               <div className="flex flex-wrap gap-4 justify-center pt-2">
-                <Link href="/quiz/ca-accounting-free" className="inline-flex items-center gap-2 px-6 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm">
+                <Link href="/mcq" className="inline-flex items-center gap-2 px-6 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm">
                   Start Free Practice <ArrowRight className="w-4 h-4" />
                 </Link>
                 <Link href="/signup" className="inline-flex items-center gap-2 px-6 py-3 border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 font-semibold rounded-lg active:scale-[0.98] transition-all text-sm">
@@ -230,7 +207,7 @@ export default function HomePage() {
             exit={{ opacity: 0, scale: 0.95 }}
             className="relative max-w-7xl max-h-[90vh] w-full h-full flex items-center justify-center"
           >
-            <Image src={zoomedImage} alt="Zoomed view" fill className="object-contain drop-shadow-2xl contrast-125 brightness-105" />
+            <Image src={zoomedImage} alt="Zoomed view" fill className="object-contain drop-shadow-2xl" quality={95} />
           </motion.div>
           <button
             onClick={() => setZoomedImage(null)}
@@ -264,12 +241,11 @@ function Footer() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Submission failed");
+        throw new Error(err.detail || "Submission failed");
       }
       setSubmitted(true);
     } catch (err: any) {
-      console.warn("API contact submission error, falling back:", err.message);
-      setSubmitted(true);
+      alert(err.message || "Couldn't send your message — please try again in a moment.");
     }
   }
 
@@ -293,7 +269,7 @@ function Footer() {
             <ul className="space-y-2.5">
               {[
                 { href: "/courses", label: "All Courses" },
-                { href: "/practice", label: "Free MCQ Practice" },
+                { href: "/mcq", label: "Free MCQ Practice" },
                 { href: "/courses", label: "Course Listings" },
                 { href: "/dashboard", label: "Dashboard" },
               ].map((l) => (

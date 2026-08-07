@@ -43,18 +43,42 @@ export default function MCQPackagesPage() {
   const [allSubjects, setAllSubjects] = useState<MCQSubject[]>(INITIAL_MCQ_SUBJECTS);
   const [allBundles, setAllBundles] = useState<MCQBundle[]>(INITIAL_MCQ_BUNDLES);
   const [loading, setLoading] = useState(true);
+  const [ownedMcqSubjects, setOwnedMcqSubjects] = useState<string[]>([]);
+
+  useEffect(() => {
+    const fetchOwned = async () => {
+      try {
+        const token = localStorage.getItem("caliber_jwt");
+        if (!token) return;
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const res = await fetch(`${apiURL}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setOwnedMcqSubjects(data.mcqPurchases || []);
+        }
+      } catch (e) {
+        console.warn(e);
+      }
+    };
+    fetchOwned();
+  }, []);
 
   // Selected Modal / Drawer State
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isExtendMode, setIsExtendMode] = useState(false);
   const [modalSelectedSubjectIds, setModalSelectedSubjectIds] = useState<string[]>([]);
   const [selectedDuration, setSelectedDuration] = useState<PricingDuration>("1_month");
   const [couponCode, setCouponCode] = useState("");
   const [couponApplied, setCouponApplied] = useState(false);
   const [couponDiscount, setCouponDiscount] = useState(0);
   const [couponError, setCouponError] = useState("");
+  const [couponLoading, setCouponLoading] = useState(false);
 
   // Payment Processing State
   const [isProcessing, setIsProcessing] = useState(false);
+  const [activePaymentMethod, setActivePaymentMethod] = useState<"razorpay" | "manual">("razorpay");
   const [purchaseSuccess, setPurchaseSuccess] = useState(false);
   const [purchasedInfo, setPurchasedInfo] = useState<{ title: string; amount: number } | null>(null);
 
@@ -101,9 +125,10 @@ export default function MCQPackagesPage() {
     });
   }, [levelSubjects, searchQuery, selectedGroupFilter]);
 
-  // Open checkout modal with a specific subject selected
-  const handleOpenSubjectModal = (subject: MCQSubject) => {
+  // Open checkout modal — if subject is already owned, open in "extend" mode
+  const handleOpenSubjectModal = (subject: MCQSubject, extend = false) => {
     setModalSelectedSubjectIds([subject.id]);
+    setIsExtendMode(extend);
     setSelectedDuration("1_month");
     setCouponCode("");
     setCouponApplied(false);
@@ -154,23 +179,42 @@ export default function MCQPackagesPage() {
   };
 
   // Apply coupon code
-  const handleApplyCoupon = () => {
+  const handleApplyCoupon = async () => {
     const code = couponCode.trim().toUpperCase();
     if (!code) return;
-    if (code === "CALIBER10" || code === "WELCOME10" || code === "FIRST10") {
-      const discount = Math.round(cartCalculation.discountedPrice * 0.1);
-      setCouponDiscount(discount);
-      setCouponApplied(true);
-      setCouponError("");
-    } else if (code === "SUPER20" && cartCalculation.discountedPrice >= 800) {
-      const discount = Math.round(cartCalculation.discountedPrice * 0.2);
-      setCouponDiscount(discount);
-      setCouponApplied(true);
-      setCouponError("");
-    } else {
-      setCouponError("Invalid or expired coupon code");
-      setCouponApplied(false);
-      setCouponDiscount(0);
+
+    setCouponLoading(true);
+    setCouponError("");
+    setCouponApplied(false);
+
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/coupons/validate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          code: code,
+          cart_amount: cartCalculation.discountedPrice
+        })
+      });
+      const data = await res.json();
+      if (data.valid) {
+        setCouponDiscount(data.discount_amount || 0);
+        setCouponApplied(true);
+        setCouponError("");
+      } else {
+        setCouponError(data.message || "Invalid or expired coupon code");
+        setCouponApplied(false);
+        setCouponDiscount(0);
+      }
+    } catch (e) {
+      setCouponError("Network error validating coupon");
+    } finally {
+      setCouponLoading(false);
     }
   };
 
@@ -181,10 +225,10 @@ export default function MCQPackagesPage() {
   const handleCheckout = async () => {
     setIsProcessing(true);
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const token = typeof window !== "undefined" ? localStorage.getItem("caliber_jwt") : null;
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
 
-      // Try creating backend order
+      // Create backend order
       const orderRes = await fetch(`${apiURL}/api/payments/create-mcq-order`, {
         method: "POST",
         headers: {
@@ -201,65 +245,137 @@ export default function MCQPackagesPage() {
 
       if (orderRes.ok) {
         const orderData = await orderRes.json();
-        
-        // If razorpay key is present and Razorpay SDK is loaded on window
-        if (typeof window !== "undefined" && (window as any).Razorpay && orderData.key && !orderData.orderId.startsWith("order_MCQ_")) {
+
+        // Check which payment method is selected
+        if (activePaymentMethod === "razorpay") {
+          // REAL RAZORPAY PAYMENT
+          console.log("[MCQ] Opening Razorpay checkout...");
+          
+          // Dynamically load Razorpay script if not already loaded
+          if (!(window as any).Razorpay) {
+            await new Promise<void>((resolve, reject) => {
+              const script = document.createElement("script");
+              script.src = "https://checkout.razorpay.com/v1/checkout.js";
+              script.onload = () => {
+                console.log("[MCQ] Razorpay script loaded");
+                resolve();
+              };
+              script.onerror = () => reject(new Error("Failed to load Razorpay SDK"));
+              document.body.appendChild(script);
+            });
+          }
+
           const rzp = new (window as any).Razorpay({
-            key: orderData.key,
-            amount: orderData.amount,
-            currency: orderData.currency,
+            key: orderData.key || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+            amount: Math.round(finalPayablePrice * 100),
+            currency: "INR",
             name: "Caliber Education",
-            description: `${activeLevel} MCQ Package (${modalSelectedSubjectIds.length} Subjects - ${DURATION_LABELS[selectedDuration].label})`,
+            description: `${activeLevel} MCQ - ${DURATION_LABELS[selectedDuration].label}`,
             order_id: orderData.orderId,
             handler: async (response: any) => {
-              // Verify Payment
-              await fetch(`${apiURL}/api/payments/verify-mcq-payment`, {
+              console.log("[MCQ] Razorpay payment successful", response);
+              setIsProcessing(true);
+              
+              // Verify payment on backend
+              const verifyRes = await fetch(`${apiURL}/api/payments/verify-mcq-payment`, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",
-                  Authorization: token ? `Bearer ${token}` : "",
+                  Authorization: `Bearer ${token}`
                 },
-                body: JSON.stringify(response),
+                body: JSON.stringify({
+                  razorpay_order_id: response.razorpay_order_id,
+                  razorpay_payment_id: response.razorpay_payment_id,
+                  razorpay_signature: response.razorpay_signature,
+                }),
               });
-              setPurchasedInfo({
-                title: `${activeLevel} MCQ Package (${DURATION_LABELS[selectedDuration].label})`,
-                amount: finalPayablePrice,
-              });
-              setPurchaseSuccess(true);
+              
+              if (verifyRes.ok) {
+                console.log("[MCQ] Payment verified, enrollment created/extended");
+                setPurchasedInfo({
+                  title: `${activeLevel} MCQ Package (${DURATION_LABELS[selectedDuration].label})`,
+                  amount: finalPayablePrice,
+                });
+                setPurchaseSuccess(true);
+                setIsProcessing(false);
+                
+                // Redirect to dashboard after 2 seconds
+                setTimeout(() => {
+                  window.location.href = "/dashboard?tab=mcqs";
+                }, 2000);
+              } else {
+                const errData = await verifyRes.json().catch(() => ({}));
+                alert(`Payment verification failed: ${errData.detail || "Please try again"}`);
+                setIsProcessing(false);
+              }
+            },
+            prefill: {
+              email: token ? (() => {
+                try {
+                  return JSON.parse(atob(token.split('.')[1])).email;
+                } catch {
+                  return "";
+                }
+              })() : "",
             },
             theme: { color: "#10b981" },
+            modal: {
+              ondismiss: () => {
+                console.log("[MCQ] Razorpay modal closed by user");
+                setIsProcessing(false);
+              }
+            }
           });
+          
           rzp.open();
+          setIsProcessing(false); // Allow user to interact while modal is open
+          
         } else {
-          // Direct / Test Mode instant activation
-          setTimeout(() => {
+          // TEST MODE - Instant activation without Razorpay
+          console.log("[MCQ] Test mode: Confirming payment instantly");
+          const confirmRes = await fetch(`${apiURL}/api/payments/mock-confirm-mcq`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: token ? `Bearer ${token}` : "",
+            },
+            body: JSON.stringify({
+              razorpay_order_id: orderData.orderId,
+              razorpay_payment_id: "pay_TEST_" + Math.random().toString(36).substring(7),
+              razorpay_signature: "test_mode_signature"
+            }),
+          });
+
+          if (confirmRes.ok) {
+            console.log("[MCQ] Test payment confirmed, enrollment created/extended");
             setPurchasedInfo({
               title: `${activeLevel} MCQ Package (${DURATION_LABELS[selectedDuration].label})`,
               amount: finalPayablePrice,
             });
             setPurchaseSuccess(true);
             setIsProcessing(false);
-          }, 800);
-          return;
+
+            // Auto-redirect to dashboard after 2 seconds
+            setTimeout(() => {
+              window.location.href = "/dashboard?tab=mcqs";
+            }, 2000);
+          } else {
+            const errorData = await confirmRes.json().catch(() => ({}));
+            console.error("[MCQ] Test payment failed:", confirmRes.status, errorData);
+            alert(`Test payment confirmation failed: ${errorData.detail || "Please check backend logs"}`);
+            setIsProcessing(false);
+          }
         }
       } else {
-        // Fallback simulation for instant testing
-        setTimeout(() => {
-          setPurchasedInfo({
-            title: `${activeLevel} MCQ Package (${DURATION_LABELS[selectedDuration].label})`,
-            amount: finalPayablePrice,
-          });
-          setPurchaseSuccess(true);
-          setIsProcessing(false);
-        }, 800);
+        // orderRes not ok — show real error
+        const errData = await orderRes.json().catch(() => ({}));
+        alert(`Payment setup failed: ${errData.detail || "Please try again."}`);
+        setIsProcessing(false);
+        return;
       }
-    } catch (e) {
-      console.warn("Checkout simulation fallback:", e);
-      setPurchasedInfo({
-        title: `${activeLevel} MCQ Package (${DURATION_LABELS[selectedDuration].label})`,
-        amount: finalPayablePrice,
-      });
-      setPurchaseSuccess(true);
+    } catch (error) {
+      console.error("Payment error", error);
+      alert("Something went wrong. Please try again.");
     } finally {
       setIsProcessing(false);
     }
@@ -290,14 +406,14 @@ export default function MCQPackagesPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 selection:bg-emerald-500 selection:text-black">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 selection:bg-emerald-500 selection:text-black">
       {/* ─── Top High-Value Bundle Recommendation Header ─── */}
       <section className="relative pt-24 pb-8 overflow-hidden">
         {/* Ambient Gradient Glows */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[350px] bg-gradient-to-tr from-emerald-500/15 via-cyan-500/15 to-purple-500/10 blur-[130px] rounded-full pointer-events-none -z-10" />
 
         <div className="max-w-7xl mx-auto px-6 sm:px-8">
-          <div className="relative rounded-3xl p-8 sm:p-10 bg-gradient-to-r from-slate-900/90 via-slate-900/70 to-slate-900/90 border border-white/10 backdrop-blur-2xl overflow-hidden shadow-2xl">
+          <div className="relative rounded-3xl p-8 sm:p-10 bg-gradient-to-r from-white/90 dark:from-slate-900/90 via-white/70 dark:via-slate-900/70 to-white/90 dark:to-slate-900/90 border border-white/10 backdrop-blur-2xl overflow-hidden shadow-2xl">
             <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/10 blur-[100px] rounded-full pointer-events-none" />
 
             <div className="flex flex-col lg:flex-row items-center justify-between gap-8 relative z-10">
@@ -305,10 +421,10 @@ export default function MCQPackagesPage() {
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold mb-3">
                   <Flame className="w-3.5 h-3.5 text-amber-400" /> High-Value Bundles
                 </div>
-                <h1 className="text-2xl sm:text-4xl font-extrabold text-white font-heading tracking-tight leading-tight">
+                <h1 className="text-2xl sm:text-4xl font-extrabold text-ink-navy dark:text-white font-heading tracking-tight leading-tight">
                   Preparing for all subjects in {levelBadges[activeLevel].label}?
                 </h1>
-                <p className="mt-3 text-sm text-slate-300/80 leading-relaxed">
+                <p className="mt-3 text-sm text-slate-600 dark:text-slate-300/80 leading-relaxed">
                   Save up to 40% with pre-configured group packages and super bundles. Get complete
                   access to all test series, case scenario simulators, and leaderboard rankings.
                 </p>
@@ -330,23 +446,22 @@ export default function MCQPackagesPage() {
                       <div
                         key={b.id}
                         onClick={() => handleOpenBundleModal(b)}
-                        className={`p-5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-emerald-500/40 transition-all cursor-pointer group hover:scale-[1.01] shadow-lg ${
-                          isSuper && arr.length > 2 ? "sm:col-span-2" : ""
-                        }`}
+                        className={`p-5 rounded-2xl bg-slate-100 dark:bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:bg-white/10 border border-white/10 hover:border-emerald-500/40 transition-all cursor-pointer group hover:scale-[1.01] shadow-lg ${isSuper && arr.length > 2 ? "sm:col-span-2" : ""
+                          }`}
                       >
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
                             {b.badge || b.groupName}
                           </span>
-                          <span className="text-xs text-slate-400">{subCount} Subjects</span>
+                          <span className="text-xs text-slate-500 dark:text-slate-400">{subCount} Subjects</span>
                         </div>
-                        <h4 className="text-sm font-bold text-white group-hover:text-emerald-300 transition-colors">
+                        <h4 className="text-sm font-bold text-ink-navy dark:text-white group-hover:text-emerald-300 transition-colors">
                           {b.title}
                         </h4>
                         <div className="mt-3 flex items-baseline justify-between">
                           <div className="flex items-baseline gap-1">
-                            <span className="text-lg font-black text-white">₹{price1M}</span>
-                            <span className="text-[11px] text-slate-400">/ 1 Month</span>
+                            <span className="text-lg font-black text-ink-navy dark:text-white">₹{price1M}</span>
+                            <span className="text-[11px] text-slate-500 dark:text-slate-400">/ 1 Month</span>
                           </div>
                           <span className="text-xs text-emerald-400 font-bold flex items-center gap-1">
                             View Bundle <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
@@ -362,10 +477,10 @@ export default function MCQPackagesPage() {
       </section>
 
       {/* ─── Level Navigation & Controls Bar ─── */}
-      <section className="sticky top-16 z-30 bg-slate-950/85 backdrop-blur-xl border-b border-white/10 shadow-2xl">
+      <section className="sticky top-16 z-30 bg-slate-50 dark:bg-slate-950/85 backdrop-blur-xl border-b border-white/10 shadow-2xl">
         <div className="max-w-7xl mx-auto px-6 sm:px-8 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
           {/* Level Tabs */}
-          <div className="flex items-center p-1.5 bg-slate-900/90 border border-white/10 rounded-2xl w-full md:w-auto shadow-inner">
+          <div className="flex items-center p-1.5 bg-white/90 dark:bg-slate-900/90 border border-white/10 rounded-2xl w-full md:w-auto shadow-inner">
             {(["FINAL", "INTERMEDIATE", "FOUNDATIONS"] as MCQLevel[]).map((level) => {
               const isActive = activeLevel === level;
               return (
@@ -375,9 +490,8 @@ export default function MCQPackagesPage() {
                     setActiveLevel(level);
                     setSelectedGroupFilter("ALL");
                   }}
-                  className={`relative flex-1 md:flex-initial px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold tracking-wide transition-all duration-300 ${
-                    isActive ? "text-slate-950" : "text-slate-400 hover:text-white"
-                  }`}
+                  className={`relative flex-1 md:flex-initial px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold tracking-wide transition-all duration-300 ${isActive ? "text-slate-950" : "text-slate-500 dark:text-slate-400 hover:text-ink-navy dark:text-white"
+                    }`}
                 >
                   {isActive && (
                     <motion.div
@@ -396,18 +510,18 @@ export default function MCQPackagesPage() {
           <div className="flex items-center gap-3 w-full md:w-auto justify-end">
             {/* Search Input */}
             <div className="relative flex-1 md:w-72">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 dark:text-slate-400" />
               <input
                 type="text"
                 placeholder="Search subject or code (e.g. FR, DT)..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 text-xs sm:text-sm bg-slate-900/70 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/40 transition-all"
+                className="w-full pl-10 pr-4 py-2.5 text-xs sm:text-sm bg-white/70 dark:bg-slate-900/70 border border-white/10 rounded-xl text-ink-navy dark:text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/40 transition-all"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-ink-navy dark:text-white"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -416,16 +530,15 @@ export default function MCQPackagesPage() {
 
             {/* Quick Filter Group Chips (if level has groups) */}
             {activeLevel !== "FOUNDATIONS" && (
-              <div className="hidden sm:flex items-center gap-1.5 bg-slate-900/70 p-1 border border-white/10 rounded-xl text-xs">
+              <div className="hidden sm:flex items-center gap-1.5 bg-white/70 dark:bg-slate-900/70 p-1 border border-white/10 rounded-xl text-xs">
                 {["ALL", "Group I", "Group II"].map((grp) => (
                   <button
                     key={grp}
                     onClick={() => setSelectedGroupFilter(grp)}
-                    className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
-                      selectedGroupFilter === grp
-                        ? "bg-white/15 text-white shadow-sm"
-                        : "text-slate-400 hover:text-white"
-                    }`}
+                    className={`px-3 py-1.5 rounded-lg font-medium transition-all ${selectedGroupFilter === grp
+                      ? "bg-slate-200 dark:bg-white/15 text-ink-navy dark:text-white shadow-sm"
+                      : "text-slate-500 dark:text-slate-400 hover:text-ink-navy dark:text-white"
+                      }`}
                   >
                     {grp}
                   </button>
@@ -446,11 +559,11 @@ export default function MCQPackagesPage() {
                 {levelBadges[activeLevel].label} Catalog
               </span>
               <span className="text-slate-600">•</span>
-              <span className="text-xs text-slate-400">
+              <span className="text-xs text-slate-500 dark:text-slate-400">
                 {filteredSubjects.length} {filteredSubjects.length === 1 ? "Subject" : "Subjects"} Available
               </span>
             </div>
-            <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight mt-1">
+            <h2 className="text-2xl sm:text-3xl font-bold text-ink-navy dark:text-white tracking-tight mt-1">
               Select a Subject to Customize Your Package
             </h2>
           </div>
@@ -475,10 +588,10 @@ export default function MCQPackagesPage() {
 
         {/* Empty State */}
         {filteredSubjects.length === 0 ? (
-          <div className="text-center py-24 bg-slate-900/30 border border-white/5 rounded-3xl backdrop-blur-xl">
+          <div className="text-center py-24 bg-slate-100/50 dark:bg-slate-900/30 border border-white/5 rounded-3xl backdrop-blur-xl">
             <BookOpen className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-            <h3 className="text-lg font-bold text-white">No subjects found</h3>
-            <p className="text-sm text-slate-400 mt-1 max-w-sm mx-auto">
+            <h3 className="text-lg font-bold text-ink-navy dark:text-white">No subjects found</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-sm mx-auto">
               No subjects matched &quot;{searchQuery}&quot;. Clear your search query or switch filters.
             </p>
             <button
@@ -486,7 +599,7 @@ export default function MCQPackagesPage() {
                 setSearchQuery("");
                 setSelectedGroupFilter("ALL");
               }}
-              className="mt-4 px-4 py-2 bg-white/10 hover:bg-white/20 text-xs font-bold rounded-xl transition-all"
+              className="mt-4 px-4 py-2 bg-black/10 dark:bg-white/10 hover:bg-white/20 text-xs font-bold rounded-xl transition-all"
             >
               Reset Filters
             </button>
@@ -496,7 +609,7 @@ export default function MCQPackagesPage() {
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredSubjects.map((subject, idx) => {
               const startingPrice = subject.prices["1_month"] || 99;
-              const yearPrice = subject.prices["1_year"] || 400;
+              const isOwned = ownedMcqSubjects.includes(subject.id) || ownedMcqSubjects.includes(subject.code);
 
               return (
                 <motion.div
@@ -504,14 +617,16 @@ export default function MCQPackagesPage() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: idx * 0.05, duration: 0.3 }}
-                  onClick={() => handleOpenSubjectModal(subject)}
-                  className="group relative bg-slate-900/60 hover:bg-slate-900/90 border border-white/10 hover:border-emerald-500/40 rounded-3xl p-6 backdrop-blur-xl transition-all duration-300 hover:shadow-2xl hover:shadow-emerald-500/10 hover:-translate-y-1 flex flex-col justify-between cursor-pointer"
+                  onClick={() => !isOwned && handleOpenSubjectModal(subject)}
+                  className={`group relative bg-white dark:bg-slate-900/60 border rounded-3xl p-6 backdrop-blur-xl transition-all duration-300 flex flex-col justify-between ${isOwned
+                      ? "border-signal-emerald/40 bg-signal-emerald/5 dark:bg-signal-emerald/5 cursor-default"
+                      : "hover:bg-white/90 dark:bg-slate-900/90 border-white/10 hover:border-emerald-500/40 hover:shadow-2xl hover:shadow-emerald-500/10 hover:-translate-y-1 cursor-pointer"
+                    }`}
                 >
                   {/* Glowing background card gradient */}
                   <div
-                    className={`absolute inset-0 bg-gradient-to-br ${
-                      subject.accentGradient || "from-emerald-500/10 via-transparent to-transparent"
-                    } rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none`}
+                    className={`absolute inset-0 bg-gradient-to-br ${subject.accentGradient || "from-emerald-500/10 via-transparent to-transparent"
+                      } rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none`}
                   />
 
                   {/* Top Bar: Code Pill & Group Tag */}
@@ -522,7 +637,7 @@ export default function MCQPackagesPage() {
                           {subject.code}
                         </span>
                         {subject.groupName !== "All" && (
-                          <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-slate-400 text-[11px] font-semibold">
+                          <span className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-black/5 dark:bg-white/5 border border-white/10 text-slate-500 dark:text-slate-400 text-[11px] font-semibold">
                             {subject.groupName}
                           </span>
                         )}
@@ -536,22 +651,22 @@ export default function MCQPackagesPage() {
                     </div>
 
                     {/* Subject Title */}
-                    <h3 className="text-xl font-bold text-white group-hover:text-emerald-300 transition-colors font-heading leading-snug">
+                    <h3 className="text-xl font-bold text-ink-navy dark:text-white group-hover:text-emerald-300 transition-colors font-heading leading-snug">
                       {subject.name}
                     </h3>
 
                     {/* Description */}
-                    <p className="mt-2.5 text-xs sm:text-sm text-slate-400 leading-relaxed line-clamp-2">
+                    <p className="mt-2.5 text-xs sm:text-sm text-slate-500 dark:text-slate-400 leading-relaxed line-clamp-2">
                       {subject.description}
                     </p>
 
                     {/* Practice Highlights */}
                     <div className="mt-5 pt-4 border-t border-white/5 grid grid-cols-2 gap-3 text-xs">
-                      <div className="flex items-center gap-2 text-slate-300">
+                      <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
                         <Layers className="w-3.5 h-3.5 text-emerald-400" />
                         <span>{subject.testCount || 15}+ Chapter Sets</span>
                       </div>
-                      <div className="flex items-center gap-2 text-slate-300">
+                      <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
                         <Zap className="w-3.5 h-3.5 text-cyan-400" />
                         <span>{subject.questionCount || 450}+ Total MCQs</span>
                       </div>
@@ -561,19 +676,37 @@ export default function MCQPackagesPage() {
                   {/* Bottom Bar: Pricing Preview & Action */}
                   <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-between">
                     <div>
-                      <span className="text-[11px] text-slate-500 block uppercase font-medium">
-                        Plans starting at
-                      </span>
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-xl font-extrabold text-white">₹{startingPrice}</span>
-                        <span className="text-xs text-slate-400">/ 1 Month</span>
-                      </div>
+                      {isOwned ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-signal-emerald uppercase tracking-wide">
+                          <Check className="w-3 h-3" /> Active Access
+                        </span>
+                      ) : (
+                        <>
+                          <span className="text-[11px] text-slate-500 block uppercase font-medium">
+                            Plans starting at
+                          </span>
+                          <div className="flex items-baseline gap-1">
+                            <span className="text-xl font-extrabold text-ink-navy dark:text-white">₹{startingPrice}</span>
+                            <span className="text-xs text-slate-500 dark:text-slate-400">/ 1 Month</span>
+                          </div>
+                        </>
+                      )}
                     </div>
 
-                    <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-500/10 group-hover:bg-emerald-500 text-emerald-400 group-hover:text-slate-950 text-xs font-bold transition-all duration-200">
-                      <span>Select</span>
-                      <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-                    </div>
+                    {isOwned ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleOpenSubjectModal(subject, true); }}
+                        className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-signal-emerald/10 hover:bg-signal-emerald text-signal-emerald hover:text-white text-xs font-bold transition-all duration-200"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Extend Plan</span>
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-500/10 group-hover:bg-emerald-500 text-emerald-400 group-hover:text-slate-950 text-xs font-bold transition-all duration-200">
+                        <span>Select</span>
+                        <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                      </div>
+                    )}
                   </div>
                 </motion.div>
               );
@@ -594,7 +727,7 @@ export default function MCQPackagesPage() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsModalOpen(false)}
-              className="fixed inset-0 bg-slate-950/80 backdrop-blur-md"
+              className="fixed inset-0 bg-slate-50 dark:bg-slate-950/80 backdrop-blur-md"
             />
 
             {/* Modal Container */}
@@ -602,29 +735,29 @@ export default function MCQPackagesPage() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-4xl bg-slate-900 border border-white/15 rounded-3xl shadow-2xl overflow-hidden z-10 flex flex-col max-h-[90vh]"
+              className="relative w-full max-w-4xl bg-white dark:bg-slate-900 border border-white/15 rounded-3xl shadow-2xl overflow-hidden z-10 flex flex-col max-h-[90vh]"
             >
               {/* Modal Header */}
-              <div className="p-6 sm:px-8 border-b border-white/10 flex items-center justify-between bg-slate-900/90 backdrop-blur-xl">
+              <div className="p-6 sm:px-8 border-b border-white/10 flex items-center justify-between bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl">
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="px-2.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 text-xs font-bold uppercase">
-                      {activeLevel} Package Customizer
+                      {activeLevel} Package {isExtendMode ? "Extension" : "Customizer"}
                     </span>
                     <span className="text-slate-500">•</span>
-                    <span className="text-xs text-slate-400">
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
                       {modalSelectedSubjectIds.length}{" "}
                       {modalSelectedSubjectIds.length === 1 ? "Subject" : "Subjects"} Selected
                     </span>
                   </div>
-                  <h3 className="text-xl sm:text-2xl font-bold text-white mt-1">
-                    Choose Duration & Unlock Instant Practice
+                  <h3 className="text-xl sm:text-2xl font-bold text-ink-navy dark:text-white mt-1">
+                    {isExtendMode ? "Extend Your Access — Choose Duration" : "Choose Duration & Unlock Instant Practice"}
                   </h3>
                 </div>
 
                 <button
                   onClick={() => setIsModalOpen(false)}
-                  className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+                  className="p-2 rounded-xl bg-slate-100 dark:bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:bg-white/10 text-slate-500 dark:text-slate-400 hover:text-ink-navy dark:text-white transition-colors"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -653,10 +786,10 @@ export default function MCQPackagesPage() {
                               Save ₹{cartCalculation.upsellRecommendation.savings}
                             </span>
                           </div>
-                          <h4 className="text-sm sm:text-base font-bold text-white mt-0.5">
+                          <h4 className="text-sm sm:text-base font-bold text-ink-navy dark:text-white mt-0.5">
                             {cartCalculation.upsellRecommendation.bundleTitle}
                           </h4>
-                          <p className="text-xs text-slate-300 mt-1">
+                          <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
                             {cartCalculation.upsellRecommendation.message}
                           </p>
                         </div>
@@ -665,7 +798,7 @@ export default function MCQPackagesPage() {
                       {/* Upgrade Action Button with Strikethrough Pricing */}
                       <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
                         <div className="text-right">
-                          <del className="text-xs text-slate-400 font-semibold block">
+                          <del className="text-xs text-slate-500 dark:text-slate-400 font-semibold block">
                             ₹{cartCalculation.upsellRecommendation.originalSum}
                           </del>
                           <span className="text-base font-extrabold text-emerald-400">
@@ -687,7 +820,7 @@ export default function MCQPackagesPage() {
 
                 {/* ─── Step 2: Duration Selector ─── */}
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-3">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-3">
                     Step 1: Select Access Duration
                   </label>
 
@@ -709,23 +842,21 @@ export default function MCQPackagesPage() {
                           <button
                             key={duration}
                             onClick={() => setSelectedDuration(duration)}
-                            className={`relative p-4 rounded-2xl text-left border transition-all duration-200 flex flex-col justify-between ${
-                              isSelected
-                                ? "bg-emerald-500/10 border-emerald-500 shadow-lg shadow-emerald-500/10"
-                                : "bg-slate-800/40 border-white/10 hover:border-white/20"
-                            }`}
+                            className={`relative p-4 rounded-2xl text-left border transition-all duration-200 flex flex-col justify-between ${isSelected
+                              ? "bg-emerald-500/10 border-emerald-500 shadow-lg shadow-emerald-500/10"
+                              : "bg-slate-800/40 border-white/10 hover:border-white/20"
+                              }`}
                           >
                             {/* Duration Tag */}
                             <div className="flex items-center justify-between w-full mb-3">
-                              <span className="text-xs font-extrabold text-white">
+                              <span className="text-xs font-extrabold text-ink-navy dark:text-white">
                                 {durationInfo.label}
                               </span>
                               <span
-                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                  isSelected
-                                    ? "bg-emerald-500 text-slate-950"
-                                    : "bg-white/10 text-slate-300"
-                                }`}
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isSelected
+                                  ? "bg-emerald-500 text-slate-950"
+                                  : "bg-black/10 dark:bg-white/10 text-slate-600 dark:text-slate-300"
+                                  }`}
                               >
                                 {durationInfo.tag}
                               </span>
@@ -734,7 +865,7 @@ export default function MCQPackagesPage() {
                             {/* Price */}
                             <div>
                               <div className="flex items-baseline gap-1">
-                                <span className="text-xl font-black text-white">
+                                <span className="text-xl font-black text-ink-navy dark:text-white">
                                   ₹{tempCalc.discountedPrice}
                                 </span>
                               </div>
@@ -754,51 +885,67 @@ export default function MCQPackagesPage() {
                 {/* ─── Step 3: Included / Selected Subjects Multi-Toggle ─── */}
                 <div>
                   <div className="flex items-center justify-between mb-3">
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                       Step 2: Selected Subjects in Package
                     </label>
-                    <span className="text-xs text-slate-400">
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
                       Click to add or remove subjects
                     </span>
                   </div>
 
                   <div className="grid sm:grid-cols-2 gap-3">
                     {levelSubjects.map((sub) => {
-                      const isIncluded = modalSelectedSubjectIds.includes(sub.id);
+                      const isAlreadyOwned = ownedMcqSubjects.includes(sub.id) || ownedMcqSubjects.includes(sub.code);
+                      const isIncluded = modalSelectedSubjectIds.includes(sub.id) || isAlreadyOwned;
                       const subPrice = sub.prices[selectedDuration] || 0;
 
                       return (
                         <div
                           key={sub.id}
-                          onClick={() => handleToggleSubject(sub.id)}
-                          className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between cursor-pointer ${
-                            isIncluded
-                              ? "bg-white/10 border-emerald-500/60 shadow-sm"
-                              : "bg-slate-800/30 border-white/5 opacity-60 hover:opacity-100 hover:border-white/20"
-                          }`}
+                          onClick={() => {
+                            if (isAlreadyOwned) return;
+                            handleToggleSubject(sub.id);
+                          }}
+                          className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between ${isAlreadyOwned
+                            ? "bg-emerald-500/10 border-emerald-500/30 opacity-70 cursor-not-allowed"
+                            : isIncluded
+                              ? "bg-black/10 dark:bg-white/10 border-emerald-500/60 shadow-sm cursor-pointer"
+                              : "bg-slate-800/30 border-white/5 opacity-60 hover:opacity-100 hover:border-white/20 cursor-pointer"
+                            }`}
                         >
                           <div className="flex items-center gap-3">
                             <div
-                              className={`w-5 h-5 rounded-lg flex items-center justify-center border text-xs font-bold ${
-                                isIncluded
+                              className={`w-5 h-5 rounded-lg flex items-center justify-center border text-xs font-bold ${isAlreadyOwned
+                                ? "bg-emerald-500/50 border-emerald-500/50 text-white"
+                                : isIncluded
                                   ? "bg-emerald-500 border-emerald-500 text-slate-950"
                                   : "border-white/20 bg-transparent text-transparent"
-                              }`}
+                                }`}
                             >
                               <Check className="w-3.5 h-3.5 stroke-[3]" />
                             </div>
                             <div>
-                              <span className="text-xs font-bold text-white block">
+                              <span className="text-xs font-bold text-ink-navy dark:text-white block">
                                 {sub.name}
                               </span>
-                              <span className="text-[11px] text-slate-400">
-                                {sub.code} • {sub.groupName}
-                              </span>
+                              {isAlreadyOwned ? (
+                                <span className="text-[9px] text-emerald-500 dark:text-emerald-400 uppercase tracking-widest font-bold">
+                                  Already Unlocked
+                                </span>
+                              ) : (
+                                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                                  {sub.code} • {sub.groupName}
+                                </span>
+                              )}
                             </div>
                           </div>
 
                           <div className="text-right">
-                            <span className="text-xs font-black text-white">₹{subPrice}</span>
+                            {isAlreadyOwned ? (
+                              <span className="text-xs font-bold text-emerald-500 line-through opacity-70">₹{subPrice}</span>
+                            ) : (
+                              <span className="text-xs font-black text-ink-navy dark:text-white">₹{subPrice}</span>
+                            )}
                           </div>
                         </div>
                       );
@@ -807,23 +954,23 @@ export default function MCQPackagesPage() {
                 </div>
 
                 {/* ─── Step 4: Summary & Coupon ─── */}
-                <div className="p-6 rounded-2xl bg-slate-950/70 border border-white/10 space-y-4">
+                <div className="p-6 rounded-2xl bg-slate-50 dark:bg-slate-950/70 border border-white/10 space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10">
                     {/* Coupon Input */}
                     <div className="flex-1 max-w-sm">
-                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
+                      <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-1.5">
                         Have a Coupon Code?
                       </label>
                       <div className="flex gap-2">
                         <div className="relative flex-1">
-                          <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                          <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                           <input
                             type="text"
                             placeholder="e.g. CALIBER10"
                             value={couponCode}
                             onChange={(e) => setCouponCode(e.target.value)}
                             disabled={couponApplied}
-                            className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 uppercase font-mono"
+                            className="w-full pl-9 pr-3 py-2 text-xs bg-white dark:bg-slate-900 border border-white/10 rounded-xl text-ink-navy dark:text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 uppercase font-mono"
                           />
                         </div>
                         {couponApplied ? (
@@ -840,9 +987,10 @@ export default function MCQPackagesPage() {
                         ) : (
                           <button
                             onClick={handleApplyCoupon}
-                            className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold rounded-xl transition-all"
+                            disabled={couponLoading}
+                            className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            Apply
+                            {couponLoading ? "..." : "Apply"}
                           </button>
                         )}
                       </div>
@@ -860,7 +1008,7 @@ export default function MCQPackagesPage() {
 
                     {/* Price Breakdown */}
                     <div className="text-right space-y-1 sm:w-60">
-                      <div className="flex justify-between text-xs text-slate-400">
+                      <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400">
                         <span>Original Total:</span>
                         <span>₹{cartCalculation.realTotalPrice}</span>
                       </div>
@@ -884,7 +1032,7 @@ export default function MCQPackagesPage() {
                       )}
 
                       <div className="pt-2 border-t border-white/10 flex justify-between items-baseline">
-                        <span className="text-sm font-bold text-white">Final Payable:</span>
+                        <span className="text-sm font-bold text-ink-navy dark:text-white">Final Payable:</span>
                         <div className="flex items-baseline gap-1.5">
                           {cartCalculation.realTotalPrice > finalPayablePrice && (
                             <del className="text-xs text-slate-500">
@@ -899,9 +1047,34 @@ export default function MCQPackagesPage() {
                     </div>
                   </div>
 
+                  {/* Payment Gateways Selection — Test Mode only ever renders when
+                      explicitly enabled via env, never in a normal production build */}
+                  {process.env.NEXT_PUBLIC_ENABLE_TEST_PAYMENTS === "true" && (
+                    <div className="flex bg-slate-900 border border-slate-700/50 p-1.5 rounded-xl mb-6 shadow-inner">
+                      <button
+                        onClick={() => setActivePaymentMethod("razorpay")}
+                        className={`flex-1 flex gap-2 justify-center items-center py-2 text-xs font-bold rounded-lg transition-all ${activePaymentMethod === "razorpay"
+                          ? "bg-slate-700 text-white shadow"
+                          : "text-slate-400 hover:text-white"
+                          }`}
+                      >
+                        <CreditCard className="w-3.5 h-3.5" /> Razorpay
+                      </button>
+                      <button
+                        onClick={() => setActivePaymentMethod("manual")}
+                        className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${activePaymentMethod === "manual"
+                          ? "bg-emerald-500 text-slate-950 shadow"
+                          : "text-slate-400 hover:text-white"
+                          }`}
+                      >
+                        Test Mode (Manual)
+                      </button>
+                    </div>
+                  )}
+
                   {/* Checkout Button & Security Badges */}
                   <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-                    <div className="flex items-center gap-4 text-xs text-slate-400">
+                    <div className="flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
                       <span className="flex items-center gap-1.5">
                         <ShieldCheck className="w-4 h-4 text-emerald-400" /> 256-Bit Encrypted
                       </span>
@@ -943,33 +1116,33 @@ export default function MCQPackagesPage() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-slate-950/80 backdrop-blur-md"
+              className="fixed inset-0 bg-slate-50 dark:bg-slate-950/80 backdrop-blur-md"
             />
 
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="relative w-full max-w-md bg-slate-900 border border-emerald-500/40 rounded-3xl p-8 shadow-2xl text-center z-10"
+              className="relative w-full max-w-md bg-white dark:bg-slate-900 border border-emerald-500/40 rounded-3xl p-8 shadow-2xl text-center z-10"
             >
               <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mx-auto mb-4 text-emerald-400">
                 <Check className="w-8 h-8 stroke-[3]" />
               </div>
 
-              <h3 className="text-2xl font-bold text-white">Package Activated!</h3>
-              <p className="text-sm text-slate-300 mt-2">
+              <h3 className="text-2xl font-bold text-ink-navy dark:text-white">Package Activated!</h3>
+              <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">
                 Your <strong className="text-emerald-400">{purchasedInfo.title}</strong> has been
                 unlocked with full unlimited test attempts.
               </p>
 
-              <div className="mt-6 p-4 rounded-2xl bg-white/5 border border-white/10 text-xs text-slate-300 space-y-1 text-left">
+              <div className="mt-6 p-4 rounded-2xl bg-slate-100 dark:bg-black/5 dark:bg-white/5 border border-white/10 text-xs text-slate-600 dark:text-slate-300 space-y-1 text-left">
                 <div className="flex justify-between">
                   <span>Amount Paid:</span>
-                  <span className="font-bold text-white">₹{purchasedInfo.amount}</span>
+                  <span className="font-bold text-ink-navy dark:text-white">₹{purchasedInfo.amount}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Access Duration:</span>
-                  <span className="font-bold text-white">{DURATION_LABELS[selectedDuration].label}</span>
+                  <span className="font-bold text-ink-navy dark:text-white">{DURATION_LABELS[selectedDuration].label}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Status:</span>
@@ -982,6 +1155,7 @@ export default function MCQPackagesPage() {
                   onClick={() => {
                     setPurchaseSuccess(false);
                     setIsModalOpen(false);
+                    window.location.href = "/dashboard?tab=mcqs";
                   }}
                   className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm transition-all"
                 >

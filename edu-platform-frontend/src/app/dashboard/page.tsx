@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
-import { mcqSets, courses } from "@/lib/mockData";
 import {
   BookOpen,
   Lock,
@@ -27,12 +26,18 @@ import {
   Video
 } from "lucide-react";
 
+function calculateDaysLeft(expiryIso?: string) {
+  if (!expiryIso) return null;
+  const ms = new Date(expiryIso).getTime() - Date.now();
+  if (ms <= 0) return 0;
+  return Math.ceil(ms / (1000 * 60 * 60 * 24));
+}
+
 export default function DashboardPage() {
   const {
     user,
     isAuthenticated,
     isMounted,
-    toggleRole,
     purchasedCourseIds,
     verifications
   } = useAuth();
@@ -41,19 +46,48 @@ export default function DashboardPage() {
 
   const [accessCourseId, setAccessCourseId] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
-  const [activeTab, setActiveTab] = useState<"courses" | "mcqs" | "results">("courses");
+  const [realWhatsappLink, setRealWhatsappLink] = useState<string | null>(null);
+  const [whatsappLinkError, setWhatsappLinkError] = useState("");
+  const [loadingWhatsappLink, setLoadingWhatsappLink] = useState(false);
+
+  useEffect(() => {
+    if (!accessCourseId) { setRealWhatsappLink(null); setWhatsappLinkError(""); return; }
+    setLoadingWhatsappLink(true);
+    setWhatsappLinkError("");
+    const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+    const token = localStorage.getItem("caliber_jwt") || "";
+    fetch(`${apiURL}/api/courses/${accessCourseId}/whatsapp-access`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (r) => {
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error(d.detail || "WhatsApp link isn't set up for this course yet.");
+        }
+        return r.json();
+      })
+      .then((d) => setRealWhatsappLink(d.whatsappLink))
+      .catch((e) => setWhatsappLinkError(e.message || "Couldn't load your WhatsApp link."))
+      .finally(() => setLoadingWhatsappLink(false));
+  }, [accessCourseId]);
+
+  // Read active tab from URL on mount safely
+  const [activeTab, setActiveTab] = useState<"courses" | "mcqs" | "test-series" | "sessions" | "results">("courses");
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tab = urlParams.get("tab");
+      if (tab === "mcqs" || tab === "test-series" || tab === "results" || tab === "courses" || tab === "sessions") {
+        setActiveTab(tab);
+      }
+    }
+  }, []);
 
   // 1:1 Sessions States
   const [sessions, setSessions] = useState<any[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(true);
 
   // Test Evaluation States
-  const [tests, setTests] = useState<any[]>([]);
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [loadingTests, setLoadingTests] = useState(true);
-  const [uploadingTestId, setUploadingTestId] = useState<string | null>(null);
-  const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
-  const [submittingTest, setSubmittingTest] = useState(false);
 
   // Profile States
   const [profileDetails, setProfileDetails] = useState<any>({});
@@ -64,22 +98,84 @@ export default function DashboardPage() {
   });
 
   const [dbScrapedSeries, setDbScrapedSeries] = useState<any[]>([]);
+  const [dbCourses, setDbCourses] = useState<any[]>([]);
+  const [loadingCourses, setLoadingCourses] = useState(true);
+  const [loadingMcqSeries, setLoadingMcqSeries] = useState(true);
+  const [myTestSeries, setMyTestSeries] = useState<any[]>([]);
+  const [loadingTestSeries, setLoadingTestSeries] = useState(true);
+  const [attempts, setAttempts] = useState<any[]>([]);
 
   useEffect(() => {
-    const fetchSeries = async () => {
+    const fetchCourses = async () => {
+      setLoadingCourses(true);
       try {
         const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-        const res = await fetch(`${apiURL}/api/mcq-series`);
+        const res = await fetch(`${apiURL}/api/courses`);
         if (res.ok) {
           const data = await res.json();
-          setDbScrapedSeries(data);
+          setDbCourses(data);
         }
       } catch (e) {
-        console.warn("Failed to fetch MCQ series", e);
+        console.warn("Failed to fetch live courses", e);
+      } finally {
+        setLoadingCourses(false);
       }
     };
-    fetchSeries();
+    fetchCourses();
   }, []);
+
+  const fetchMcqSeries = async () => {
+    setLoadingMcqSeries(true);
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/mcq/my-subjects`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDbScrapedSeries(data);
+      }
+    } catch (e) {
+      console.warn("Failed to fetch MCQ series", e);
+    } finally {
+      setLoadingMcqSeries(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchMcqSeries();
+  }, []);
+
+  // Re-fetch MCQ data every time user switches to the MCQs tab
+  useEffect(() => {
+    if (activeTab === "mcqs") {
+      fetchMcqSeries();
+    }
+  }, [activeTab]);
+
+  const fetchMyTestSeries = async () => {
+    setLoadingTestSeries(true);
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/test-series/my-subjects`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setMyTestSeries(await res.json());
+      }
+    } catch (e) {
+      console.warn("Failed to fetch owned test series subjects", e);
+    } finally {
+      setLoadingTestSeries(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    fetchMyTestSeries();
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (isMounted && !isAuthenticated) router.push("/login");
@@ -103,6 +199,7 @@ export default function DashboardPage() {
             stage: data.user.stage || "CA Final",
             attempt_status: data.user.attempt_status || "First Attempt"
           });
+          setAttempts(data.attempts || []);
         }
       } catch (err) {
         console.warn("Could not load user profile details");
@@ -139,35 +236,25 @@ export default function DashboardPage() {
     fetchSessions();
   }, [isAuthenticated]);
 
-  // Load Prep Tests & Student Submissions
+  // Load the student's test series submissions/evaluations
   useEffect(() => {
     if (!isAuthenticated) return;
-    const fetchTestsAndSubmissions = async () => {
+    const fetchSubmissions = async () => {
       setLoadingTests(true);
       try {
         const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
         const token = localStorage.getItem("caliber_jwt") || "";
-
-        const resTests = await fetch(`${apiURL}/api/tests`, { headers: { "Authorization": `Bearer ${token}` } });
-        const resSubs = await fetch(`${apiURL}/api/tests/submissions`, { headers: { "Authorization": `Bearer ${token}` } });
-
-        if (resTests.ok && resSubs.ok) {
-          const testsData = await resTests.json();
-          const subsData = await resSubs.json();
-          setTests(testsData);
-          setSubmissions(subsData);
-        } else {
-          throw new Error("Unable to fetch tests data from server");
-        }
+        const res = await fetch(`${apiURL}/api/tests/submissions`, { headers: { "Authorization": `Bearer ${token}` } });
+        if (!res.ok) throw new Error("Unable to fetch submissions from server");
+        setSubmissions(await res.json());
       } catch (err) {
-        console.warn("API fetch tests failed:", err);
-        setTests([]);
+        console.warn("Fetching submissions failed:", err);
         setSubmissions([]);
       } finally {
         setLoadingTests(false);
       }
     };
-    fetchTestsAndSubmissions();
+    fetchSubmissions();
   }, [isAuthenticated]);
 
   const handleCancelSession = async (sessionId: string) => {
@@ -185,77 +272,11 @@ export default function DashboardPage() {
       if (res.ok) {
         setSessions(prev => prev.filter(s => s.id !== sessionId));
       } else {
-        throw new Error("Failed to cancel session");
+        const d = await res.json().catch(() => ({}));
+        window.alert(d.detail || "Couldn't cancel this session. Please try again.");
       }
     } catch (err) {
-      console.warn("Cancelling booking locally");
-      const updated = sessions.filter(s => s.id !== sessionId);
-      setSessions(updated);
-      localStorage.setItem("caliber_sessions", JSON.stringify(updated));
-    }
-  };
-
-  const handleUploadSubmit = async (e: React.FormEvent, testId: string) => {
-    e.preventDefault();
-    if (!selectedFiles || selectedFiles.length === 0) return;
-    setSubmittingTest(true);
-
-    const fileNames = Array.from(selectedFiles).map(f => f.name);
-
-    try {
-      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-      const token = localStorage.getItem("caliber_jwt") || "";
-
-      const formData = new FormData();
-      Array.from(selectedFiles).forEach(f => {
-        formData.append("files", f);
-      });
-
-      const res = await fetch(`${apiURL}/api/tests/${testId}/submit`, {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${token}` },
-        body: formData,
-      });
-
-      if (res.ok) {
-        const newSubObj = await res.json();
-        setSubmissions(prev => [...prev, newSubObj]);
-      } else {
-        throw new Error("API submit test order failed");
-      }
-    } catch (err) {
-      console.warn("Adding mock test submission logic");
-      const newSubMock = {
-        id: `sub-mock-${Date.now()}`,
-        testId,
-        status: "pending",
-        submittedAt: new Date().toISOString(),
-        studentFiles: fileNames,
-        marksAwarded: null,
-        maxMarks: 100,
-        remarks: null,
-        checkedCopyLink: null
-      };
-
-      const updatedList = [...submissions, newSubMock];
-      setSubmissions(updatedList);
-      localStorage.setItem("caliber_submissions_tests", JSON.stringify(updatedList));
-
-      const savedAdminList = JSON.parse(localStorage.getItem("caliber_admin_pending_evaluations") || "[]");
-      savedAdminList.push({
-        id: newSubMock.id,
-        testId,
-        studentEmail: user?.email || "student@caliber.com",
-        studentName: user?.email.split("@")[0] || "Student",
-        testTitle: tests.find(t => t.id === testId)?.title || "Evaluation sheet",
-        submittedAt: newSubMock.submittedAt,
-        studentFiles: newSubMock.studentFiles,
-      });
-      localStorage.setItem("caliber_admin_pending_evaluations", JSON.stringify(savedAdminList));
-    } finally {
-      setSubmittingTest(false);
-      setSelectedFiles(null);
-      setUploadingTestId(null);
+      window.alert("Couldn't cancel this session. Please check your connection and try again.");
     }
   };
 
@@ -272,27 +293,26 @@ export default function DashboardPage() {
     );
   }
 
-  const isAdmin = user.role === "admin";
+  const isAdmin = user.role === "admin" || user.role === "super_admin" || user.role === "mentor";
 
   const userPendingVerifications = verifications.filter(
     (v) => v.studentEmail.toLowerCase() === user.email.toLowerCase() && v.status === "pending"
   );
 
-  const userPurchasedCourses = courses.filter((c) => purchasedCourseIds.includes(c.id));
-  const userPendingCourses = courses.filter((c) =>
+
+
+  const userPurchasedCourses = dbCourses.filter((c: any) => purchasedCourseIds.includes(c.id));
+  const userPendingCourses = dbCourses.filter((c: any) =>
     userPendingVerifications.some((v) => v.courseTitle === c.title)
   );
 
   const totalMyCourses = userPurchasedCourses.length + userPendingCourses.length;
 
-  const activeAccessCourse = courses.find(c => c.id === accessCourseId);
-  const activeWhatsappLink = activeAccessCourse
-    ? `https://chat.whatsapp.com/invite/CA-${activeAccessCourse.id.split("-").slice(1).join("-").toUpperCase()}-2026`
-    : "";
+  const activeAccessCourse = dbCourses.find((c: any) => c.id === accessCourseId);
 
   const handleCopyLink = () => {
-    if (!activeWhatsappLink) return;
-    navigator.clipboard.writeText(activeWhatsappLink);
+    if (!realWhatsappLink) return;
+    navigator.clipboard.writeText(realWhatsappLink);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   };
@@ -338,40 +358,20 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Admin Toggle switch */}
-            <div className="flex flex-col items-start sm:items-end gap-2">
-              <div className={`flex items-center gap-3 px-4 py-2 rounded-lg border transition-all ${isAdmin
-                ? "bg-alert-coral/5 border-alert-coral/25"
-                : "bg-white dark:bg-line-gray-dark/20 border-line-gray-light dark:border-line-gray-dark"
-                }`}>
-                <Shield className={`w-4 h-4 ${isAdmin ? "text-alert-coral" : "text-slate/50"}`} />
-                <span className={`text-xs font-semibold ${isAdmin ? "text-alert-coral" : "text-slate dark:text-paper/60"}`}>
-                  Admin Mode
-                </span>
-                <button
-                  type="button"
-                  onClick={toggleRole}
-                  className={`relative w-8 h-4 rounded-full transition-colors ${isAdmin ? "bg-alert-coral" : "bg-line-gray-light dark:bg-line-gray-dark"
-                    }`}
-                  aria-label="Toggle admin mode"
-                >
-                  <motion.span
-                    layout
-                    className="absolute top-0.5 w-3 h-3 bg-white rounded-full shadow-xs"
-                    animate={{ left: isAdmin ? "calc(100% - 0.875rem)" : "0.125rem" }}
-                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                  />
-                </button>
-              </div>
-              {isAdmin && (
+            {isAdmin && (
+              <div className="flex flex-col items-start sm:items-end gap-2">
+                <div className="flex items-center gap-3 px-4 py-2 rounded-lg border bg-alert-coral/5 border-alert-coral/25">
+                  <Shield className="w-4 h-4 text-alert-coral" />
+                  <span className="text-xs font-semibold text-alert-coral capitalize">{user.role.replace("_", " ")}</span>
+                </div>
                 <Link
                   href="/admin"
                   className="flex items-center gap-1 text-[10px] font-bold text-alert-coral uppercase tracking-wider hover:underline"
                 >
                   Go to Admin panel <ChevronRight className="w-3 h-3" />
                 </Link>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </motion.div>
 
@@ -382,6 +382,8 @@ export default function DashboardPage() {
           {[
             { id: "courses", label: "My Courses" },
             { id: "mcqs", label: "My MCQs" },
+            { id: "test-series", label: "My Test Series" },
+            { id: "sessions", label: "My 1:1 Sessions" },
             { id: "results", label: "My Results Analysis" }
           ].map((tab) => (
             <button
@@ -420,7 +422,17 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {totalMyCourses === 0 ? (
+                {loadingCourses ? (
+                  <div className="grid sm:grid-cols-2 gap-6">
+                    {[0, 1].map((i) => (
+                      <div key={i} className="p-5 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20 space-y-3 animate-pulse">
+                        <div className="h-2.5 w-20 bg-line-gray-light dark:bg-line-gray-dark rounded" />
+                        <div className="h-4 w-3/4 bg-line-gray-light dark:bg-line-gray-dark rounded" />
+                        <div className="h-2.5 w-1/2 bg-line-gray-light dark:bg-line-gray-dark rounded" />
+                      </div>
+                    ))}
+                  </div>
+                ) : totalMyCourses === 0 ? (
                   <div className="p-8 text-center border border-dashed border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/10 space-y-3">
                     <p className="text-xs text-slate dark:text-paper/50">You haven't enrolled in any CA prep courses yet.</p>
                     <Link href="/courses" className="inline-flex items-center gap-1.5 px-4 py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all">
@@ -486,29 +498,6 @@ export default function DashboardPage() {
 
           {activeTab === "mcqs" && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-8">
-              {/* Today's Set */}
-              <div className="space-y-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Calendar className="w-4 h-4 text-ink-navy dark:text-paper" />
-                  <h2 className="font-heading font-bold text-base text-ink-navy dark:text-paper">Today&apos;s Set</h2>
-                </div>
-                <div className="relative rounded-xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 overflow-hidden">
-                  <div className="relative px-6 py-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div className="space-y-1">
-                      <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-slate dark:text-paper/40">Daily Upload</span>
-                      <h3 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Accounting Fundamentals</h3>
-                      <p className="text-xs text-slate dark:text-paper/50">30 questions · ~25 min · Accounting</p>
-                    </div>
-                    <Link
-                      href="/quiz/ca-accounting-free"
-                      className="flex-shrink-0 inline-flex items-center gap-2 px-5 py-2.5 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-xs"
-                    >
-                      Start Now <Zap className="w-3.5 h-3.5" />
-                    </Link>
-                  </div>
-                </div>
-              </div>
-
               {/* Practice Library */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between border-b border-line-gray-light dark:border-line-gray-dark pb-2">
@@ -516,185 +505,338 @@ export default function DashboardPage() {
                   <span className="text-xs text-slate dark:text-paper/45">{dbScrapedSeries.length} series</span>
                 </div>
 
-                <div className="grid sm:grid-cols-2 gap-4">
-                  {dbScrapedSeries.map((series, i) => (
-                    <div
-                      key={series.id}
-                      className="flex items-center justify-between p-4 bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark rounded-xl hover:border-slate/50 dark:hover:border-paper transition-all duration-200 group"
-                    >
-                      <div className="flex items-center gap-4 min-w-0">
-                        <div className="flex-shrink-0 w-10 h-10 rounded bg-line-gray-light/60 dark:bg-line-gray-dark/40 border border-line-gray-light/35 text-ink-navy dark:text-paper flex items-center justify-center text-xs font-bold font-mono">
-                          {(series.subject || "QQ").slice(0, 2).toUpperCase()}
-                        </div>
-
-                        <div className="min-w-0 space-y-0.5">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <p className="font-semibold text-xs text-ink-navy dark:text-paper truncate">{series.title}</p>
-                            {!series.isLocked && !series.is_locked ? (
-                              <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-line-gray-light/50 dark:bg-line-gray-dark/60 text-slate dark:text-paper/70 flex-shrink-0">
-                                Free
-                              </span>
-                            ) : (
-                              <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-line-gray-light/50 dark:bg-line-gray-dark/60 text-slate dark:text-paper/70 flex-shrink-0">
-                                Paid
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[10px] text-slate dark:text-paper/40">
-                            {series.subject}
-                          </p>
+                {loadingMcqSeries ? (
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    {[0, 1].map((i) => (
+                      <div key={i} className="p-4 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20 flex items-center gap-4 animate-pulse">
+                        <div className="w-10 h-10 rounded bg-line-gray-light dark:bg-line-gray-dark flex-shrink-0" />
+                        <div className="flex-1 space-y-2">
+                          <div className="h-3 w-2/3 bg-line-gray-light dark:bg-line-gray-dark rounded" />
+                          <div className="h-2.5 w-1/3 bg-line-gray-light dark:bg-line-gray-dark rounded" />
                         </div>
                       </div>
+                    ))}
+                  </div>
+                ) : dbScrapedSeries.length === 0 ? (
+                  <div className="p-8 text-center border border-dashed border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/10 space-y-3">
+                    <p className="text-xs text-slate dark:text-paper/50">You haven't unlocked any MCQ subjects yet.</p>
+                    <Link href="/mcq" className="inline-flex items-center gap-1.5 px-4 py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all">
+                      Browse MCQ Modules <ArrowRight className="w-3.5 h-3.5" />
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    {dbScrapedSeries.map((series, i) => {
+                      const days = calculateDaysLeft(series.access_until);
+                      return (
+                      <div
+                        key={series.id}
+                        className="flex items-center justify-between p-4 bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark rounded-xl hover:border-slate/50 dark:hover:border-paper transition-all duration-200 group"
+                      >
+                        <div className="flex items-center gap-4 min-w-0">
+                          {/* Avatar — use short subject code */}
+                          <div className="flex-shrink-0 w-10 h-10 rounded bg-signal-emerald/10 border border-signal-emerald/20 text-signal-emerald flex items-center justify-center text-[10px] font-black font-mono uppercase">
+                            {String(series.code || series.id).slice(0, 3)}
+                          </div>
 
-                      <div className="flex-shrink-0 pl-3">
-                        <Link
-                          href={`/mcq/${series.id}`}
-                          className="flex items-center gap-1 text-xs font-semibold text-ink-navy dark:text-paper hover:underline"
-                        >
-                          {!series.isLocked && !series.is_locked ? (
-                            <Unlock className="w-3 h-3 text-slate/50" />
-                          ) : (
-                            <Lock className="w-3 h-3 text-slate/50" />
-                          )}
-                          Enter
-                          <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-                        </Link>
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <p className="font-semibold text-xs text-ink-navy dark:text-paper truncate">{series.title}</p>
+                              {/* Enrollment status badge — not Free/Paid */}
+                              <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-signal-emerald/10 text-signal-emerald flex-shrink-0">
+                                Enrolled
+                              </span>
+                            </div>
+
+                            {/* Subject info + validity */}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-[10px] text-slate dark:text-paper/40">{series.subject}</p>
+                            </div>
+
+                            {/* Expiry row — always show something */}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {series.access_until ? (
+                                <>
+                                  {days !== null && days <= 0 ? (
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-alert-coral/15 text-alert-coral">
+                                      Expired
+                                    </span>
+                                  ) : days !== null && days <= 7 ? (
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-alert-coral/15 text-alert-coral">
+                                      ⚠ {days}d left
+                                    </span>
+                                  ) : days !== null && days <= 30 ? (
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">
+                                      {days}d left
+                                    </span>
+                                  ) : days !== null ? (
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-signal-emerald/10 text-signal-emerald">
+                                      {days}d left
+                                    </span>
+                                  ) : null}
+                                  <span className="text-[9px] text-slate/50 dark:text-paper/30">
+                                    expires {new Date(series.access_until).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                                  </span>
+                                </>
+                              ) : (
+                                <span className="text-[9px] text-slate/40 dark:text-paper/25 italic">No expiry set — contact admin</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex-shrink-0 pl-3 flex items-center gap-2">
+                          <Link
+                            href={`/mcq?extend=${series.id}`}
+                            className="text-[9px] font-bold text-slate/50 dark:text-paper/30 hover:text-signal-emerald transition-colors hidden sm:block"
+                          >
+                            Extend
+                          </Link>
+                          <Link
+                            href={`/mcq/${series.id}`}
+                            className="flex items-center gap-1 text-xs font-semibold text-ink-navy dark:text-paper hover:underline"
+                          >
+                            <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                            Enter
+                          </Link>
+                        </div>
+                      </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+            </motion.div>
+          )}
+
+          {activeTab === "test-series" && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-4">
+              <div className="flex items-center justify-between border-b border-line-gray-light dark:border-line-gray-dark pb-2">
+                <h2 className="font-heading font-bold text-base text-ink-navy dark:text-paper">Test Series</h2>
+                <span className="text-xs text-slate dark:text-paper/45">{myTestSeries.length} subject{myTestSeries.length === 1 ? "" : "s"}</span>
+              </div>
+
+              {loadingTestSeries ? (
+                <div className="grid sm:grid-cols-2 gap-4">
+                  {[0, 1].map((i) => (
+                    <div key={i} className="p-4 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20 flex items-center gap-4 animate-pulse">
+                      <div className="w-10 h-10 rounded bg-line-gray-light dark:bg-line-gray-dark flex-shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <div className="h-3 w-2/3 bg-line-gray-light dark:bg-line-gray-dark rounded" />
+                        <div className="h-2.5 w-1/3 bg-line-gray-light dark:bg-line-gray-dark rounded" />
                       </div>
                     </div>
                   ))}
                 </div>
+              ) : myTestSeries.length === 0 ? (
+                <div className="p-8 text-center border border-dashed border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/10 space-y-3">
+                  <p className="text-xs text-slate dark:text-paper/50">You haven&apos;t purchased any test series subjects yet.</p>
+                  <Link href="/test-series" className="inline-flex items-center gap-1.5 px-4 py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-xs font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all">
+                    Browse Test Series <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
+              ) : (
+                <div className="grid sm:grid-cols-2 gap-4">
+                  {myTestSeries.map((s) => (
+                    <div
+                      key={s.id}
+                      className="flex items-center justify-between p-4 bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark rounded-xl hover:border-slate/50 dark:hover:border-paper transition-all duration-200 group"
+                    >
+                      <div className="flex items-center gap-4 min-w-0">
+                        <div className="flex-shrink-0 w-10 h-10 rounded bg-signal-emerald/10 border border-signal-emerald/20 text-signal-emerald flex items-center justify-center text-[10px] font-black font-mono uppercase">
+                          {String(s.code || s.id).slice(0, 3)}
+                        </div>
+                        <div className="min-w-0 space-y-1">
+                          <p className="font-semibold text-xs text-ink-navy dark:text-paper truncate">{s.name}</p>
+                          <p className="text-[10px] text-slate dark:text-paper/40">{s.level}</p>
+                        </div>
+                      </div>
+                      <Link
+                        href={`/test-series/${String(s.level || "").toLowerCase()}/${s.id}`}
+                        className="flex-shrink-0 pl-3 flex items-center gap-1 text-xs font-semibold text-ink-navy dark:text-paper hover:underline"
+                      >
+                        <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                        Enter
+                      </Link>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {activeTab === "sessions" && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-4">
+              <div className="border-b border-line-gray-light dark:border-line-gray-dark pb-2">
+                <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper">My 1:1 Sessions</h3>
               </div>
 
+              {loadingSessions ? (
+                <p className="text-sm text-slate dark:text-paper/50">Loading your sessions...</p>
+              ) : sessions.length === 0 ? (
+                <div className="border border-line-gray-light dark:border-line-gray-dark rounded-xl p-8 text-center">
+                  <p className="text-sm text-slate dark:text-paper/60">You haven&apos;t booked any 1:1 sessions yet.</p>
+                  <Link href="/courses" className="text-xs font-bold text-signal-emerald hover:underline mt-2 inline-block">
+                    Browse 1:1 sessions
+                  </Link>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {sessions.map((s: any) => (
+                    <div key={s.id} className="p-4 bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark rounded-xl">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-ink-navy dark:text-paper">{s.courseTitle}</p>
+                          {s.mentorName && (
+                            <p className="text-[11px] text-slate dark:text-paper/60 mt-0.5">
+                              Mentor: {s.mentorName}{s.specialty ? ` · ${s.specialty}` : ""}
+                            </p>
+                          )}
+                        </div>
+                        <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${s.status === "booked" ? "bg-signal-emerald/10 text-signal-emerald"
+                          : s.status === "completed" ? "bg-slate/10 text-slate dark:text-paper/60"
+                            : "bg-amber-500/10 text-amber-600"}`}>
+                          {s.status === "pending_assignment" ? "Assigning mentor"
+                            : s.status === "pending_schedule" ? "Mentor picking a time"
+                              : s.status === "booked" ? "Scheduled"
+                                : s.status === "completed" ? "Completed" : s.status}
+                        </span>
+                      </div>
+
+                      {s.status === "booked" && (
+                        <div className="mt-3 flex items-center gap-3 flex-wrap">
+                          <span className="text-xs font-mono text-ink-navy dark:text-paper">
+                            {s.datetime ? new Date(s.datetime).toLocaleString() : ""}
+                          </span>
+                          {s.meetLink && (
+                            <a href={s.meetLink} target="_blank" rel="noopener noreferrer"
+                              className="px-3 py-1.5 text-[11px] font-bold bg-signal-emerald text-white rounded-lg hover:bg-signal-emerald/90 transition-colors">
+                              Join meeting
+                            </a>
+                          )}
+                        </div>
+                      )}
+
+                      {s.status === "pending_assignment" && (
+                        <p className="text-[11px] text-slate dark:text-paper/50 mt-2">
+                          Payment received. We&apos;re assigning your mentor — you&apos;ll see the time here shortly.
+                        </p>
+                      )}
+                      {s.status === "pending_schedule" && (
+                        <p className="text-[11px] text-slate dark:text-paper/50 mt-2">
+                          Your mentor is confirming a time slot. It&apos;ll appear here once set.
+                        </p>
+                      )}
+                      {s.mentorNote && (
+                        <p className="text-[11px] text-slate dark:text-paper/70 mt-2 bg-line-gray-light/40 dark:bg-line-gray-dark/30 p-2 rounded-lg">
+                          {s.mentorNote}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </motion.div>
           )}
 
           {activeTab === "results" && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
 
-              <div className="border-b border-line-gray-light dark:border-line-gray-dark pb-2">
-                <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper font-heading">Mock Tests & Checked Evaluations</h3>
-                <p className="text-[10px] text-slate dark:text-paper/40 mt-0.5">Download questions, upload answer papers, and inspect evaluations.</p>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between border-b border-line-gray-light dark:border-line-gray-dark pb-2 flex-wrap gap-2">
+                  <div>
+                    <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper font-heading">MCQ Attempts</h3>
+                    <p className="text-[10px] text-slate dark:text-paper/40 mt-0.5">Your recent MCQ quiz scores.</p>
+                  </div>
+                  <Link href="/mcq"
+                    className="px-3.5 py-1.5 text-xs font-bold bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy rounded-lg hover:opacity-90 transition-opacity">
+                    Browse MCQs
+                  </Link>
+                </div>
+
+                {attempts.length === 0 ? (
+                  <div className="text-center py-8 text-xs text-slate/50 italic border border-dashed border-line-gray-light dark:border-line-gray-dark rounded-xl">
+                    You haven&apos;t attempted any MCQ quizzes yet.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {attempts.map((a, i) => {
+                      const pct = a.total > 0 ? Math.round((a.score / a.total) * 100) : 0;
+                      return (
+                        <div key={`${a.set_id}-${i}`} className="flex items-center justify-between p-4 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20">
+                          <div className="min-w-0">
+                            <h4 className="font-heading font-bold text-sm text-ink-navy dark:text-paper truncate">{a.paperTitle || "MCQ Paper"}</h4>
+                            <p className="text-[10px] text-slate dark:text-paper/40 mt-0.5">
+                              {a.created_at ? new Date(a.created_at).toLocaleDateString("en-IN") : ""}
+                            </p>
+                          </div>
+                          <div className="flex-shrink-0 text-right">
+                            <strong className="text-ink-navy dark:text-paper text-sm font-bold font-mono">{a.score}</strong>
+                            <span className="text-slate dark:text-paper/40 text-xs"> / {a.total}</span>
+                            <p className="text-[9px] font-bold text-signal-emerald">{pct}%</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between border-b border-line-gray-light dark:border-line-gray-dark pb-2 flex-wrap gap-2">
+                <div>
+                  <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper font-heading">Test Series Evaluations</h3>
+                  <p className="text-[10px] text-slate dark:text-paper/40 mt-0.5">Your submitted answer sheets and mentor feedback.</p>
+                </div>
+                <Link href="/test-series"
+                  className="px-3.5 py-1.5 text-xs font-bold bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy rounded-lg hover:opacity-90 transition-opacity">
+                  Browse Test Series
+                </Link>
               </div>
 
               {loadingTests ? (
-                <div className="text-center py-6 text-xs text-slate/50">Loading test catalog...</div>
-              ) : tests.length === 0 ? (
-                <div className="text-center py-8 text-xs text-slate/50 italic border border-dashed border-line-gray-light dark:border-line-gray-dark rounded-xl">No active test evaluation systems configured currently.</div>
+                <div className="text-center py-6 text-xs text-slate/50">Loading your submissions...</div>
+              ) : submissions.length === 0 ? (
+                <div className="text-center py-8 text-xs text-slate/50 italic border border-dashed border-line-gray-light dark:border-line-gray-dark rounded-xl">
+                  You haven&apos;t submitted any test series papers yet. Buy a subject and upload your answers from its page.
+                </div>
               ) : (
-                <div className="space-y-4">
-                  {tests.map(test => {
-                    const sub = submissions.find(s => s.testId === test.id);
-                    return (
-                      <div key={test.id} className="p-5 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20 grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
-
-                        <div className="space-y-1.5 col-span-1">
-                          <span className="text-[9px] font-bold uppercase tracking-wider text-alert-coral bg-alert-coral/10 px-2 py-0.5 rounded">
-                            {test.subject} · {test.duration}
-                          </span>
-                          <h4 className="font-heading font-extrabold text-sm text-ink-navy dark:text-paper leading-tight">{test.title}</h4>
-                          <a
-                            href={test.questionPaperLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 text-xs text-signal-emerald font-bold hover:underline"
-                          >
-                            📥 Download Question Paper
-                          </a>
+                <div className="space-y-3">
+                  {submissions.map((sub) => (
+                    <div key={sub.id} className="p-4 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div>
+                          <h4 className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{sub.testTitle || "Test paper"}</h4>
+                          <p className="text-[10px] text-slate dark:text-paper/40 mt-0.5">
+                            Submitted {new Date(sub.submittedAt).toLocaleDateString("en-IN")}
+                          </p>
                         </div>
-
-                        <div className="col-span-1">
-                          {sub ? (
-                            <div className="p-3.5 rounded-lg bg-paper dark:bg-line-gray-dark/30 border border-line-gray-light dark:border-line-gray-dark space-y-2">
-                              <div className="flex items-center justify-between">
-                                <span className="text-[10px] text-slate dark:text-paper/40">Status:</span>
-                                <span className={`text-[9px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded ${sub.status === "reviewed"
-                                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-450"
-                                  : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-450"
-                                  }`}>
-                                  {sub.status === "reviewed" ? "Reviewed" : "Pending Review"}
-                                </span>
-                              </div>
-
-                              {sub.status === "reviewed" ? (
-                                <div className="space-y-2 text-xs">
-                                  <div>
-                                    <span className="text-slate/60 dark:text-paper/40 text-[10px] block">Score:</span>
-                                    <strong className="text-ink-navy dark:text-paper text-sm font-bold font-mono">{sub.marksAwarded}</strong> / {sub.maxMarks}
-                                  </div>
-                                  {sub.remarks && (
-                                    <div>
-                                      <span className="text-slate/60 dark:text-paper/40 text-[10px] block">Remarks:</span>
-                                      <p className="text-[10px] text-slate dark:text-paper/85 leading-normal italic py-1 border-l-2 border-line-gray-light dark:border-line-gray-dark pl-2">{sub.remarks}</p>
-                                    </div>
-                                  )}
-                                  {sub.checkedCopyLink && (
-                                    <a
-                                      href={sub.checkedCopyLink}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="w-full mt-1.5 py-1.5 text-center bg-signal-emerald hover:bg-signal-emerald/90 text-white font-bold rounded text-[10px] flex items-center justify-center gap-1 active:scale-[98] transition-all"
-                                    >
-                                      📂 Download Evaluated Copy
-                                    </a>
-                                  )}
-                                </div>
-                              ) : (
-                                <div className="text-[10px] text-slate dark:text-paper/50 leading-relaxed">
-                                  Submitted on {new Date(sub.submittedAt).toLocaleDateString("en-IN")}. Reviews take 24-48 hours.
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="text-center py-4 bg-paper/20 rounded-lg border border-dashed border-line-gray-light dark:border-line-gray-dark text-[10px] text-slate dark:text-paper/40">
-                              You haven't submitted your answers yet.
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="col-span-1 text-right">
-                          {!sub && (
-                            <>
-                              {uploadingTestId === test.id ? (
-                                <form onSubmit={(e) => handleUploadSubmit(e, test.id)} className="space-y-2 text-left">
-                                  <label className="text-[10px] font-bold text-slate dark:text-paper/60 uppercase">Upload sheets (PDF/Images)</label>
-                                  <input
-                                    type="file"
-                                    multiple
-                                    required
-                                    onChange={e => setSelectedFiles(e.target.files)}
-                                    className="w-full text-xs text-slate dark:text-paper/50 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-semibold file:bg-line-gray-light file:text-ink-navy dark:file:bg-line-gray-dark dark:file:text-paper hover:file:opacity-90"
-                                  />
-                                  <div className="flex gap-2 pt-1">
-                                    <button
-                                      type="submit"
-                                      disabled={submittingTest || !selectedFiles}
-                                      className="flex-1 py-1.5 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded text-[10px] active:scale-[0.98] transition-all disabled:opacity-40"
-                                    >
-                                      {submittingTest ? "Submitting..." : "Submit File"}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => { setUploadingTestId(null); setSelectedFiles(null); }}
-                                      className="px-2 py-1.5 border border-line-gray-light dark:border-line-gray-dark font-semibold text-slate dark:text-paper/50 rounded text-[10px]"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                </form>
-                              ) : (
-                                <button
-                                  onClick={() => setUploadingTestId(test.id)}
-                                  className="w-full py-2 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-xs flex items-center justify-center gap-1.5"
-                                >
-                                  🚀 Upload Answer Copy
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </div>
+                        <span className={`text-[9px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded ${sub.status === "reviewed"
+                          ? "bg-signal-emerald/10 text-signal-emerald"
+                          : "bg-amber-500/10 text-amber-600"}`}>
+                          {sub.status === "reviewed" ? "Reviewed" : "Pending Review"}
+                        </span>
                       </div>
-                    );
-                  })}
+
+                      {sub.status === "reviewed" && (
+                        <div className="mt-3 space-y-2 text-xs">
+                          <div>
+                            <span className="text-slate/60 dark:text-paper/40 text-[10px] block">Score:</span>
+                            <strong className="text-ink-navy dark:text-paper text-sm font-bold font-mono">{sub.marksAwarded}</strong> / {sub.maxMarks}
+                          </div>
+                          {sub.remarks && (
+                            <p className="text-[10px] text-slate dark:text-paper/85 leading-normal italic py-1 border-l-2 border-line-gray-light dark:border-line-gray-dark pl-2">{sub.remarks}</p>
+                          )}
+                          {sub.checkedFileUrl && (
+                            <a href={sub.checkedFileUrl} target="_blank" rel="noopener noreferrer"
+                              className="inline-flex mt-1 py-1.5 px-3 text-center bg-signal-emerald hover:bg-signal-emerald/90 text-white font-bold rounded text-[10px] items-center justify-center gap-1 active:scale-[98] transition-all">
+                              📂 Download Evaluated Copy
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </motion.div>
@@ -724,21 +866,29 @@ export default function DashboardPage() {
                 <div className="p-4 rounded-lg bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark space-y-3">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/50 block">Your Access Link</span>
 
-                  <div className="flex items-center justify-between p-2.5 rounded border border-line-gray-light dark:border-line-gray-dark bg-paper dark:bg-ink-navy text-xs">
-                    <span className="font-mono text-slate dark:text-paper/85 overflow-hidden truncate select-all">{activeWhatsappLink}</span>
-                    <button onClick={handleCopyLink} className="ml-2 p-1 hover:bg-line-gray-light dark:hover:bg-line-gray-dark rounded transition-colors text-slate dark:text-paper/60 flex-shrink-0">
-                      {copiedLink ? <Check className="w-3.5 h-3.5 text-signal-emerald" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
+                  {loadingWhatsappLink ? (
+                    <p className="text-xs text-slate dark:text-paper/50">Loading your link...</p>
+                  ) : whatsappLinkError ? (
+                    <p className="text-xs text-alert-coral">{whatsappLinkError} Contact support if this doesn't resolve soon.</p>
+                  ) : realWhatsappLink ? (
+                    <>
+                      <div className="flex items-center justify-between p-2.5 rounded border border-line-gray-light dark:border-line-gray-dark bg-paper dark:bg-ink-navy text-xs">
+                        <span className="font-mono text-slate dark:text-paper/85 overflow-hidden truncate select-all">{realWhatsappLink}</span>
+                        <button onClick={handleCopyLink} className="ml-2 p-1 hover:bg-line-gray-light dark:hover:bg-line-gray-dark rounded transition-colors text-slate dark:text-paper/60 flex-shrink-0">
+                          {copiedLink ? <Check className="w-3.5 h-3.5 text-signal-emerald" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
 
-                  <a
-                    href={activeWhatsappLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 text-xs active:scale-[0.98]"
-                  >
-                    <MessageCircle className="w-4.5 h-4.5" /> Join WhatsApp Group
-                  </a>
+                      <a
+                        href={realWhatsappLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 text-xs active:scale-[0.98]"
+                      >
+                        <MessageCircle className="w-4.5 h-4.5" /> Join WhatsApp Group
+                      </a>
+                    </>
+                  ) : null}
                 </div>
 
                 <div className="flex gap-2 p-3 rounded bg-amber-500/5 border border-amber-500/15 text-[10px] text-amber-700 dark:text-amber-500 leading-relaxed">

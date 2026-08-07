@@ -13,18 +13,48 @@ import { useAuth } from "@/context/AuthContext";
 
 export default function CourseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [courses, setCourses] = useState(defaultCourses);
+  const [course, setCourse] = useState<any>(null);
   const [mounted, setMounted] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const saved = localStorage.getItem("caliber_admin_courses");
-    if (saved) setCourses(JSON.parse(saved));
-    setMounted(true);
-  }, []);
+    async function loadCourse() {
+      try {
+        const url = process.env.NEXT_PUBLIC_API_URL || "";
+        const res = await fetch(`${url}/api/courses/${id}`);
+        if (res.ok) {
+          const data = await res.json();
+          setCourse(data);
+        }
+      } catch (e) {
+        console.error("Error loading course:", e);
+      } finally {
+        setLoading(false);
+        setMounted(true);
+      }
+    }
+    loadCourse();
+  }, [id]);
 
-  const course = courses.find((c) => c.id === id);
-  const [openModule, setOpenModule] = useState<number | null>(0);
-  const [purchaseLoading, setPurchaseLoading] = useState(false);
+  const [activeEnrollment, setActiveEnrollment] = useState<{ purchased_at: string, access_until: string | null } | null>(null);
+
+  const fetchUserEnrollment = async () => {
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt");
+      if (!token) return;
+      const res = await fetch(`${apiURL}/api/auth/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({})
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const enrollData = (data.enrollments_data || []).find((e: any) => e.course_id === id);
+        setActiveEnrollment(enrollData || null);
+      }
+    } catch (e) { }
+  };
 
   const {
     user,
@@ -34,6 +64,13 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     enrollFreeCourse,
     submitUTR
   } = useAuth();
+
+  useEffect(() => {
+    fetchUserEnrollment();
+  }, [id, isAuthenticated]);
+
+  const [openModule, setOpenModule] = useState<number | null>(0);
+  const [purchaseLoading, setPurchaseLoading] = useState(false);
 
   const [showManualUpi, setShowManualUpi] = useState(false);
   const [utrNumber, setUtrNumber] = useState("");
@@ -48,6 +85,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     message: string;
   } | null>(null);
   const [couponError, setCouponError] = useState("");
+  const [activePaymentMethod, setActivePaymentMethod] = useState<"razorpay" | "manual">("razorpay");
 
   const handleApplyCoupon = async () => {
     if (!couponCode.trim()) return;
@@ -178,8 +216,36 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
 
       const orderData = await res.json();
 
+      if (process.env.NEXT_PUBLIC_ENABLE_TEST_PAYMENTS === "true" && activePaymentMethod === "manual") {
+        try {
+          const mRes = await fetch(`${apiURL}/api/payments/mock-confirm`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              razorpay_order_id: orderData.orderId,
+              razorpay_payment_id: "pay_TEST_" + Math.random().toString(36).substring(7),
+              razorpay_signature: "test_mode_signature"
+            }),
+          });
+          if (mRes.ok) {
+            await fetchUserEnrollment();
+            if (course.deliveryType === "whatsapp") {
+              router.push(`/courses/${course.id}/success`);
+            } else {
+              router.push("/dashboard?tab=courses");
+            }
+          } else {
+            alert("Test Payment failed. Make sure test mode is allowed in backend.");
+          }
+        } catch (e) { }
+        return;
+      }
+
       const options = {
-        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_xxxxxxx",
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || orderData.key || "rzp_test_xxxxxxx",
         amount: orderData.amount,
         currency: orderData.currency || "INR",
         name: "CAliber Education",
@@ -200,8 +266,12 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
               }),
             });
             if (verifyRes.ok) {
-              enrollFreeCourse(course.id);
-              router.push(`/courses/${course.id}/success`);
+              await fetchUserEnrollment();
+              if (course.deliveryType === "whatsapp") {
+                router.push(`/courses/${course.id}/success`);
+              } else {
+                router.push("/dashboard?tab=courses");
+              }
             } else {
               alert("Payment verification failed. Please contact support.");
             }
@@ -226,17 +296,19 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       const rzp = new (window as any).Razorpay(options);
       rzp.open();
     } catch (err: any) {
-      console.warn("API payments ordering error:", err.message);
-      // Fallback for visual mock testing:
-      const confirmDemo = window.confirm("Razorpay API not responding. Fall back to demo payment simulation?");
-      if (confirmDemo) {
-        enrollFreeCourse(course.id);
-        router.push(`/courses/${course.id}/success`);
-      }
+      console.warn("Payment could not be started:", err.message);
+      alert("We couldn't start the payment right now. Please try again in a moment, or contact support if this keeps happening.");
     } finally {
       setPurchaseLoading(false);
     }
   };
+
+  const isPurchasedBool = !!activeEnrollment;
+  let computedDaysLeft = 0;
+  if (activeEnrollment && activeEnrollment.access_until) {
+    const diff = new Date(activeEnrollment.access_until).getTime() - new Date().getTime();
+    computedDaysLeft = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+  }
 
   return (
     <div className="pt-16 pb-20">
@@ -279,14 +351,14 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                 </span>
                 <span className="flex items-center gap-1.5">
                   <BookOpen className="w-4 h-4" />
-                  {course.curriculum.reduce((acc, m) => acc + m.topics.length, 0)} topics
+                  {course.curriculum.reduce((acc: number, m: any) => acc + m.topics.length, 0)} topics
                 </span>
               </div>
 
               {/* Mentor chips */}
               {course.mentors?.length > 0 && (
                 <div className="flex flex-wrap gap-2 pt-2">
-                  {course.mentors.map((m) => (
+                  {course.mentors.map((m: any) => (
                     <div key={m.name} className="flex items-center gap-2 px-2.5 py-1 rounded-lg border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20">
                       <div className={`w-5 h-5 rounded-full bg-gradient-to-br ${m.color} flex items-center justify-center text-white text-[8px] font-bold flex-shrink-0`}>
                         {m.initials}
@@ -307,7 +379,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                 <Zap className="w-4 h-4 text-ink-navy dark:text-paper" /> What you will achieve
               </h2>
               <div className="grid sm:grid-cols-2 gap-4">
-                {course.outcomes.map((outcome, i) => (
+                {course.outcomes.map((outcome: string, i: number) => (
                   <div key={i} className="flex items-start gap-2.5">
                     <CheckCircle className="w-4 h-4 text-signal-emerald flex-shrink-0 mt-0.5" />
                     <span className="text-xs text-slate dark:text-paper/85">{outcome}</span>
@@ -320,7 +392,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
               <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper mb-4">Course Curriculum</h2>
               <div className="space-y-2">
-                {course.curriculum.map((module, mi) => (
+                {course.curriculum.map((module: any, mi: number) => (
                   <div key={mi} className="rounded-lg border border-line-gray-light dark:border-line-gray-dark overflow-hidden bg-white dark:bg-line-gray-dark/20">
                     <button
                       onClick={() => setOpenModule(openModule === mi ? null : mi)}
@@ -339,7 +411,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                       {openModule === mi && (
                         <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.15 }} className="overflow-hidden">
                           <div className="px-5 py-4 space-y-2.5 border-t border-line-gray-light dark:border-line-gray-dark bg-paper/30 dark:bg-line-gray-dark/10">
-                            {module.topics.map((topic, ti) => (
+                            {module.topics.map((topic: string, ti: number) => (
                               <div key={ti} className="flex items-center gap-2.5 text-xs text-slate dark:text-paper/70">
                                 <BookOpen className="w-3.5 h-3.5 flex-shrink-0 text-slate/40" />
                                 {topic}
@@ -361,7 +433,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                   Your Mentor
                 </h2>
                 <div className="space-y-4">
-                  {course.mentors.map((m) => (
+                  {course.mentors.map((m: any) => (
                     <div key={m.name} className="flex items-start gap-4 p-6 rounded-xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20">
                       <div className="flex-shrink-0 w-10 h-10 rounded-lg border border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/35 dark:bg-line-gray-dark/30 flex items-center justify-center text-ink-navy dark:text-paper font-heading font-bold text-sm">
                         {m.initials}
@@ -474,72 +546,34 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                         This course is being prepared. Check back soon — or follow us on WhatsApp for the launch date.
                       </p>
                     </div>
-                  ) : isPurchased ? (
-                    <Link href={`/courses/${course.id}/success`}
-                      className="w-full py-3 text-center bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-2 text-sm">
-                      <MessageCircle className="w-4 h-4" /> View WhatsApp Access
-                    </Link>
                   ) : isPending ? (
                     <button disabled
                       className="w-full py-3 bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/40 font-semibold rounded-lg flex items-center justify-center gap-2 text-sm cursor-not-allowed">
                       <Clock className="w-4 h-4 animate-pulse" /> Verification Pending
                     </button>
                   ) : course.price === 0 ? (
-                    <button onClick={() => { enrollFreeCourse(course.id); router.push(`/courses/${course.id}/success`); }}
+                    <button onClick={() => { enrollFreeCourse(course.id); router.push("/dashboard"); }}
                       className="w-full py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm">
                       <Zap className="w-4 h-4" /> Enrol for Free
                     </button>
                   ) : (
                     <div className="space-y-3">
-                      <button onClick={handleBuyNow} disabled={purchaseLoading}
-                        className="w-full py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                        <Lock className="w-4 h-4" /> {purchaseLoading ? "Processing Razorpay..." : "Pay with Razorpay (Cards/Netbanking)"}
-                      </button>
-
-                      <div className="relative flex items-center py-2">
-                        <div className="flex-grow border-t border-line-gray-light dark:border-line-gray-dark"></div>
-                        <span className="flex-shrink-0 mx-4 text-slate dark:text-paper/50 text-[10px] font-bold uppercase tracking-wider">or</span>
-                        <div className="flex-grow border-t border-line-gray-light dark:border-line-gray-dark"></div>
-                      </div>
-
-                      {!showManualUpi ? (
-                        <button onClick={() => {
-                          if (!isAuthenticated) return router.push("/login");
-                          setShowManualUpi(true);
-                        }}
-                          className="w-full py-3 border border-ink-navy dark:border-paper text-ink-navy dark:text-paper font-bold rounded-lg hover:bg-slate/5 dark:hover:bg-line-gray-dark/50 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm">
-                          <Zap className="w-4 h-4" /> Pay directly via UPI manually
-                        </button>
+                      {isPurchasedBool && !activeEnrollment?.access_until ? (
+                        <div className="w-full py-3 bg-signal-emerald/10 border border-signal-emerald/20 text-signal-emerald font-bold rounded-lg flex items-center justify-center gap-2 text-sm">
+                          <CheckCircle className="w-4 h-4" /> Already Purchased
+                        </div>
                       ) : (
-                        <motion.form initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} className="p-4 border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 rounded-xl space-y-4" onSubmit={handleUpiSubmit}>
-                          <div className="text-center space-y-1">
-                            <p className="text-[10px] font-bold text-slate dark:text-paper/60 uppercase tracking-wider">Transfer to this UPI ID:</p>
-                            <p className="font-mono text-base font-extrabold text-ink-navy dark:text-paper">caliber@upibank</p>
-                          </div>
+                        <button onClick={handleBuyNow} disabled={purchaseLoading}
+                          className="w-full py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                          <Lock className="w-4 h-4" /> {purchaseLoading ? "Processing Razorpay..." : isPurchasedBool ? `Extend with Razorpay (${computedDaysLeft}d left)` : "Pay with Razorpay"}
+                        </button>
+                      )}
 
-                          <div className="space-y-2">
-                            <label className="text-xs font-semibold text-ink-navy dark:text-paper block">Enter UTR / Transaction Reference No.</label>
-                            <input
-                              type="text"
-                              value={utrNumber}
-                              onChange={(e) => setUtrNumber(e.target.value)}
-                              placeholder="e.g. 312567489021"
-                              required
-                              className="w-full bg-line-gray-light/30 dark:bg-line-gray-dark/50 border border-line-gray-light dark:border-line-gray-dark rounded-lg px-4 py-2.5 text-sm text-ink-navy dark:text-paper focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors"
-                            />
-                            <p className="text-[10px] text-slate dark:text-paper/60 leading-relaxed">
-                              Send the exact amount ({typeof course.price === "number" ? `₹${course.price.toLocaleString()}` : course.price}) to our UPI ID via PhonePe/GPay, and paste the 12-digit UTR number here.
-                            </p>
-                          </div>
-
-                          <button type="submit" disabled={utrLoading} className="w-full py-2.5 bg-signal-emerald hover:bg-emerald-700 text-white font-bold rounded-lg transition-all text-sm disabled:opacity-50">
-                            {utrLoading ? "Submitting..." : "Submit UTR for Verification"}
-                          </button>
-
-                          <button type="button" onClick={() => setShowManualUpi(false)} className="w-full py-1.5 text-xs font-bold text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors">
-                            Cancel
-                          </button>
-                        </motion.form>
+                      {isPurchasedBool && (
+                        <Link href="/dashboard?tab=courses"
+                          className="w-full py-3 mt-2 text-center border active:scale-[0.98] border-emerald-600/30 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-700 dark:text-emerald-400 font-bold rounded-lg transition-all flex items-center justify-center gap-2 text-sm">
+                          <MessageCircle className="w-4 h-4" /> Go to Course Deliveries Tracker
+                        </Link>
                       )}
                     </div>
                   )}

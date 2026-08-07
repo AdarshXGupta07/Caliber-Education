@@ -2,10 +2,11 @@
 Coupons & Affiliates router — public validation + admin CRUD.
 """
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from supabase import Client
 
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.dependencies import get_current_user, require_admin
 from app.schemas.coupons import (
     CouponCreateRequest, CouponUpdateRequest,
@@ -21,7 +22,9 @@ router = APIRouter(prefix="/api/coupons", tags=["Coupons"])
 # ═══════════════════════════════════════════════════════════════════════════
 
 @router.post("/validate", response_model=ValidateCouponResponse)
+@limiter.limit("20/minute")
 async def validate_coupon(
+    request: Request,
     body: ValidateCouponRequest,
     current_user: dict = Depends(get_current_user),
     db: Client = Depends(get_db),
@@ -43,10 +46,12 @@ async def validate_coupon(
     now = datetime.now(timezone.utc)
     if coupon.get("valid_from"):
         vf = datetime.fromisoformat(coupon["valid_from"].replace("Z", "+00:00"))
+        if vf.tzinfo is None: vf = vf.replace(tzinfo=timezone.utc)
         if now < vf:
             return ValidateCouponResponse(valid=False, message="This coupon is not yet valid.")
     if coupon.get("valid_until"):
         vu = datetime.fromisoformat(coupon["valid_until"].replace("Z", "+00:00"))
+        if vu.tzinfo is None: vu = vu.replace(tzinfo=timezone.utc)
         if now > vu:
             return ValidateCouponResponse(valid=False, message="This coupon has expired.")
 
@@ -70,14 +75,19 @@ async def validate_coupon(
     # 6. Course applicability
     applicable = coupon.get("applicable_course_ids") or []
     if applicable and body.course_id not in applicable:
-        return ValidateCouponResponse(valid=False, message="This coupon is not applicable to this course.")
+        return ValidateCouponResponse(valid=False, message="This coupon is not applicable to this item.")
 
     # 7. Compute discount
-    course = db.table("courses").select("id, price").eq("id", body.course_id).single().execute()
-    if not course.data:
-        raise HTTPException(status_code=404, detail="Course not found")
+    if body.cart_amount is not None:
+        price = body.cart_amount
+    elif body.course_id:
+        course = db.table("courses").select("id, price").eq("id", body.course_id).single().execute()
+        if not course.data:
+            raise HTTPException(status_code=404, detail="Course or Cart Base Not Found")
+        price = float(course.data.get("price") or 0)
+    else:
+        raise HTTPException(status_code=400, detail="Either course_id or cart_amount must be provided")
 
-    price = float(course.data.get("price") or 0)
     if coupon["discount_type"] == "percent":
         discount_amount = round(min(price, price * coupon["discount_value"] / 100), 2)
     else:

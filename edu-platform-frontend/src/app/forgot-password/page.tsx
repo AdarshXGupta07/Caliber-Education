@@ -12,6 +12,7 @@ export default function ForgotPasswordPage() {
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
   const [turnstileToken, setTurnstileToken] = useState("");
+  const [turnstileKey, setTurnstileKey] = useState(0);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -30,12 +31,17 @@ export default function ForgotPasswordPage() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Request failed");
+        // The backend always returns 200 for a valid request, even if the
+        // email doesn't exist (prevents account enumeration) — a non-200
+        // here means the request itself failed (e.g. bot check), not that
+        // the email is unknown, so this should surface as a real error.
+        throw new Error(err.detail || "Request failed. Please try again.");
       }
       setSent(true);
     } catch (err: any) {
-      console.warn("API forgot-password fallback:", err.message);
-      setSent(true);
+      setTurnstileToken("");
+      setTurnstileKey((k) => k + 1);
+      setError(err.message || "Request failed. Please try again.");
     }
   }
 
@@ -75,7 +81,7 @@ export default function ForgotPasswordPage() {
               {error && <p className="text-xs text-alert-coral">{error}</p>}
 
               {/* Invisible Turnstile widget */}
-              <Turnstile onVerify={setTurnstileToken} />
+              <Turnstile key={turnstileKey} onVerify={setTurnstileToken} />
 
               <button type="submit"
                 className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm animate-pulse">

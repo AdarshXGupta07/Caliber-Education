@@ -3,7 +3,9 @@ from typing import Optional
 
 
 class CreateOrderRequest(BaseModel):
-    courseId: str
+    courseId: Optional[str] = None
+    courseIds: Optional[list[str]] = None
+    bundleId: Optional[str] = None
     couponCode: Optional[str] = None
 
 

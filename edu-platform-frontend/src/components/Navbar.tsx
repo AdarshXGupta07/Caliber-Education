@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/context/AuthContext";
@@ -12,6 +13,7 @@ const navLinks = [
   { href: "/", label: "Home" },
   { href: "/about", label: "Team" },
   { href: "/courses", label: "Courses" },
+  { href: "/test-series", label: "Test Series" },
 ];
 
 export function Navbar() {
@@ -41,10 +43,13 @@ export function Navbar() {
           {/* Logo */}
           <Link href="/" className="flex items-center gap-3 group">
             <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full overflow-hidden flex items-center justify-center group-hover:scale-105 transition-transform flex-shrink-0 relative bg-white/10">
-              <img
+              <Image
                 src={isAuthenticated && purchasedCourseIds?.length > 0 ? "/PREMIUM.jpg" : "/NORMAL.jpg"}
                 alt="Caliber Education Logo"
-                className="w-full h-full object-cover"
+                fill
+                sizes="40px"
+                unoptimized
+                className="object-cover"
               />
             </div>
             <span className="font-heading font-bold text-lg text-ink-navy dark:text-paper tracking-tight">CAliber</span>
@@ -93,13 +98,14 @@ export function Navbar() {
 
             {isAuthenticated ? (
               <div className="flex items-center gap-2">
-                {user?.role === "admin" && (
+                {user && ["admin", "super_admin", "mentor"].includes(user.role) && (
                   <Link href="/admin" className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-alert-coral border border-alert-coral/30 rounded-lg hover:bg-alert-coral/10 transition-colors">
                     <Shield className="w-3.5 h-3.5" /> Admin
                   </Link>
                 )}
-                <Link href="/profile" className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy rounded-lg hover:opacity-90 active:scale-[0.98] transition-all">
-                  My Profile
+                <Link href="/profile" title="My Profile"
+                  className="w-9 h-9 rounded-full bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-heading font-bold text-sm flex items-center justify-center hover:opacity-90 active:scale-[0.96] transition-all shrink-0">
+                  {user?.email?.[0]?.toUpperCase() || "?"}
                 </Link>
                 <button onClick={logout} className="p-2 rounded-lg text-slate dark:text-paper/70 hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors" aria-label="Logout">
                   <LogOut className="w-4 h-4" />
@@ -154,6 +160,17 @@ export function Navbar() {
                 {isAuthenticated ? (
                   <div className="space-y-1">
                     <Link href="/dashboard" onClick={() => setMenuOpen(false)} className="block px-4 py-2.5 text-sm font-semibold text-ink-navy dark:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">Dashboard</Link>
+                    <Link href="/profile" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-ink-navy dark:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">
+                      <span className="w-5 h-5 rounded-full bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-heading font-bold text-[10px] flex items-center justify-center shrink-0">
+                        {user?.email?.[0]?.toUpperCase() || "?"}
+                      </span>
+                      My Profile
+                    </Link>
+                    {user && ["admin", "super_admin", "mentor"].includes(user.role) && (
+                      <Link href="/admin" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-alert-coral hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">
+                        <Shield className="w-3.5 h-3.5" /> Admin
+                      </Link>
+                    )}
                     <button onClick={() => { logout(); setMenuOpen(false); }} className="block w-full text-left px-4 py-2.5 text-sm font-medium text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">Sign Out</button>
                   </div>
                 ) : (

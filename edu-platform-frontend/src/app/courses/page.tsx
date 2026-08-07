@@ -2,6 +2,8 @@
 
 import { useRef, useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
 import { courses as defaultCourses, type Course } from "@/lib/mockData";
 import {
@@ -149,24 +151,25 @@ export default function CoursesPage() {
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
 
-  const [courses, setCourses] = useState<Course[]>(defaultCourses);
+  const [courses, setCourses] = useState<Course[]>([]);
   const [bundles, setBundles] = useState<any[]>([]);
 
   useEffect(() => {
-    const saved = localStorage.getItem("caliber_admin_courses");
-    if (saved) {
-      setCourses(JSON.parse(saved));
-    }
-
-    // Fetch bundles from backend so we can evaluate exact combination discounts
-    async function loadBundles() {
+    async function loadData() {
       try {
         const url = process.env.NEXT_PUBLIC_API_URL || "";
-        const res = await fetch(`${url}/api/courses/bundles`);
-        if (res.ok) setBundles(await res.json());
-      } catch (e) { }
+        // 1. Fetch courses
+        const cRes = await fetch(`${url}/api/courses`);
+        if (cRes.ok) setCourses(await cRes.json());
+
+        // 2. Fetch bundles
+        const bRes = await fetch(`${url}/api/courses/bundles`);
+        if (bRes.ok) setBundles(await bRes.json());
+      } catch (e) {
+        console.error("Could not load courses or bundles", e);
+      }
     }
-    loadBundles();
+    loadData();
   }, []);
 
   // Track page scroll to show "Back to Top" button
@@ -437,6 +440,8 @@ export default function CoursesPage() {
 // ─── Course Card ───────────────────────────────────────────────────────────
 function CourseCard({ course, index }: { course: Course; index: number }) {
   const isComingSoon = course.status === "coming_soon";
+  const { purchasedCourseIds } = useAuth();
+  const isPurchased = purchasedCourseIds.includes(course.id);
 
   return (
     <motion.div
@@ -464,7 +469,12 @@ function CourseCard({ course, index }: { course: Course; index: number }) {
                     Coming Soon
                   </span>
                 )}
-                {!isComingSoon && course.tag && (
+                {!isComingSoon && isPurchased && (
+                  <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-signal-emerald/10 text-signal-emerald border border-signal-emerald/20">
+                    Purchased
+                  </span>
+                )}
+                {!isComingSoon && !isPurchased && course.tag && (
                   <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/60">
                     {course.tag}
                   </span>
@@ -530,6 +540,11 @@ function CourseCard({ course, index }: { course: Course; index: number }) {
                   Notify me
                   <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
                 </span>
+              ) : isPurchased ? (
+                <span className="flex items-center gap-1 text-xs font-semibold text-signal-emerald group-hover:gap-1.5 transition-all">
+                  Go to course
+                  <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                </span>
               ) : (
                 <span className="flex items-center gap-1 text-xs font-semibold text-ink-navy dark:text-paper group-hover:gap-1.5 transition-all">
                   {typeof course.price === "number" && course.price > 0 && <Lock className="w-3 h-3 text-slate dark:text-paper/40" />}
@@ -578,6 +593,84 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
   const finalPrice = isDiscounted ? Number(exactBundleMatch.price) : rawPrice;
   const discountAmount = rawPrice - finalPrice;
 
+  const [purchaseLoading, setPurchaseLoading] = useState(false);
+  const router = useRouter();
+  const { user, isAuthenticated, enrollFreeCourse } = useAuth();
+
+  const handleCheckout = async () => {
+    if (!isAuthenticated) {
+      router.push("/login");
+      return;
+    }
+    setPurchaseLoading(true);
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+
+      const payload: any = { courseIds: selectedIds };
+      if (exactBundleMatch) {
+        payload.bundleId = exactBundleMatch.id;
+      }
+
+      const res = await fetch(`${apiURL}/api/payments/create-order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) throw new Error("Unable to create order.");
+      const orderData = await res.json();
+
+      if (!orderData.key) {
+        alert("Payment gateway isn't available right now. Please try again shortly or contact support.");
+        return;
+      }
+
+      const options = {
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || orderData.key,
+        amount: orderData.amount,
+        currency: orderData.currency || "INR",
+        name: "CAliber Education",
+        description: exactBundleMatch ? exactBundleMatch.title : "Custom Course Bundle",
+        order_id: orderData.orderId,
+        handler: async function (response: any) {
+          try {
+            const verifyRes = await fetch(`${apiURL}/api/payments/verify-payment`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              }),
+            });
+            if (verifyRes.ok) {
+              selectedIds.forEach(id => enrollFreeCourse(id));
+              router.push("/dashboard?tab=courses");
+            } else {
+              alert("Payment verification failed. Please contact support.");
+            }
+          } catch (err) {
+            alert("Error verifying payment signature");
+          }
+        },
+        prefill: { email: user?.email || "" },
+        theme: { color: "#10b981" },
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.on("payment.failed", function (response: any) {
+        alert("Payment Failed: " + response.error.description);
+      });
+      rzp.open();
+
+    } catch (e) {
+      alert("Error initiating checkout. Try again.");
+    } finally {
+      setPurchaseLoading(false);
+    }
+  };
+
   return (
     <div className="bg-white/80 dark:bg-line-gray-dark/40 backdrop-blur-md border border-line-gray-light dark:border-line-gray-dark rounded-2xl shadow-xl overflow-hidden shadow-emerald-500/5">
       <div className="p-5 border-b border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/30 dark:bg-line-gray-dark/30">
@@ -591,7 +684,6 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
       </div>
 
       <div className="p-5 space-y-5">
-        {/* Step 1: Level */}
         <div className="space-y-2">
           <label className="text-[10px] font-bold text-slate dark:text-paper/40 uppercase tracking-widest">1. Select Target Level</label>
           <div className="flex gap-2">
@@ -607,7 +699,6 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
           </div>
         </div>
 
-        {/* Step 2: Pick Courses */}
         <div className="space-y-2">
           <label className="text-[10px] font-bold text-slate dark:text-paper/40 uppercase tracking-widest flex justify-between">
             <span>2. Select Courses</span>
@@ -617,7 +708,7 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
           <div className="max-h-[160px] overflow-y-auto no-scrollbar space-y-1.5 border border-line-gray-light dark:border-line-gray-dark p-2 rounded-xl bg-paper/50 dark:bg-black/10">
             {availableCourses.length === 0 ? (
               <p className="text-center text-xs text-slate/50 py-4 italic">No premium courses available yet for this level.</p>
-            ) : availableCourses.map(c => (
+            ) : availableCourses.map((c: any) => (
               <div
                 key={c.id}
                 onClick={() => toggleCourse(c.id)}
@@ -638,7 +729,6 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
         </div>
       </div>
 
-      {/* Checkout Row */}
       <div className="p-5 border-t border-line-gray-light dark:border-line-gray-dark bg-slate-50/50 dark:bg-black/20">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -658,14 +748,12 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
         </div>
 
         <button
-          disabled={selectedIds.length === 0}
-          onClick={() => {
-            alert(`Simulation: Would redirect to checkout handling ${selectedIds.length} course(s). If backend Bundle checkout is ready, pass bundleId: ${exactBundleMatch?.id}`);
-          }}
-          className={`w-full py-3 rounded-xl font-bold text-sm transition-all focus:outline-none flex items-center justify-center gap-2 ${selectedIds.length > 0 ? "bg-signal-emerald text-white hover:opacity-90 active:scale-[0.98] shadow-md shadow-emerald-500/20" : "bg-line-gray-light dark:bg-line-gray-dark text-slate/50 cursor-not-allowed"}`}
+          disabled={selectedIds.length === 0 || purchaseLoading}
+          onClick={handleCheckout}
+          className={`w-full py-3 rounded-xl font-bold text-sm transition-all focus:outline-none flex items-center justify-center gap-2 ${selectedIds.length > 0 && !purchaseLoading ? "bg-signal-emerald text-white hover:opacity-90 active:scale-[0.98] shadow-md shadow-emerald-500/20" : "bg-line-gray-light dark:bg-line-gray-dark text-slate/50 cursor-not-allowed"}`}
         >
-          {exactBundleMatch ? "Buy Complete Bundle" : selectedIds.length > 1 ? "Buy Selected Plan" : "Buy Course"}
-          <ArrowRight className="w-4 h-4" />
+          {purchaseLoading ? "Processing..." : exactBundleMatch ? "Buy Complete Bundle" : selectedIds.length > 1 ? "Buy Selected Plan" : "Buy Course"}
+          {!purchaseLoading && <ArrowRight className="w-4 h-4" />}
         </button>
         <p className="text-center mt-3 text-[10px] text-slate/60 hover:underline cursor-pointer" onClick={onBuyIndividual}>Prefer browsing individual courses instead?</p>
       </div>

@@ -4,11 +4,13 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from gotrue.errors import AuthApiError
 from supabase import Client
 
 from app.core.config import get_settings
-from app.core.database import get_db
+from app.core.database import get_db, get_auth_client
+from app.core.limiter import limiter
 from app.core.security import create_access_token
 from app.dependencies import get_current_user
 from pydantic import BaseModel
@@ -33,10 +35,14 @@ _otp_store: dict[str, dict] = {}
 
 
 async def _verify_turnstile(token: str) -> bool:
-    """Validates Cloudflare Turnstile token. Returns True in dev if no secret set."""
+    """Validates Cloudflare Turnstile token. Only skipped in local development."""
     settings = get_settings()
-    if not settings.turnstile_secret_key or settings.app_env == "development":
-        return True  # Skip validation in dev
+    if settings.app_env == "development":
+        return True  # Skip validation only in local development
+    if not settings.turnstile_secret_key:
+        # Fail closed outside dev: never silently skip bot-checking because
+        # a secret happened to be unset on the deployed environment.
+        return False
     async with httpx.AsyncClient() as client:
         res = await client.post(
             "https://challenges.cloudflare.com/turnstile/v0/siteverify",
@@ -47,51 +53,81 @@ async def _verify_turnstile(token: str) -> bool:
 
 
 @router.post("/register-init")
-async def register_init(body: RegisterInitRequest):
-    """Step 1: Request OTP for email registration."""
+@limiter.limit("5/minute")
+async def register_init(request: Request, body: RegisterInitRequest, db: Client = Depends(get_db)):
+    """Step 1: Request OTP for email registration.
+
+    Uses Supabase Auth's own OTP email (no third-party sender). For this to
+    deliver a 6-digit code rather than a magic link, the Supabase dashboard's
+    "Magic Link" email template must include {{ .Token }} — see SETUP_GUIDE.
+    """
     if not await _verify_turnstile(body.turnstileToken):
         raise HTTPException(status_code=400, detail="Bot verification failed")
 
-    otp = "123456"  # Fixed for dev/demo; replace with random for production
-    if get_settings().app_env == "production":
-        otp = "".join(random.choices(string.digits, k=6))
+    # Normalize so a mixed-case typed email always matches the lowercase
+    # address Supabase stores on the auth user / profiles row.
+    body.email = body.email.strip().lower()
 
-    _otp_store[body.email] = {
-        "otp": otp,
-        "expires": datetime.now(timezone.utc) + timedelta(minutes=10),
-    }
-    # TODO: Send real OTP via SendGrid when SENDGRID_API_KEY is set
+    # Don't let a FULLY registered account silently restart the signup flow —
+    # send them to sign-in instead of emailing a code that would look like a
+    # second registration. `active_session_id` is only ever set once step 3
+    # (password set) or a real login succeeds, so a profile row that exists
+    # but has no active_session_id is a signup that got interrupted before a
+    # password was ever set — that email must be allowed to retry, or it
+    # would be locked out forever (can't register: already exists; can't log
+    # in: no password).
+    existing = db.table("profiles").select("id, active_session_id").eq("email", body.email).execute()
+    if existing.data and existing.data[0].get("active_session_id"):
+        raise HTTPException(
+            status_code=409,
+            detail="This email is already registered. Please sign in instead.",
+        )
 
-    env = get_settings().app_env
-    msg = f"OTP sent to {body.email}" if env == "production" else f"Dev OTP: {otp} (sent to {body.email})"
-    print(f"[AUTH] {msg}")
+    try:
+        get_auth_client().auth.sign_in_with_otp({
+            "email": body.email,
+            "options": {"should_create_user": True},
+        })
+    except AuthApiError as e:
+        print(f"[AUTH] Supabase OTP send failed for {body.email}: {e}")
+        # Supabase's own shared email sender caps all auth emails at a
+        # project-wide per-hour limit (Authentication -> Rate Limits in the
+        # dashboard) unless custom SMTP is configured. Surfacing this
+        # distinctly from other failures means "wait a bit" doesn't get
+        # misread as "something is broken".
+        if e.code == "over_email_send_rate_limit" or e.status == 429:
+            raise HTTPException(status_code=429, detail="We've hit Supabase's email sending limit for now. Please wait a few minutes and try again.")
+        raise HTTPException(status_code=502, detail="Couldn't send the verification code. Please try again in a moment.")
+    except Exception as e:
+        print(f"[AUTH] Supabase OTP send failed for {body.email}: {e}")
+        raise HTTPException(status_code=502, detail="Couldn't send the verification code. Please try again in a moment.")
+
+    print(f"[AUTH] Supabase OTP requested for {body.email}")
     return {"success": True, "message": "OTP sent successfully"}
 
 
 @router.post("/verify-otp")
-async def verify_otp(body: VerifyOTPRequest):
-    """Step 2: Verify OTP and get temp token."""
-    entry = _otp_store.get(body.email)
-    if not entry:
-        raise HTTPException(status_code=401, detail="No OTP requested for this email")
+@limiter.limit("10/minute")
+async def verify_otp(request: Request, body: VerifyOTPRequest, db: Client = Depends(get_db)):
+    """Step 2: Verify the Supabase-issued OTP, then hand back a short-lived
+    temp token that authorizes step 3 (setting a password)."""
+    body.email = body.email.strip().lower()
+    try:
+        res = get_auth_client().auth.verify_otp({
+            "email": body.email,
+            "token": body.otp,
+            "type": "email",
+        })
+    except Exception as e:
+        print(f"[AUTH] OTP verify failed for {body.email}: {e}")
+        raise HTTPException(status_code=401, detail="Incorrect or expired code. Request a new one.")
 
-    if datetime.now(timezone.utc) > entry["expires"]:
-        _otp_store.pop(body.email, None)
-        raise HTTPException(status_code=401, detail="OTP expired. Request a new one.")
+    if not res or not res.user:
+        raise HTTPException(status_code=401, detail="Incorrect or expired code. Request a new one.")
 
-    if entry["otp"] != body.otp:
-        raise HTTPException(status_code=401, detail="Incorrect OTP")
-
-    _otp_store.pop(body.email, None)  # OTP is single-use
-    # Issue a short-lived temp token (15 min) to carry email through step 3
-    temp_token = create_access_token(
-        {"sub": f"otp:{body.email}", "purpose": "registration"}, expires_days=0
-    )
-    # We need minutes-level expiry — use seconds trick
-    from datetime import timedelta as _td
     from jose import jwt as _jwt
-    settings = get_settings()
     import time
+    settings = get_settings()
     temp_token = _jwt.encode(
         {"sub": f"otp:{body.email}", "purpose": "registration", "exp": time.time() + 900},
         settings.jwt_secret,
@@ -104,6 +140,7 @@ async def verify_otp(body: VerifyOTPRequest):
 async def register(body: RegisterRequest, db: Client = Depends(get_db)):
     """Step 3: Create account with validated email + password."""
     settings = get_settings()
+    body.email = body.email.strip().lower()
     # Validate temp token
     from jose import jwt as _jwt, JWTError
     try:
@@ -121,18 +158,25 @@ async def register(body: RegisterRequest, db: Client = Depends(get_db)):
     if len(body.password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
 
-    # Create user in Supabase Auth
+    # The Supabase user already exists at this point — sign_in_with_otp in
+    # step 1 created it (should_create_user) and step 2's verify_otp confirmed
+    # the address. So this sets the password on that existing user rather than
+    # calling sign_up (which would fail as "already registered").
+    profile_lookup = db.table("profiles").select("id").eq("email", body.email).execute()
+    if not profile_lookup.data:
+        # The tempToken decoded fine, so email verification did happen — this
+        # means the registration attempt it belongs to no longer exists
+        # (e.g. superseded by a later retry). Not a "you skipped a step"
+        # case, just a stale session.
+        raise HTTPException(status_code=400, detail="Your signup session has expired. Please start again from the beginning.")
+    user_id = str(profile_lookup.data[0]["id"])
+
     try:
-        auth_res = db.auth.sign_up({"email": body.email, "password": body.password})
+        db.auth.admin.update_user_by_id(user_id, {"password": body.password})
     except Exception as e:
-        raise HTTPException(status_code=409, detail="Email already registered")
+        print(f"[AUTH] Failed to set password for {body.email}: {e}")
+        raise HTTPException(status_code=500, detail="Couldn't set your password. Please try again.")
 
-    if not auth_res.user:
-        raise HTTPException(status_code=409, detail="Email already registered")
-
-    user_id = str(auth_res.user.id)
-
-    # profiles row is created by Supabase trigger — ensure it exists
     session_id = str(uuid.uuid4())
     db.table("profiles").upsert({
         "id": user_id,
@@ -144,18 +188,24 @@ async def register(body: RegisterRequest, db: Client = Depends(get_db)):
     token = create_access_token({"sub": user_id, "email": body.email, "role": "student", "session_id": session_id})
     return TokenResponse(
         token=token,
-        user=UserResponse(id=user_id, email=body.email, role="student"),
+        user=UserResponse(id=user_id, email=body.email, role="student", profileComplete=False),
     )
 
 
+def _is_profile_complete(profile: dict) -> bool:
+    return bool(profile.get("full_name")) and bool(profile.get("phone_number"))
+
+
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, db: Client = Depends(get_db)):
+@limiter.limit("10/minute")
+async def login(request: Request, body: LoginRequest, db: Client = Depends(get_db)):
     """Login with email and password."""
     if not await _verify_turnstile(body.turnstileToken):
         raise HTTPException(status_code=400, detail="Bot verification failed")
 
+    body.email = body.email.strip().lower()
     try:
-        auth_res = db.auth.sign_in_with_password({"email": body.email, "password": body.password})
+        auth_res = get_auth_client().auth.sign_in_with_password({"email": body.email, "password": body.password})
     except Exception:
         raise HTTPException(status_code=401, detail="Incorrect email or password")
 
@@ -167,6 +217,7 @@ async def login(body: LoginRequest, db: Client = Depends(get_db)):
     # Fetch profile for role
     profile = db.table("profiles").select("*").eq("id", user_id).single().execute()
     role = profile.data.get("role", "student") if profile.data else "student"
+    complete = _is_profile_complete(profile.data) if profile.data else False
 
     session_id = str(uuid.uuid4())
     db.table("profiles").update({"active_session_id": session_id}).eq("id", user_id).execute()
@@ -174,7 +225,7 @@ async def login(body: LoginRequest, db: Client = Depends(get_db)):
     token = create_access_token({"sub": user_id, "email": body.email, "role": role, "session_id": session_id})
     return TokenResponse(
         token=token,
-        user=UserResponse(id=user_id, email=body.email, role=role),
+        user=UserResponse(id=user_id, email=body.email, role=role, profileComplete=complete),
     )
 
 
@@ -210,25 +261,29 @@ async def google_exchange(body: GoogleExchangeRequest, db: Client = Depends(get_
         # Try to fetch existing profile without .single() to avoid exception on 0 rows
         profile_res = db.table("profiles").select("*").eq("id", user_id).execute()
         role = "student"
+        complete = False
         session_id = str(uuid.uuid4())
-        
+
         if profile_res.data:
             role = profile_res.data[0].get("role", "student")
+            complete = _is_profile_complete(profile_res.data[0])
             db.table("profiles").update({"active_session_id": session_id}).eq("id", user_id).execute()
         else:
-            # Create profile safely if it doesn't exist
+            # Create profile safely if it doesn't exist — Google gives us no
+            # phone/address, so this is never complete on first sign-in
             db.table("profiles").upsert({"id": user_id, "email": email, "role": "student", "active_session_id": session_id}).execute()
     except Exception as e:
         print(f"Database error during profile fetch/create: {e}")
         role = "student"
+        complete = False
         session_id = str(uuid.uuid4())
 
     # Generate custom caliber jwt
     token = create_access_token({"sub": user_id, "email": email, "role": role, "session_id": session_id})
-    
+
     return TokenResponse(
         token=token,
-        user=UserResponse(id=user_id, email=email, role=role),
+        user=UserResponse(id=user_id, email=email, role=role, profileComplete=complete),
     )
 
 
@@ -237,8 +292,9 @@ async def me(current_user: dict = Depends(get_current_user), db: Client = Depend
     """Return current user profile with enrolled courses and recent quiz attempts."""
     user_id = current_user["id"]
 
-    enrollments = db.table("enrollments").select("course_id, purchased_at").eq("user_id", user_id).execute()
+    enrollments = db.table("enrollments").select("course_id, purchased_at, access_until").eq("user_id", user_id).execute()
     enrolled_ids = [e["course_id"] for e in (enrollments.data or [])]
+    enrolled_data = enrollments.data or []
 
     attempts = (
         db.table("quiz_attempts")
@@ -248,6 +304,17 @@ async def me(current_user: dict = Depends(get_current_user), db: Client = Depend
         .limit(10)
         .execute()
     )
+    attempts_data = attempts.data or []
+    attempt_set_ids = list({a["set_id"] for a in attempts_data if a.get("set_id")})
+    paper_titles = {}
+    if attempt_set_ids:
+        try:
+            papers = db.table("mcq_papers").select("id, title").in_("id", attempt_set_ids).execute()
+            paper_titles = {p["id"]: p["title"] for p in (papers.data or [])}
+        except Exception:
+            pass
+    for a in attempts_data:
+        a["paperTitle"] = paper_titles.get(a.get("set_id"), "MCQ Paper")
 
     # Fetch extended profile info, safely falling back if missing
     profile_data = {}
@@ -258,10 +325,42 @@ async def me(current_user: dict = Depends(get_current_user), db: Client = Depend
     except Exception:
         pass
 
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    
+    mcq_enrollments = db.table("mcq_enrollments").select("subject_code, access_until").eq("user_id", user_id).execute()
+    
+    # Deduplicate — keep only the latest active enrollment per subject_code
+    best_expiry = {}  # subject_code -> latest access_until datetime
+    for e in (mcq_enrollments.data or []):
+        code = e["subject_code"]
+        expiry_str = e.get("access_until")
+        if expiry_str:
+            try:
+                expiry_dt = datetime.fromisoformat(expiry_str.replace("Z", "+00:00").replace(" ", "T"))
+                if expiry_dt.tzinfo is None:
+                    expiry_dt = expiry_dt.replace(tzinfo=timezone.utc)
+                if expiry_dt <= now:
+                    continue  # expired
+                if code not in best_expiry or expiry_dt > best_expiry[code]:
+                    best_expiry[code] = expiry_dt
+            except ValueError:
+                # If can't parse, include it
+                if code not in best_expiry:
+                    best_expiry[code] = now
+        else:
+            # No expiry = lifetime access
+            if code not in best_expiry:
+                best_expiry[code] = now
+
+    mcq_enrolled_ids = list(best_expiry.keys())
+
     return {
         "user": {**current_user, **profile_data},
         "purchases": enrolled_ids,
-        "attempts": attempts.data or [],
+        "enrollments_data": enrolled_data,
+        "mcqPurchases": mcq_enrolled_ids,
+        "attempts": attempts_data,
     }
 
 class ProfileUpdateRequest(BaseModel):
@@ -295,22 +394,39 @@ async def update_profile(body: ProfileUpdateRequest, current_user: dict = Depend
 
 
 @router.post("/forgot-password")
-async def forgot_password(body: ForgotPasswordRequest, db: Client = Depends(get_db)):
+@limiter.limit("5/minute")
+async def forgot_password(request: Request, body: ForgotPasswordRequest):
     if not await _verify_turnstile(body.turnstileToken):
         raise HTTPException(status_code=400, detail="Bot verification failed")
+    body.email = body.email.strip().lower()
+    settings = get_settings()
     try:
-        db.auth.reset_password_email(body.email)
-    except Exception:
+        get_auth_client().auth.reset_password_email(
+            body.email,
+            {"redirect_to": f"{settings.frontend_url}/reset-password"},
+        )
+    except Exception as e:
+        print(f"[AUTH] Password reset email failed for {body.email}: {e}")
         pass  # Always respond 200 to prevent user enumeration
     return {"success": True, "message": "If this email exists, a reset link has been sent"}
 
 
 @router.post("/reset-password")
-async def reset_password(body: ResetPasswordRequest, db: Client = Depends(get_db)):
+async def reset_password(body: ResetPasswordRequest):
+    """Step 2 of the forgot-password flow: the recovery link Supabase emailed
+    redirects here with an access/refresh token pair identifying exactly
+    which user is resetting. A fresh, single-use client establishes that
+    specific session via set_session before changing the password — using
+    the shared get_db() client here would apply the change to whichever
+    session it happened to be holding at that moment, not necessarily this
+    user."""
     if len(body.newPassword) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    client = get_auth_client()
     try:
-        db.auth.update_user({"password": body.newPassword})
+        client.auth.set_session(body.accessToken, body.refreshToken)
+        client.auth.update_user({"password": body.newPassword})
     except Exception as e:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+        print(f"[AUTH] Password reset failed: {e}")
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link. Please request a new one.")
     return {"success": True, "message": "Password updated successfully"}

@@ -18,6 +18,8 @@ export default function ProfilePage() {
     });
     const [courses, setCourses] = useState<any[]>([]);
 
+    const [saveStatus, setSaveStatus] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
     useEffect(() => {
         if (isMounted && !isAuthenticated) router.push("/login");
     }, [isMounted, isAuthenticated, router]);
@@ -60,6 +62,7 @@ export default function ProfilePage() {
     const handleSaveProfile = async (e: React.FormEvent) => {
         e.preventDefault();
         setSavingProfile(true);
+        setSaveStatus(null);
         try {
             const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
             const token = localStorage.getItem("caliber_jwt") || "";
@@ -77,12 +80,12 @@ export default function ProfilePage() {
             });
             if (res.ok) {
                 setProfileDetails((prev: any) => ({ ...prev, ...profileForm }));
-                alert("Profile updated successfully!");
+                setSaveStatus({ message: "Profile updated successfully!", type: "success" });
             } else {
-                alert("Could not update profile.");
+                setSaveStatus({ message: "Could not update profile.", type: "error" });
             }
         } catch (err) {
-            alert("Error saving profile");
+            setSaveStatus({ message: "Network error saving profile.", type: "error" });
         } finally {
             setSavingProfile(false);
         }
@@ -162,6 +165,14 @@ export default function ProfilePage() {
                                         {savingProfile ? "Saving Details..." : "Save Changes"}
                                     </button>
                                     {savingProfile && <span className="ml-3 text-xs text-signal-emerald animate-pulse">Updating database...</span>}
+                                    {!savingProfile && saveStatus && (
+                                        <motion.span
+                                            initial={{ opacity: 0, x: -5 }} animate={{ opacity: 1, x: 0 }}
+                                            className={`ml-3 text-xs font-bold ${saveStatus.type === "success" ? "text-signal-emerald" : "text-alert-coral"}`}
+                                        >
+                                            {saveStatus.message}
+                                        </motion.span>
+                                    )}
                                 </div>
                             </form>
                         </div>

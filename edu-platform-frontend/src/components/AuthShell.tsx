@@ -33,10 +33,6 @@ export function AuthShell({ children, progressStep, progressTotal }: AuthShellPr
           </div>
           <div className="p-7">{children}</div>
         </div>
-
-        <p className="text-xs text-center text-slate dark:text-paper/40 mt-5">
-          This is a demo — no real emails are sent.
-        </p>
       </div>
     </div>
   );

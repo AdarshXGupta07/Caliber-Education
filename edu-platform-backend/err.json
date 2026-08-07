@@ -1,1 +1,0 @@
-"{'code': '23502', 'details': 'Failing row contains (test, null, null, null, null, null, null, [], [], 0, 0, null, [], null, null, null, coming_soon, 2026-07-30 16:07:08.613926+00).', 'hint': None, 'message': 'null value in column \"title\" of relation \"courses\" violates not-null constraint'}"

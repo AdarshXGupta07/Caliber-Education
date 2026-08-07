@@ -32,11 +32,11 @@ export interface ExamSection {
 export interface MCQPaper {
   id: string;
   title: string;
-  level: string; 
-  groupName: string; 
-  subjectCode: string; 
+  level: string;
+  groupName: string;
+  subjectCode: string;
   chapterName?: string;
-  testType: string; 
+  testType: string;
   durationMinutes: number;
   passingMarks: number;
   totalMarks: number;
@@ -50,23 +50,19 @@ export interface MCQPaper {
 }
 
 // Master Data
+// Master Data — aligned with ca_level/ca_group DB enums
 const LEVELS = ["FINAL", "INTERMEDIATE", "FOUNDATION"];
 const GROUPS = ["GROUP_1", "GROUP_2", "BOTH", "NONE"];
 const TEST_TYPES = ["COMPLETE_GROUP", "FULL_SUBJECT", "CHAPTER_WISE"];
-const SUBJECTS = [
-  { code: "FR", name: "Financial Reporting", level: "FINAL", group: "GROUP_1" },
-  { code: "AFM", name: "Advanced Financial Management", level: "FINAL", group: "GROUP_1" },
-  { code: "AUD", name: "Advanced Auditing", level: "FINAL", group: "GROUP_1" },
-  { code: "DT", name: "Direct Tax", level: "FINAL", group: "GROUP_2" },
-  { code: "IDT", name: "Indirect Tax", level: "FINAL", group: "GROUP_2" },
-  { code: "IBS", name: "Integrated Business Solutions", level: "FINAL", group: "GROUP_2" },
-  { code: "ACC", name: "Advanced Accounting", level: "INTERMEDIATE", group: "GROUP_1" },
-  { code: "LAW", name: "Corporate & Other Laws", level: "INTERMEDIATE", group: "GROUP_1" },
-  { code: "TAX", name: "Taxation", level: "INTERMEDIATE", group: "GROUP_1" },
-  { code: "CMA", name: "Cost & Management Accounting", level: "INTERMEDIATE", group: "GROUP_2" },
-  { code: "AUD_INT", name: "Auditing & Ethics", level: "INTERMEDIATE", group: "GROUP_2" },
-  { code: "FM_SM", name: "FM & Strategic Management", level: "INTERMEDIATE", group: "GROUP_2" }
-];
+const LEVEL_LABELS: Record<string, string> = { FINAL: "CA Final", INTERMEDIATE: "CA Intermediate", FOUNDATION: "CA Foundation" };
+const GROUP_LABELS: Record<string, string> = { GROUP_1: "Group I", GROUP_2: "Group II", BOTH: "Both Groups", NONE: "All Subjects" };
+
+// Subjects are fetched live from /api/mcq/packages (the real mcq_subjects
+// catalog) — NOT hardcoded here. A hardcoded list previously used different
+// codes than the actual storefront (e.g. "Adv Acc" vs the real "ADV_ACC"),
+// which silently broke the purchase-access check: a paper saved with a code
+// that didn't match any real subject could never be unlocked by a buyer.
+interface LiveSubject { code: string; name: string; level: string; group_name: string; }
 
 export default function MCQStudio({ series }: { series: any[] }) {
   const [papers, setPapers] = useState<MCQPaper[]>([]);
@@ -80,10 +76,26 @@ export default function MCQStudio({ series }: { series: any[] }) {
   async function fetchPapers() {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/mcq-sets");
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/mcq-sets`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
       if (res.ok) {
         const data = await res.json();
-        setPapers(data);
+        setPapers(data.map((p: any) => ({
+          ...p,
+          groupName: p.groupName || p.group_name || "",
+          subjectCode: p.subjectCode || p.subject_code || "",
+          testType: p.testType || p.test_type || "FULL_SUBJECT",
+          durationMinutes: p.durationMinutes || p.duration_minutes || 0,
+          passingMarks: p.passingMarks || p.passing_marks || 0,
+          totalMarks: p.totalMarks || p.total_marks || 0,
+          shuffleQuestions: p.shuffleQuestions || p.shuffle_questions || false,
+          shuffleOptions: p.shuffleOptions || p.shuffle_options || false,
+          sectionCount: p.sectionCount || p.section_count || 0,
+          questionCount: p.questionCount || p.question_count || 0
+        })));
       }
     } catch (e) {
       console.error(e);
@@ -91,9 +103,28 @@ export default function MCQStudio({ series }: { series: any[] }) {
     setLoading(false);
   }
 
+  async function handleDelete(paperId: string, paperTitle: string) {
+    if (!window.confirm(`Delete "${paperTitle}" permanently? This cannot be undone.`)) return;
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/mcq-sets/${paperId}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setPapers(prev => prev.filter(p => p.id !== paperId));
+      } else {
+        alert("Delete failed. Try again.");
+      }
+    } catch {
+      alert("Error deleting paper.");
+    }
+  }
+
   function handleCreate() {
     setEditingPaper({
-      id: "", // indicates new
+      id: "",
       title: "New Test Paper",
       level: "FINAL",
       groupName: "GROUP_1",
@@ -121,29 +152,42 @@ export default function MCQStudio({ series }: { series: any[] }) {
           <h2 className="text-xl font-bold text-ink-navy dark:text-paper">MCQ Papers (CA Hierarchy)</h2>
           <p className="text-sm text-slate dark:text-paper/60">Manage mock tests, question banks, and case scenarios.</p>
         </div>
-        <button onClick={handleCreate} className="flex items-center gap-2 bg-primary-gold text-ink-navy px-4 py-2 rounded-xl font-bold hover:shadow-lg transition-all">
+        <button onClick={handleCreate} className="flex items-center gap-2 bg-signal-emerald text-white px-4 py-2 rounded-xl font-bold hover:shadow-lg transition-all">
           <Plus className="w-4 h-4" /> New Paper
         </button>
       </div>
 
       {loading ? (
         <div className="text-center py-12 text-slate">Loading papers...</div>
+      ) : papers.length === 0 ? (
+        <div className="text-center py-16 border-2 border-dashed border-line-gray-light dark:border-line-gray-dark rounded-2xl bg-white dark:bg-line-gray-dark/10 space-y-4">
+          <p className="text-lg font-bold text-ink-navy dark:text-paper">No MCQ Papers Yet</p>
+          <p className="text-sm text-slate dark:text-paper/50">Create your first paper to get started.</p>
+          <button onClick={handleCreate} className="inline-flex items-center gap-2 bg-signal-emerald text-white px-5 py-2.5 rounded-xl font-bold hover:bg-signal-emerald/90 transition-all">
+            <Plus className="w-4 h-4" /> Create First Paper
+          </button>
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {papers.map(p => (
             <div key={p.id} className="bg-white dark:bg-line-gray-dark/50 p-6 rounded-2xl border border-line-gray-light dark:border-line-gray-dark shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full uppercase ${p.status === 'published' ? 'bg-signal-emerald/10 text-signal-emerald' : 'bg-primary-gold/20 text-primary-gold'}`}>
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full uppercase ${p.status === 'published' ? 'bg-signal-emerald/10 text-signal-emerald' : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'}`}>
                     {p.status}
                   </span>
                   <h3 className="font-bold text-ink-navy dark:text-paper mt-2">{p.title}</h3>
                 </div>
-                <button onClick={() => setEditingPaper(p)} className="p-2 text-slate hover:text-primary-gold hover:bg-primary-gold/10 rounded-lg transition-colors">
-                  <Edit2 className="w-4 h-4" />
-                </button>
+                <div className="flex gap-1">
+                  <button onClick={() => setEditingPaper(p)} className="p-2 text-slate hover:text-signal-emerald hover:bg-signal-emerald/10 rounded-lg transition-colors">
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                  <button onClick={() => handleDelete(p.id, p.title)} className="p-2 text-slate hover:text-alert-coral hover:bg-alert-coral/10 rounded-lg transition-colors">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
-              
+
               <div className="space-y-2 mb-6">
                 <div className="flex items-center text-sm text-slate dark:text-paper/70">
                   <span className="w-20 font-medium">Hierarchy:</span>
@@ -151,11 +195,11 @@ export default function MCQStudio({ series }: { series: any[] }) {
                 </div>
                 <div className="flex items-center text-sm text-slate dark:text-paper/70">
                   <span className="w-20 font-medium">Subject:</span>
-                  <span className="font-semibold text-primary-gold">{p.subjectCode}</span>
+                  <span className="font-semibold text-signal-emerald">{p.subjectCode}</span>
                 </div>
                 <div className="flex items-center text-sm text-slate dark:text-paper/70">
                   <span className="w-20 font-medium">Type:</span>
-                  <span className="text-xs border border-line-gray-light dark:border-line-gray-dark px-2 py-0.5 rounded">{p.testType.replace("_", " ")}</span>
+                  <span className="text-xs border border-line-gray-light dark:border-line-gray-dark px-2 py-0.5 rounded">{(p.testType || "FULL_SUBJECT").replace("_", " ")}</span>
                 </div>
               </div>
 
@@ -184,40 +228,85 @@ export default function MCQStudio({ series }: { series: any[] }) {
 function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void }) {
   const [data, setData] = useState<MCQPaper>(paper);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<"settings"|"cases"|"questions">("settings");
+  const [activeTab, setActiveTab] = useState<"settings" | "cases" | "questions">("settings");
+  const [liveSubjects, setLiveSubjects] = useState<LiveSubject[]>([]);
 
   const inp = "w-full px-3 py-2 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-xl focus:outline-none focus:border-signal-emerald transition-colors";
 
   useEffect(() => {
-    if (paper.id) {
-      // Fetch full details including sections and cases
-      fetch(`/api/admin/mcq-sets/${paper.id}`)
-        .then(res => res.json())
-        .then(full => setData({...data, sections: full.sections || [], case_scenarios: full.case_scenarios || []}));
-    }
+    const apiURL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    fetch(`${apiURL}/api/mcq/packages`)
+      .then((r) => (r.ok ? r.json() : { allSubjects: [] }))
+      .then((d) => setLiveSubjects((d.allSubjects || []).map((s: any) => ({
+        code: s.code, name: s.name, level: s.level, group_name: s.group_name,
+      }))))
+      .catch(() => setLiveSubjects([]));
+  }, []);
+
+  useEffect(() => {
+    if (!paper.id) return; // new paper — no fetch needed
+    const apiURL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const token = localStorage.getItem("caliber_jwt") || "";
+    fetch(`${apiURL}/api/admin/mcq-sets/${paper.id}`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    })
+      .then(res => {
+        if (!res.ok) throw new Error(`${res.status}`);
+        return res.json();
+      })
+      .then(full => setData(prev => ({ ...prev, sections: full.sections || [], case_scenarios: full.case_scenarios || [] })))
+      .catch(() => {/* keep existing data on auth error */});
   }, [paper.id]);
 
   async function handleSave() {
+    if (!data.title.trim()) { alert("Give this paper a title before saving."); return; }
+    if (!data.subjectCode) { alert("Select a subject before saving — the paper can't be saved without one."); return; }
+
+    let questionNumber = 0;
+    for (const sec of data.sections || []) {
+      for (const q of sec.questions || []) {
+        questionNumber++;
+        if (!q.content || !q.content.trim()) {
+          alert(`Question ${questionNumber} (in section "${sec.title}") is missing its question text. Fill it in before saving.`);
+          return;
+        }
+        if (!q.options || q.options.length === 0 || q.options.some((opt: string) => !opt || !opt.trim())) {
+          alert(`Question ${questionNumber} (in section "${sec.title}") has a blank answer option. Fill in every option before saving.`);
+          return;
+        }
+      }
+    }
+
     setSaving(true);
     try {
-      const res = await fetch("/api/admin/mcq-sets", {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/mcq-sets`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify(data)
       });
       if (res.ok) {
         alert("Saved successfully!");
         onBack();
       } else {
-        alert("Failed to save.");
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || "Failed to save. Please check every field and try again.");
       }
-    } catch(e) {
-      alert("Error saving paper.");
+    } catch (e) {
+      alert("Error saving paper. Please check your connection and try again.");
     }
     setSaving(false);
   }
 
-  const filteredSubjects = SUBJECTS.filter(s => s.level === data.level && s.group === data.groupName);
+  // BOTH/NONE = cross-group test, show all subjects at that level
+  const filteredSubjects = liveSubjects.filter(s =>
+    s.level === data.level &&
+    (data.groupName === "BOTH" || data.groupName === "NONE" || s.group_name === data.groupName)
+  );
 
   return (
     <div className="space-y-6">
@@ -238,13 +327,12 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
       <div className="flex gap-2 border-b border-line-gray-light dark:border-line-gray-dark">
         {[
           { id: "settings", icon: <Settings2 className="w-4 h-4" />, label: "Hierarchy & Settings" },
-          { id: "cases", icon: <FileText className="w-4 h-4" />, label: "Case Scenarios" },
           { id: "questions", icon: <CheckCircle className="w-4 h-4" />, label: "Sections & Questions" },
         ].map(t => (
-          <button 
-            key={t.id} 
+          <button
+            key={t.id}
             onClick={() => setActiveTab(t.id as any)}
-            className={`flex items-center gap-2 px-4 py-3 font-semibold text-sm transition-colors border-b-2 ${activeTab === t.id ? "border-primary-gold text-primary-gold" : "border-transparent text-slate hover:text-ink-navy dark:hover:text-paper"}`}
+            className={`flex items-center gap-2 px-4 py-3 font-semibold text-sm transition-colors border-b-2 ${activeTab === t.id ? "border-signal-emerald text-signal-emerald" : "border-transparent text-slate hover:text-ink-navy dark:hover:text-paper"}`}
           >
             {t.icon} {t.label}
           </button>
@@ -257,50 +345,71 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
             <h3 className="font-bold text-lg text-ink-navy dark:text-paper border-b border-line-gray-light dark:border-line-gray-dark pb-2">Basic Info</h3>
             <div>
               <label className="block text-xs font-bold text-slate uppercase mb-1">Title</label>
-              <input className={inp} value={data.title} onChange={e => setData({...data, title: e.target.value})} />
+              <input className={inp} value={data.title} onChange={e => setData({ ...data, title: e.target.value })} />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-bold text-slate uppercase mb-1">Status</label>
-                <select className={inp} value={data.status} onChange={e => setData({...data, status: e.target.value as any})}>
+                <select className={inp} value={data.status} onChange={e => setData({ ...data, status: e.target.value as any })}>
                   <option value="draft">Draft</option>
                   <option value="published">Published</option>
                 </select>
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate uppercase mb-1">Test Type</label>
-                <select className={inp} value={data.testType} onChange={e => setData({...data, testType: e.target.value})}>
+                <select className={inp} value={data.testType} onChange={e => setData({ ...data, testType: e.target.value })}>
                   {TEST_TYPES.map(t => <option key={t} value={t}>{t.replace("_", " ")}</option>)}
                 </select>
               </div>
             </div>
+            {data.status === "draft" && (
+              <p className="text-[11px] font-semibold text-amber-600 bg-amber-500/10 rounded-lg px-3 py-2">
+                This paper is in Draft — it will NOT appear in the student catalog, &quot;My MCQs&quot;, or be attemptable until you set Status to Published.
+              </p>
+            )}
 
             <h3 className="font-bold text-lg text-ink-navy dark:text-paper border-b border-line-gray-light dark:border-line-gray-dark pb-2 mt-8">CA Hierarchy Mapping</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-bold text-slate uppercase mb-1">Level</label>
-                <select className={inp} value={data.level} onChange={e => setData({...data, level: e.target.value, subjectCode: ""})}>
-                  {LEVELS.map(t => <option key={t} value={t}>{t}</option>)}
+                <select className={inp} value={data.level} onChange={e => {
+                  const newLevel = e.target.value;
+                  // Only clear the subject if it's actually invalid for the
+                  // new level — re-selecting the same level (or a level that
+                  // happens to share the subject) must never silently wipe
+                  // an already-correct selection.
+                  const stillValid = liveSubjects.some(s => s.code === data.subjectCode && s.level === newLevel);
+                  setData({ ...data, level: newLevel, subjectCode: stillValid ? data.subjectCode : "" });
+                }}>
+                  {LEVELS.map(t => <option key={t} value={t}>{LEVEL_LABELS[t] ?? t}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate uppercase mb-1">Group</label>
-                <select className={inp} value={data.groupName} onChange={e => setData({...data, groupName: e.target.value, subjectCode: ""})}>
-                  {GROUPS.map(t => <option key={t} value={t}>{t.replace("_", " ")}</option>)}
+                <select className={inp} value={data.groupName} onChange={e => {
+                  const newGroup = e.target.value;
+                  const stillValid = liveSubjects.some(s => s.code === data.subjectCode && s.level === data.level &&
+                    (newGroup === "BOTH" || newGroup === "NONE" || s.group_name === newGroup));
+                  setData({ ...data, groupName: newGroup, subjectCode: stillValid ? data.subjectCode : "" });
+                }}>
+                  {GROUPS.map(t => <option key={t} value={t}>{GROUP_LABELS[t] ?? t}</option>)}
                 </select>
               </div>
             </div>
             <div>
               <label className="block text-xs font-bold text-slate uppercase mb-1">Subject</label>
-              <select className={inp} value={data.subjectCode} onChange={e => setData({...data, subjectCode: e.target.value})}>
+              <select className={inp} value={data.subjectCode} onChange={e => setData({ ...data, subjectCode: e.target.value })}>
                 <option value="">-- Select Subject --</option>
-                {filteredSubjects.map(s => <option key={s.code} value={s.code}>{s.code} - {s.name}</option>)}
+                {filteredSubjects.length === 0
+                  ? <option disabled>No subjects for {data.level} / {data.groupName}</option>
+                  : filteredSubjects.map(s => <option key={s.code} value={s.code}>{s.code} — {s.name}</option>)
+                }
               </select>
             </div>
             {data.testType === "CHAPTER_WISE" && (
               <div>
                 <label className="block text-xs font-bold text-slate uppercase mb-1">Chapter Name</label>
-                <input className={inp} placeholder="e.g. Chapter 4: Capital Gains" value={data.chapterName || ""} onChange={e => setData({...data, chapterName: e.target.value})} />
+                <input className={inp} placeholder="e.g. Chapter 4: Capital Gains" value={data.chapterName || ""} onChange={e => setData({ ...data, chapterName: e.target.value })} />
               </div>
             )}
           </div>
@@ -310,33 +419,29 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-bold text-slate uppercase mb-1">Duration (Mins)</label>
-                <input type="number" className={inp} value={data.durationMinutes} onChange={e => setData({...data, durationMinutes: parseInt(e.target.value) || 0})} />
+                <input type="number" className={inp} value={data.durationMinutes} onChange={e => setData({ ...data, durationMinutes: parseInt(e.target.value) || 0 })} />
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate uppercase mb-1">Total Marks</label>
-                <input type="number" className={inp} value={data.totalMarks} onChange={e => setData({...data, totalMarks: parseInt(e.target.value) || 0})} />
+                <input type="number" className={inp} value={data.totalMarks} onChange={e => setData({ ...data, totalMarks: parseInt(e.target.value) || 0 })} />
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate uppercase mb-1">Passing Marks</label>
-                <input type="number" className={inp} value={data.passingMarks} onChange={e => setData({...data, passingMarks: parseInt(e.target.value) || 0})} />
+                <input type="number" className={inp} value={data.passingMarks} onChange={e => setData({ ...data, passingMarks: parseInt(e.target.value) || 0 })} />
               </div>
             </div>
             <div className="p-4 bg-line-gray-light dark:bg-line-gray-dark/50 rounded-xl space-y-3 mt-4">
               <label className="flex items-center gap-3 cursor-pointer text-sm font-semibold text-ink-navy dark:text-paper">
-                <input type="checkbox" checked={data.shuffleQuestions} onChange={e => setData({...data, shuffleQuestions: e.target.checked})} className="w-4 h-4 text-primary-gold rounded border-slate" />
+                <input type="checkbox" checked={data.shuffleQuestions} onChange={e => setData({ ...data, shuffleQuestions: e.target.checked })} className="w-4 h-4 text-signal-emerald rounded border-slate" />
                 Shuffle Questions
               </label>
               <label className="flex items-center gap-3 cursor-pointer text-sm font-semibold text-ink-navy dark:text-paper">
-                <input type="checkbox" checked={data.shuffleOptions} onChange={e => setData({...data, shuffleOptions: e.target.checked})} className="w-4 h-4 text-primary-gold rounded border-slate" />
+                <input type="checkbox" checked={data.shuffleOptions} onChange={e => setData({ ...data, shuffleOptions: e.target.checked })} className="w-4 h-4 text-signal-emerald rounded border-slate" />
                 Shuffle Options
               </label>
             </div>
           </div>
         </div>
-      )}
-
-      {activeTab === "cases" && (
-        <CaseScenarioStudio data={data} setData={setData} inp={inp} />
       )}
 
       {activeTab === "questions" && (
@@ -346,83 +451,198 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
   );
 }
 
-function CaseScenarioStudio({ data, setData, inp }: any) {
-  const cases = data.case_scenarios || [];
+function QuestionsStudio({ data, setData, inp }: any) {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  function addCase() {
+  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        const parsed = JSON.parse(text);
+
+        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title && Array.isArray(parsed[0].questions)) {
+          const newSections = parsed.map((sec, sIdx) => ({
+            id: sec.id || `sec-${Date.now()}-${sIdx}`,
+            title: sec.title || `Section ${sIdx + 1}`,
+            questions: sec.questions.map((q: any, qIdx: number) => ({
+              id: q.id || `q-${Date.now()}-${sIdx}-${qIdx}`,
+              type: q.type || 'normal',
+              content: q.content || 'Missing content',
+              options: q.options || ['A', 'B', 'C', 'D'],
+              correct_option: q.correct_option !== undefined ? q.correct_option : 0,
+              explanation: q.explanation || '',
+              marks: q.marks || 1,
+              negative_marks: q.negative_marks || 0,
+              difficulty: q.difficulty || 'medium',
+              case_narrative: q.case_narrative || undefined
+            }))
+          }));
+          setData({ ...data, sections: [...(data.sections || []), ...newSections] });
+          alert("Successfully uploaded!");
+        } else {
+          alert("Invalid JSON format.");
+        }
+      } catch (err) {
+        alert("Failed to parse JSON file.");
+      }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function addEmptySection() {
     setData({
-      ...data, 
-      case_scenarios: [...cases, { id: `cs-temp-${Date.now()}`, narrative: "" }]
+      ...data,
+      sections: [...(data.sections || []), { id: `sec-${Date.now()}`, title: "New Section", questions: [] }]
     });
   }
 
-  function updateCase(idx: number, text: string) {
-    const newCases = [...cases];
-    newCases[idx].narrative = text;
-    setData({ ...data, case_scenarios: newCases });
+  function addQuestion(secIdx: number, type: 'normal' | 'case') {
+    const newSecs = [...data.sections];
+    if (!newSecs[secIdx].questions) newSecs[secIdx].questions = [];
+    newSecs[secIdx].questions.push({
+      id: `q-${Date.now()}`,
+      type,
+      content: "",
+      options: ["", "", "", ""],
+      correct_option: 0,
+      marks: type === 'case' ? 2 : 1,
+      negative_marks: 0,
+      difficulty: "medium",
+      ...(type === 'case' ? { case_narrative: "" } : {})
+    });
+    setData({ ...data, sections: newSecs });
   }
 
-  function deleteCase(idx: number) {
-    const newCases = [...cases];
-    newCases.splice(idx, 1);
-    setData({ ...data, case_scenarios: newCases });
+  function updateQuestion(secIdx: number, qIdx: number, field: string, value: any) {
+    const newSecs = [...data.sections];
+    newSecs[secIdx].questions[qIdx][field] = value;
+    setData({ ...data, sections: newSecs });
+  }
+
+  function addSubQuestion(secIdx: number, parentQIdx: number) {
+    const newSecs = [...data.sections];
+    if (!newSecs[secIdx].questions) newSecs[secIdx].questions = [];
+    newSecs[secIdx].questions.splice(parentQIdx + 1, 0, {
+      id: `q-${Date.now()}`,
+      type: 'case',
+      content: "",
+      options: ["", "", "", ""],
+      correct_option: 0,
+      marks: 2,
+      negative_marks: 0,
+      difficulty: "medium"
+    });
+    setData({ ...data, sections: newSecs });
+  }
+
+  function updateOption(secIdx: number, qIdx: number, optIdx: number, value: string) {
+    const newSecs = [...data.sections];
+    newSecs[secIdx].questions[qIdx].options[optIdx] = value;
+    setData({ ...data, sections: newSecs });
+  }
+
+  function deleteQuestion(secIdx: number, qIdx: number) {
+    const newSecs = [...data.sections];
+    newSecs[secIdx].questions.splice(qIdx, 1);
+    setData({ ...data, sections: newSecs });
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-slate dark:text-paper/70">Create multi-paragraph case scenarios that questions can link to.</p>
-        <button onClick={addCase} className="flex items-center gap-2 bg-ink-navy dark:bg-paper text-white dark:text-ink-navy px-4 py-2 rounded-lg font-bold text-sm">
-          <Plus className="w-4 h-4" /> Add Scenario
-        </button>
+    <div className="space-y-4 shadow-sm">
+      <div className="flex justify-between items-center pb-2 border-b border-line-gray-light dark:border-line-gray-dark">
+        <p className="text-sm text-slate dark:text-paper/70 font-semibold">Manage Sections & Inject Questions</p>
+        <div className="flex items-center gap-3">
+          <button onClick={addEmptySection} className="flex items-center gap-2 bg-line-gray-light dark:bg-line-gray-dark px-4 py-2 rounded-lg font-bold text-xs hover:opacity-80">
+            <Plus className="w-3.5 h-3.5" /> Manual Section
+          </button>
+          <input type="file" accept=".json" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+          <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 bg-ink-navy text-paper dark:bg-paper dark:text-ink-navy px-4 py-2 rounded-lg font-extrabold shadow-sm text-xs hover:opacity-90 transition-all">
+            <Upload className="w-3.5 h-3.5" /> Bulk Upload JSON
+          </button>
+        </div>
       </div>
 
-      <div className="space-y-6">
-        {cases.map((c: any, idx: number) => (
-          <div key={c.id} className="bg-white dark:bg-line-gray-dark/30 border border-line-gray-light dark:border-line-gray-dark rounded-xl p-4">
-            <div className="flex justify-between items-center mb-2">
-              <h4 className="font-bold text-primary-gold uppercase text-xs tracking-wider">Scenario #{idx + 1}</h4>
-              <button onClick={() => deleteCase(idx)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg">
-                <Trash2 className="w-4 h-4" />
-              </button>
+      <div className="space-y-4 pt-2">
+        {(!data.sections || data.sections.length === 0) ? (
+          <div className="text-center py-16 border-2 border-dashed border-line-gray-light dark:border-line-gray-dark rounded-2xl bg-white dark:bg-line-gray-dark/20">
+            <p className="text-slate dark:text-paper font-black text-lg mb-2">Paper is Currently Empty!</p>
+            <p className="text-sm text-slate/70 dark:text-paper/60 max-w-md mx-auto">Create a Manual Section or click Bulk Upload JSON to start filling it out.</p>
+          </div>
+        ) : (
+          data.sections.map((sec: any, idx: number) => (
+            <div key={sec.id} className="p-5 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/30 shadow-md">
+              <div className="flex items-center justify-between mb-4">
+                <input className="font-heading font-black text-lg bg-transparent focus:outline-none border-b border-transparent focus:border-signal-emerald text-ink-navy dark:text-paper transition w-2/3" value={sec.title} onChange={(e) => {
+                  const newSecs = [...data.sections];
+                  newSecs[idx].title = e.target.value;
+                  setData({ ...data, sections: newSecs });
+                }} />
+                <div className="flex gap-2">
+                  <button onClick={() => addQuestion(idx, 'normal')} className="px-3 py-1.5 bg-slate/10 hover:bg-slate/20 text-xs font-bold rounded-lg transition-colors">
+                    + Normal Q
+                  </button>
+                  <button onClick={() => addQuestion(idx, 'case')} className="px-3 py-1.5 bg-yellow-100 dark:bg-yellow-900/30 hover:bg-yellow-200 dark:hover:bg-yellow-900/50 text-yellow-700 dark:text-yellow-400 text-xs font-bold rounded-lg transition-colors">
+                    + Case Block
+                  </button>
+                </div>
+              </div>
+
+              {sec.questions && sec.questions.length > 0 && (
+                <div className="space-y-6">
+                  {sec.questions.map((q: any, qIdx: number) => (
+                    <div key={q.id} className="p-4 bg-white dark:bg-line-gray-dark/50 border border-line-gray-light dark:border-line-gray-dark rounded-xl space-y-4 relative group">
+
+                      <button onClick={() => deleteQuestion(idx, qIdx)} className="absolute top-3 right-3 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-red-50 dark:hover:bg-red-500/20 rounded">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`px-2 py-0.5 text-[10px] font-black uppercase tracking-widest rounded ${q.type === 'case' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-slate/20 text-slate'}`}>{q.type === 'case' ? (q.case_narrative !== undefined ? 'CASE NARRATIVE + Q1' : 'CASE SUB-QUESTION') : 'NORMAL Q'}</span>
+                        <span className="text-xs font-bold text-slate">Marks: <input type="number" step="0.5" className="w-12 bg-transparent border-b outline-none text-center" value={q.marks} onChange={e => updateQuestion(idx, qIdx, 'marks', Number(e.target.value))} /></span>
+                        <span className="text-xs font-bold text-slate">Neg: <input type="number" step="0.01" className="w-12 bg-transparent border-b outline-none text-center" value={q.negative_marks} onChange={e => updateQuestion(idx, qIdx, 'negative_marks', Number(e.target.value))} /></span>
+                      </div>
+
+                      {q.type === 'case' && q.case_narrative !== undefined && (
+                        <div className="mb-4">
+                          <label className="text-[10px] uppercase font-bold text-yellow-600 dark:text-yellow-400 mb-1 block">Case Narrative Passage</label>
+                          <textarea className={inp} rows={3} placeholder="Provide the long case study reading passage here..." value={q.case_narrative || ""} onChange={e => updateQuestion(idx, qIdx, 'case_narrative', e.target.value)} />
+
+                          <button onClick={() => addSubQuestion(idx, qIdx)} className="mt-2 text-[10px] uppercase font-black text-white bg-ink-navy dark:bg-paper dark:text-ink-navy px-3 py-1.5 rounded hover:opacity-80 transition-opacity">
+                            + Add Linked Sub-Question Below
+                          </button>
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="text-[10px] uppercase font-bold text-slate mb-1 block">Question / Sub-Question</label>
+                        <textarea className={inp} rows={2} placeholder="Type the question..." value={q.content} onChange={e => updateQuestion(idx, qIdx, 'content', e.target.value)} />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        {q.options.map((opt: string, optIdx: number) => (
+                          <div key={optIdx} className="flex items-center gap-2">
+                            <input type="radio" name={`correct-${idx}-${qIdx}`} checked={q.correct_option === optIdx} onChange={() => updateQuestion(idx, qIdx, 'correct_option', optIdx)} className="w-4 h-4 text-signal-emerald" />
+                            <input className={inp} placeholder={`Option ${optIdx + 1}`} value={opt} onChange={e => updateOption(idx, qIdx, optIdx, e.target.value)} />
+                          </div>
+                        ))}
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] uppercase font-bold text-slate mb-1 block">Explanation (Optional)</label>
+                        <input className={inp} placeholder="Why is this correct?" value={q.explanation || ""} onChange={e => updateQuestion(idx, qIdx, 'explanation', e.target.value)} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <textarea 
-              rows={5} 
-              className={inp} 
-              placeholder="Paste the full case study text here..."
-              value={c.narrative} 
-              onChange={e => updateCase(idx, e.target.value)}
-            />
-            <p className="text-xs text-slate mt-2">ID: <span className="font-mono bg-slate/10 px-1 rounded">{c.id}</span> (Link questions to this ID)</p>
-          </div>
-        ))}
-        {cases.length === 0 && (
-          <div className="text-center py-12 border-2 border-dashed border-line-gray-light dark:border-line-gray-dark rounded-2xl">
-            <p className="text-slate font-semibold mb-2">No case scenarios created</p>
-            <button onClick={addCase} className="text-primary-gold hover:underline font-semibold text-sm">Create your first scenario</button>
-          </div>
+          ))
         )}
-      </div>
-    </div>
-  );
-}
-
-function QuestionsStudio({ data, setData, inp }: any) {
-  // Simplistic representation for questions studio to keep file manageable
-  // Real implementation would have full CRUD for sections/questions and Bulk Upload
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-slate dark:text-paper/70">Manage Sections and Questions for this paper.</p>
-        <button className="flex items-center gap-2 bg-primary-gold text-ink-navy px-4 py-2 rounded-lg font-bold text-sm">
-          <Upload className="w-4 h-4" /> CSV / JSON Upload
-        </button>
-      </div>
-      
-      <div className="text-center py-12 border-2 border-dashed border-line-gray-light dark:border-line-gray-dark rounded-2xl">
-        <p className="text-slate font-semibold mb-2">Manual Question Editor & Bulk Uploader</p>
-        <p className="text-xs text-slate/70">Connects to Case Scenarios created in the previous tab.</p>
-        <p className="text-xs text-slate/70 mt-2">Will be fully integrated with `bulk_upload` parser.</p>
       </div>
     </div>
   );

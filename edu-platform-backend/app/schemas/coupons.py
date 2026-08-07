@@ -32,7 +32,8 @@ class CouponUpdateRequest(BaseModel):
 
 class ValidateCouponRequest(BaseModel):
     code: str
-    course_id: str
+    course_id: Optional[str] = None
+    cart_amount: Optional[float] = None
 
 
 class ValidateCouponResponse(BaseModel):

@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ./edu-platform-backend
+      dockerfile: Dockerfile
+    container_name: caliber_backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./edu-platform-backend/.env
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./edu-platform-frontend
+      dockerfile: Dockerfile
+    container_name: caliber_frontend
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./edu-platform-frontend/.env.local
+    environment:
+      # Will override what's in .env.local to ensure container-to-container networking if needed
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    restart: unless-stopped

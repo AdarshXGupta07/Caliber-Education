@@ -20,245 +20,30 @@ router = APIRouter(tags=["MCQ & Quizzes"])
 # ─── Default In-Memory Pricing Matrix & Bundles ─────────────────────────────
 
 DEFAULT_MCQ_SUBJECTS = [
-    # FINAL Group I
-    {
-        "id": "final-g1-fr",
-        "level": "FINAL",
-        "group_name": "Group I",
-        "name": "Financial Reporting",
-        "code": "FR",
-        "description": "Comprehensive Ind AS & case scenarios practice sets",
-        "prices": {"1_month": 150, "3_months": 300, "6_months": 400, "1_year": 500},
-        "is_active": True,
-        "sort_order": 1,
-    },
-    {
-        "id": "final-g1-afm",
-        "level": "FINAL",
-        "group_name": "Group I",
-        "name": "Advanced Financial Management",
-        "code": "AFM",
-        "description": "Portfolio management, derivatives, forex & corporate valuation",
-        "prices": {"1_month": 200, "3_months": 400, "6_months": 500, "1_year": 625},
-        "is_active": True,
-        "sort_order": 2,
-    },
-    {
-        "id": "final-g1-audit",
-        "level": "FINAL",
-        "group_name": "Group I",
-        "name": "Advanced Auditing & Professional Ethics",
-        "code": "Audit",
-        "description": "Standards on auditing, professional ethics, digital audit",
-        "prices": {"1_month": 150, "3_months": 300, "6_months": 400, "1_year": 500},
-        "is_active": True,
-        "sort_order": 3,
-    },
-    # FINAL Group II
-    {
-        "id": "final-g2-dt",
-        "level": "FINAL",
-        "group_name": "Group II",
-        "name": "Direct Tax Laws & International Taxation",
-        "code": "DT",
-        "description": "Income tax computations, transfer pricing & non-resident taxation",
-        "prices": {"1_month": 150, "3_months": 300, "6_months": 400, "1_year": 500},
-        "is_active": True,
-        "sort_order": 4,
-    },
-    {
-        "id": "final-g2-idt",
-        "level": "FINAL",
-        "group_name": "Group II",
-        "name": "Indirect Tax Laws (GST & Customs)",
-        "code": "IDT",
-        "description": "GST procedures, input tax credit, customs valuation & FTP",
-        "prices": {"1_month": 150, "3_months": 300, "6_months": 400, "1_year": 500},
-        "is_active": True,
-        "sort_order": 5,
-    },
-    {
-        "id": "final-g2-case",
-        "level": "FINAL",
-        "group_name": "Group II",
-        "name": "Law + SCMPE + IBS Case Studies",
-        "code": "Case Studies",
-        "description": "Integrated business solutions, multi-disciplinary case scenarios",
-        "prices": {"1_month": 200, "3_months": 400, "6_months": 500, "1_year": 625},
-        "is_active": True,
-        "sort_order": 6,
-    },
-    # INTERMEDIATE Group I
-    {
-        "id": "inter-g1-adv-acc",
-        "level": "INTERMEDIATE",
-        "group_name": "Group I",
-        "name": "Advanced Accounting",
-        "code": "Adv Accounting",
-        "description": "Accounting standards, consolidation, buyback, internal reconstruction",
-        "prices": {"1_month": 99, "3_months": 200, "6_months": 300, "1_year": 400},
-        "is_active": True,
-        "sort_order": 7,
-    },
-    {
-        "id": "inter-g1-corp-law",
-        "level": "INTERMEDIATE",
-        "group_name": "Group I",
-        "name": "Corporate and Other Laws",
-        "code": "Corp Laws",
-        "description": "Company Law, LLP Act, interpretation of statutes, General Clauses Act",
-        "prices": {"1_month": 99, "3_months": 200, "6_months": 300, "1_year": 400},
-        "is_active": True,
-        "sort_order": 8,
-    },
-    {
-        "id": "inter-g1-tax",
-        "level": "INTERMEDIATE",
-        "group_name": "Group I",
-        "name": "Taxation",
-        "code": "Taxation",
-        "description": "Income Tax law & Goods and Services Tax basics",
-        "prices": {"1_month": 99, "3_months": 200, "6_months": 300, "1_year": 400},
-        "is_active": True,
-        "sort_order": 9,
-    },
-    # INTERMEDIATE Group II
-    {
-        "id": "inter-g2-cost",
-        "level": "INTERMEDIATE",
-        "group_name": "Group II",
-        "name": "Cost and Management Accounting",
-        "code": "Costing",
-        "description": "Standard costing, marginal costing, budget controls & ABC",
-        "prices": {"1_month": 99, "3_months": 200, "6_months": 300, "1_year": 400},
-        "is_active": True,
-        "sort_order": 10,
-    },
-    {
-        "id": "inter-g2-audit",
-        "level": "INTERMEDIATE",
-        "group_name": "Group II",
-        "name": "Auditing and Ethics",
-        "code": "Audit & Ethics",
-        "description": "Nature of audit, audit documentation, internal controls & risk assessment",
-        "prices": {"1_month": 99, "3_months": 200, "6_months": 300, "1_year": 400},
-        "is_active": True,
-        "sort_order": 11,
-    },
-    {
-        "id": "inter-g2-fm-sm",
-        "level": "INTERMEDIATE",
-        "group_name": "Group II",
-        "name": "Financial Management & Strategic Management",
-        "code": "FM & SM",
-        "description": "Capital structure, leverage, strategic analysis & implementation",
-        "prices": {"1_month": 99, "3_months": 200, "6_months": 300, "1_year": 400},
-        "is_active": True,
-        "sort_order": 12,
-    },
-    # FOUNDATIONS
-    {
-        "id": "found-quant",
-        "level": "FOUNDATIONS",
-        "group_name": "All",
-        "name": "Quantitative Aptitude",
-        "code": "Quant",
-        "description": "Business mathematics, logical reasoning, and statistics",
-        "prices": {"1_month": 200, "3_months": 400, "6_months": 500, "1_year": 625},
-        "is_active": True,
-        "sort_order": 13,
-    },
-    {
-        "id": "found-eco",
-        "level": "FOUNDATIONS",
-        "group_name": "All",
-        "name": "Business Economics",
-        "code": "Economics",
-        "description": "Microeconomics, macroeconomics, national income & business cycles",
-        "prices": {"1_month": 150, "3_months": 300, "6_months": 400, "1_year": 500},
-        "is_active": True,
-        "sort_order": 14,
-    },
+    {'id': 'final-g1-fr', 'level': 'FINAL', 'name': 'FR', 'code': 'FR', 'description': 'Financial Reporting', 'prices': {'1_month': 150, '3_months': 300, '6_months': 400, '1_year': 500}, 'isPopular': True, 'group_name': 'Group I', 'is_active': True, 'sort_order': 1},
+    {'id': 'final-g1-afm', 'level': 'FINAL', 'name': 'AFM', 'code': 'AFM', 'description': 'Advanced Financial Management', 'prices': {'1_month': 200, '3_months': 400, '6_months': 500, '1_year': 625}, 'isPopular': False, 'group_name': 'Group I', 'is_active': True, 'sort_order': 1},
+    {'id': 'final-g1-audit', 'level': 'FINAL', 'name': 'Audit', 'code': 'Audit', 'description': 'Advanced Auditing & Professional Ethics', 'prices': {'1_month': 150, '3_months': 300, '6_months': 400, '1_year': 500}, 'isPopular': False, 'group_name': 'Group I', 'is_active': True, 'sort_order': 1},
+    {'id': 'final-g2-dt', 'level': 'FINAL', 'name': 'DT', 'code': 'DT', 'description': 'Direct Tax Laws', 'prices': {'1_month': 150, '3_months': 300, '6_months': 400, '1_year': 500}, 'isPopular': True, 'group_name': 'Group II', 'is_active': True, 'sort_order': 1},
+    {'id': 'final-g2-idt', 'level': 'FINAL', 'name': 'IDT', 'code': 'IDT', 'description': 'Indirect Tax Laws', 'prices': {'1_month': 150, '3_months': 300, '6_months': 400, '1_year': 500}, 'isPopular': False, 'group_name': 'Group II', 'is_active': True, 'sort_order': 1},
+    {'id': 'final-g2-case', 'level': 'FINAL', 'name': 'Law+SCMPE+IBS Case Studies', 'code': 'Law+SCMPE+IBS', 'description': 'Integrated Case Studies', 'prices': {'1_month': 200, '3_months': 400, '6_months': 500, '1_year': 625}, 'isPopular': False, 'group_name': 'Group II', 'is_active': True, 'sort_order': 1},
+    {'id': 'inter-g1-adv-acc', 'level': 'INTERMEDIATE', 'name': 'Adv Accounting', 'code': 'Adv Accounting', 'description': 'Advanced Accounting', 'prices': {'1_month': 99, '3_months': 200, '6_months': 300, '1_year': 400}, 'isPopular': True, 'group_name': 'Group I', 'is_active': True, 'sort_order': 1},
+    {'id': 'inter-g1-corp-law', 'level': 'INTERMEDIATE', 'name': 'Corporate and Other Laws', 'code': 'Corp Laws', 'description': 'Corporate and Other Laws', 'prices': {'1_month': 99, '3_months': 200, '6_months': 300, '1_year': 400}, 'isPopular': False, 'group_name': 'Group I', 'is_active': True, 'sort_order': 1},
+    {'id': 'inter-g1-tax', 'level': 'INTERMEDIATE', 'name': 'Taxation', 'code': 'Taxation', 'description': 'Taxation', 'prices': {'1_month': 99, '3_months': 200, '6_months': 300, '1_year': 400}, 'isPopular': False, 'group_name': 'Group I', 'is_active': True, 'sort_order': 1},
+    {'id': 'inter-g2-cost', 'level': 'INTERMEDIATE', 'name': 'Cost and Management Accounting', 'code': 'Costing', 'description': 'Cost and Management Accounting', 'prices': {'1_month': 99, '3_months': 200, '6_months': 300, '1_year': 400}, 'isPopular': False, 'group_name': 'Group II', 'is_active': True, 'sort_order': 1},
+    {'id': 'inter-g2-audit', 'level': 'INTERMEDIATE', 'name': 'Auditing and Ethics', 'code': 'Audit & Ethics', 'description': 'Auditing and Ethics', 'prices': {'1_month': 99, '3_months': 200, '6_months': 300, '1_year': 400}, 'isPopular': False, 'group_name': 'Group II', 'is_active': True, 'sort_order': 1},
+    {'id': 'inter-g2-fm-sm', 'level': 'INTERMEDIATE', 'name': 'Financial Management and Strategic Management', 'code': 'FM & SM', 'description': 'Financial Management and Strategic Management', 'prices': {'1_month': 99, '3_months': 200, '6_months': 300, '1_year': 400}, 'isPopular': False, 'group_name': 'Group II', 'is_active': True, 'sort_order': 1},
+    {'id': 'found-quant', 'level': 'FOUNDATIONS', 'name': 'Quantitative Aptitude', 'code': 'Quant', 'description': 'Quantitative Aptitude', 'prices': {'1_month': 200, '3_months': 400, '6_months': 500, '1_year': 625}, 'isPopular': True, 'group_name': 'All', 'is_active': True, 'sort_order': 1},
+    {'id': 'found-eco', 'level': 'FOUNDATIONS', 'name': 'Business Economics', 'code': 'Economics', 'description': 'Business Economics', 'prices': {'1_month': 150, '3_months': 300, '6_months': 400, '1_year': 500}, 'isPopular': False, 'group_name': 'All', 'is_active': True, 'sort_order': 1},
 ]
 
 DEFAULT_MCQ_BUNDLES = [
-    {
-        "id": "final-bundle-g1",
-        "title": "Group I All Subjects",
-        "level": "FINAL",
-        "group_name": "Group I",
-        "subject_ids": ["final-g1-fr", "final-g1-afm", "final-g1-audit"],
-        "prices": {"1_month": 450, "3_months": 900, "6_months": 1200, "1_year": 1500},
-        "is_custom": False,
-        "is_active": True,
-        "badge": "Group 1 Bundle",
-    },
-    {
-        "id": "final-bundle-g2",
-        "title": "Group II All Subjects",
-        "level": "FINAL",
-        "group_name": "Group II",
-        "subject_ids": ["final-g2-dt", "final-g2-idt", "final-g2-case"],
-        "prices": {"1_month": 450, "3_months": 900, "6_months": 1200, "1_year": 1500},
-        "is_custom": False,
-        "is_active": True,
-        "badge": "Group 2 Bundle",
-    },
-    {
-        "id": "final-bundle-both",
-        "title": "Both Groups Complete Super Bundle",
-        "level": "FINAL",
-        "group_name": "Both Groups",
-        "subject_ids": ["final-g1-fr", "final-g1-afm", "final-g1-audit", "final-g2-dt", "final-g2-idt", "final-g2-case"],
-        "prices": {"1_month": 900, "3_months": 1800, "6_months": 2400, "1_year": 3000},
-        "is_custom": False,
-        "is_active": True,
-        "badge": "Super Bundle",
-    },
-    {
-        "id": "inter-bundle-g1",
-        "title": "Group I All Subjects",
-        "level": "INTERMEDIATE",
-        "group_name": "Group I",
-        "subject_ids": ["inter-g1-adv-acc", "inter-g1-corp-law", "inter-g1-tax"],
-        "prices": {"1_month": 250, "3_months": 500, "6_months": 800, "1_year": 1000},
-        "is_custom": False,
-        "is_active": True,
-        "badge": "Group 1 Bundle",
-    },
-    {
-        "id": "inter-bundle-g2",
-        "title": "Group II All Subjects",
-        "level": "INTERMEDIATE",
-        "group_name": "Group II",
-        "subject_ids": ["inter-g2-cost", "inter-g2-audit", "inter-g2-fm-sm"],
-        "prices": {"1_month": 250, "3_months": 500, "6_months": 800, "1_year": 1000},
-        "is_custom": False,
-        "is_active": True,
-        "badge": "Group 2 Bundle",
-    },
-    {
-        "id": "inter-bundle-both",
-        "title": "Both Groups Complete Super Bundle",
-        "level": "INTERMEDIATE",
-        "group_name": "Both Groups",
-        "subject_ids": ["inter-g1-adv-acc", "inter-g1-corp-law", "inter-g1-tax", "inter-g2-cost", "inter-g2-audit", "inter-g2-fm-sm"],
-        "prices": {"1_month": 500, "3_months": 1000, "6_months": 1600, "1_year": 2000},
-        "is_custom": False,
-        "is_active": True,
-        "badge": "Super Bundle",
-    },
-    {
-        "id": "found-bundle-all",
-        "title": "All Subjects Foundation Bundle",
-        "level": "FOUNDATIONS",
-        "group_name": "All",
-        "subject_ids": ["found-quant", "found-eco"],
-        "prices": {"1_month": 300, "3_months": 650, "6_months": 800, "1_year": 1000},
-        "is_custom": False,
-        "is_active": True,
-        "badge": "Complete Bundle",
-    },
+    {'id': 'final-bundle-g1', 'title': 'Group I - All Subjects', 'level': 'FINAL', 'prices': {'1_month': 450, '3_months': 900, '6_months': 1200, '1_year': 1500}, 'badge': 'Group I', 'group_name': 'Group I', 'subject_ids': ['final-g1-fr', 'final-g1-afm', 'final-g1-audit'], 'is_active': True, 'is_custom': False},
+    {'id': 'final-bundle-g2', 'title': 'Group II - All Subjects', 'level': 'FINAL', 'prices': {'1_month': 450, '3_months': 900, '6_months': 1200, '1_year': 1500}, 'badge': 'Group II', 'group_name': 'Group II', 'subject_ids': ['final-g2-dt', 'final-g2-idt', 'final-g2-case'], 'is_active': True, 'is_custom': False},
+    {'id': 'final-bundle-both', 'title': 'Both Groups', 'level': 'FINAL', 'prices': {'1_month': 900, '3_months': 1800, '6_months': 2400, '1_year': 3000}, 'badge': 'Super Saver', 'group_name': 'Both Groups', 'subject_ids': ['final-g1-fr', 'final-g1-afm', 'final-g1-audit', 'final-g2-dt', 'final-g2-idt', 'final-g2-case'], 'is_active': True, 'is_custom': False},
+    {'id': 'inter-bundle-g1', 'title': 'Group I - All Subjects', 'level': 'INTERMEDIATE', 'prices': {'1_month': 250, '3_months': 500, '6_months': 800, '1_year': 1000}, 'badge': 'Group I', 'group_name': 'Group I', 'subject_ids': ['inter-g1-adv-acc', 'inter-g1-corp-law', 'inter-g1-tax'], 'is_active': True, 'is_custom': False},
+    {'id': 'inter-bundle-g2', 'title': 'Group II - All Subjects', 'level': 'INTERMEDIATE', 'prices': {'1_month': 250, '3_months': 500, '6_months': 800, '1_year': 1000}, 'badge': 'Group II', 'group_name': 'Group II', 'subject_ids': ['inter-g2-cost', 'inter-g2-audit', 'inter-g2-fm-sm'], 'is_active': True, 'is_custom': False},
+    {'id': 'inter-bundle-both', 'title': 'Both Groups', 'level': 'INTERMEDIATE', 'prices': {'1_month': 500, '3_months': 1000, '6_months': 1600, '1_year': 2000}, 'badge': 'Super Saver', 'group_name': 'Both Groups', 'subject_ids': ['inter-g1-adv-acc', 'inter-g1-corp-law', 'inter-g1-tax', 'inter-g2-cost', 'inter-g2-audit', 'inter-g2-fm-sm'], 'is_active': True, 'is_custom': False},
+    {'id': 'found-bundle-all', 'title': 'All Subjects', 'level': 'FOUNDATIONS', 'prices': {'1_month': 300, '3_months': 650, '6_months': 800, '1_year': 1000}, 'badge': 'Complete Bundle', 'group_name': 'All', 'subject_ids': ['found-quant', 'found-eco'], 'is_active': True, 'is_custom': False},
 ]
 
 
@@ -427,7 +212,7 @@ async def get_mcq_packages(db: Client = Depends(get_db)):
     subjects = [_format_subject_for_client(s) for s in raw_subjects]
     bundles = [_format_bundle_for_client(b) for b in raw_bundles]
     
-    levels = ["FINAL", "INTERMEDIATE", "FOUNDATIONS"]
+    levels = ["FINAL", "INTERMEDIATE", "FOUNDATION"]
     res_levels = {}
     for lvl in levels:
         lvl_subs = [s for s in subjects if s["level"].upper() == lvl]
@@ -455,21 +240,62 @@ async def calculate_price(body: CalculateMCQPriceRequest, db: Client = Depends(g
 
 @router.get("/api/mcq-series")
 async def list_series(db: Client = Depends(get_db)):
-    result = db.table("mcq_series").select("*").execute()
-    return result.data or []
+    # Map MCQ Subjects to act like "Series" so the student dashboard renders them automatically
+    sub_res = db.table("mcq_subjects").select("*").execute()
+    subjects = sub_res.data or []
+    series_list = []
+    for s in subjects:
+        series_list.append({
+            "id": s["code"], # Using code as the route ID (e.g., /mcq/FR)
+            "title": s["name"],
+            "subject": f"{s['level']} • {s.get('group_name', '')}",
+            "description": s.get("description", ""),
+            "isLocked": False, # Unlock the folder, the tests inside will lock based on purchase
+            "is_locked": False, 
+        })
+    return series_list
 
 
 @router.get("/api/mcq-series/{series_id}")
 async def get_series(series_id: str, db: Client = Depends(get_db)):
-    series = db.table("mcq_series").select("*").eq("id", series_id).single().execute()
-    if not series.data:
-        raise HTTPException(status_code=404, detail="Series not found")
+    # series_id is actually the subject_code (e.g. FR, AFM)
+    subject = db.table("mcq_subjects").select("*").eq("code", series_id).execute()
+    if not subject.data:
+        # Fallback to returning an empty wrapper if not found but requested
+        subject_data = {"id": series_id, "name": series_id, "level": "Subject", "description": ""}
+    else:
+        subject_data = subject.data[0]
 
-    sets = db.table("mcq_papers").select(
-        "id, title, is_locked, price, description, subject, topper_score, topper_total_time_seconds"
-    ).eq("series_id", series_id).execute()
+    series_mock = {
+        "id": series_id,
+        "title": subject_data.get("name", series_id),
+        "subject": subject_data.get("level", ""),
+        "description": subject_data.get("description", ""),
+        "is_locked": False,
+        "price": 0
+    }
 
-    return {**series.data, "sets": sets.data or []}
+    # Fetch all papers belonging to this subject
+    papers = db.table("mcq_papers").select("*").eq("subject_code", series_id).execute()
+    formatted_sets = []
+    for p in (papers.data or []):
+        # We need to map the new schema to the old format expected by mcq/[seriesId]/page.tsx
+        sections_data = db.table("exam_sections").select("id").eq("paper_id", p["id"]).execute()
+        
+        formatted_sets.append({
+            "id": p["id"],
+            "title": p.get("title", "Test"),
+            "description": p.get("test_type", "FULL_SUBJECT").replace("_", " "),
+            "subject": p.get("level", ""),
+            "is_locked": True if p.get("status") != "published" else False, # Keep locked if draft
+            "price": p.get("price", 0),
+            "sections": sections_data.data or []
+        })
+
+    # Sort so published ones show up unlocked at the top
+    formatted_sets.sort(key=lambda x: x["is_locked"])
+    
+    return {**series_mock, "sets": formatted_sets}
 
 
 # ─── Student MCQ Catalog ─────────────────────────────────────────────────────
@@ -533,12 +359,64 @@ async def get_mcq_catalog(
 
 # ─── Quiz Sets / Attempts / Analytics ────────────────────────────────────────
 
+async def _has_mcq_paper_access(current_user: dict, paper: dict, db: Client) -> bool:
+    """Admins/mentors can always preview. Students need an active mcq_enrollments
+    row for the paper's subject (matched via mcq_subjects.code + level -> its
+    storefront id, which is what mcq_enrollments.subject_code stores)."""
+    if current_user.get("role") in {"admin", "super_admin", "mentor"}:
+        return True
+
+    subject_code = (paper.get("subject_code") or "").strip()
+    level = (paper.get("level") or "").strip().upper()
+    if not subject_code or not level:
+        return False
+
+    sub_res = (
+        db.table("mcq_subjects")
+        .select("id")
+        .ilike("code", subject_code)
+        .eq("level", level)
+        .execute()
+    )
+    if not sub_res.data:
+        return False
+    storefront_id = sub_res.data[0]["id"]
+
+    now = datetime.now(timezone.utc)
+    enroll_res = (
+        db.table("mcq_enrollments")
+        .select("access_until")
+        .eq("user_id", current_user["id"])
+        .eq("subject_code", storefront_id)
+        .execute()
+    )
+    for row in (enroll_res.data or []):
+        expiry = row.get("access_until")
+        if not expiry:
+            return True  # lifetime access
+        try:
+            expiry_dt = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+            if expiry_dt.tzinfo is None:
+                expiry_dt = expiry_dt.replace(tzinfo=timezone.utc)
+            if expiry_dt > now:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 @router.get("/api/quizzes/{set_id}")
-async def get_quiz(set_id: str, db: Client = Depends(get_db)):
-    """Returns full quiz with sections, case studies, questions, and test guidelines."""
+async def get_quiz(set_id: str, current_user: dict = Depends(get_current_user), db: Client = Depends(get_db)):
+    """Returns quiz sections/questions for attempting. Never includes the answer
+    key — correct_option/explanation are only returned by submit-v2, after the
+    student has actually submitted an attempt."""
     mcq_set = db.table("mcq_papers").select("*").eq("id", set_id).single().execute()
     if not mcq_set.data:
         raise HTTPException(status_code=404, detail="Quiz set not found")
+
+    if mcq_set.data.get("is_locked"):
+        if not await _has_mcq_paper_access(current_user, mcq_set.data, db):
+            raise HTTPException(status_code=403, detail="Purchase this subject to access this test")
 
     # Fetch sections
     sections_res = db.table("exam_sections").select("*").eq("paper_id", set_id).execute()
@@ -557,16 +435,16 @@ async def get_quiz(set_id: str, db: Client = Depends(get_db)):
             mapped_questions.append({
                 "id": q["id"],
                 "type": q.get("type", "normal"),
-                "caseText": q.get("case_text", ""),
-                "caseId": q.get("case_id"),
+                "case_narrative": q.get("case_narrative", ""),
                 "chapterTag": q.get("chapter_tag"),
                 "difficulty": q.get("difficulty", "medium"),
                 "marks": float(q.get("marks") or 1.0),
                 "negativeMarks": float(q.get("negative_marks") or 0.0),
                 "text": q.get("content", ""),
                 "options": q["options"],
-                "correctOptionIndex": q.get("correct_option", 0),
-                "explanation": q.get("explanation", "")
+                # NOTE: correct_option/explanation intentionally omitted — this
+                # endpoint is used to render the quiz-taking UI, before grading.
+                # The answer key is only ever returned by submit-v2's response.
             })
         enriched_sections.append({
             "id": section["id"],
@@ -852,7 +730,7 @@ async def submit_attempt(
 @router.get("/api/quizzes/{set_id}/leaderboard")
 async def get_leaderboard(
     set_id: str,
-    current_user: dict | None = Depends(lambda: None),
+    current_user: dict = Depends(get_current_user),
     db: Client = Depends(get_db),
 ):
     """Returns top 20 attempts sorted by score desc, then time asc."""
@@ -874,11 +752,91 @@ async def get_leaderboard(
             name = email.split("@")[0]
         except Exception:
             name = "Student"
-            
+
         board.append({
             "name": name,
             "score": a["score"],
             "time": a["elapsed_seconds"],
-            "isUser": False,
+            "isUser": a["user_id"] == current_user["id"],
         })
     return board
+
+@router.get("/api/mcq/my-subjects")
+async def get_my_subjects(current_user: dict = Depends(get_current_user), db: Client = Depends(get_db)):
+    from datetime import datetime, timezone
+    
+    # Fetch all enrollments for this user, ordered by access_until descending
+    # Use created_at as tiebreaker — NULLs in access_until handled manually
+    enrollments = db.table("mcq_enrollments")\
+        .select("subject_code, access_until, level, created_at")\
+        .eq("user_id", current_user["id"])\
+        .execute()
+    
+    now = datetime.now(timezone.utc)
+    valid_map = {}   # subject_code -> access_until string (ISO) or None
+    level_map = {}
+    
+    for e in (enrollments.data or []):
+        code = e["subject_code"]
+        expiry_str = e.get("access_until")
+        
+        if expiry_str:
+            try:
+                expiry_date = datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
+                if expiry_date.tzinfo is None:
+                    expiry_date = expiry_date.replace(tzinfo=timezone.utc)
+                if now > expiry_date:
+                    continue  # expired — skip
+            except ValueError:
+                pass
+        
+        # Keep the entry with the latest (furthest future) access_until per subject
+        if code not in valid_map:
+            valid_map[code] = expiry_str
+            level_map[code] = e.get("level", "FINAL")
+        else:
+            # Replace if this entry has a later expiry
+            existing = valid_map[code]
+            if expiry_str and existing:
+                try:
+                    dt_new = datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
+                    if dt_new.tzinfo is None: dt_new = dt_new.replace(tzinfo=timezone.utc)
+                    dt_old = datetime.fromisoformat(existing.replace("Z", "+00:00"))
+                    if dt_old.tzinfo is None: dt_old = dt_old.replace(tzinfo=timezone.utc)
+                    if dt_new > dt_old:
+                        valid_map[code] = expiry_str
+                        level_map[code] = e.get("level", "FINAL")
+                except ValueError:
+                    pass
+            elif expiry_str and not existing:
+                # Replace NULL with a real date
+                valid_map[code] = expiry_str
+                level_map[code] = e.get("level", "FINAL")
+        
+    enrolled_codes = list(valid_map.keys())
+    if not enrolled_codes:
+        return []
+    
+    # enrolled_codes are subject IDs like "final-afm" — match against mcq_subjects.id
+    sub_res = db.table("mcq_subjects").select("*").in_("id", enrolled_codes).execute()
+    subjects = sub_res.data or []
+    
+    series_list = []
+    for s in subjects:
+        sub_id = s["id"]  # "final-afm" — mcq_subjects PK, only used to look up access_until
+        access_until = valid_map.get(sub_id)
+        series_list.append({
+            # /api/mcq-series/{id} (the route this "id" feeds) matches on
+            # mcq_subjects.code / mcq_papers.subject_code, e.g. "AFM" — not
+            # the long mcq_subjects.id. Routing with sub_id here silently
+            # fell back to an empty placeholder every time.
+            "id": s["code"],        # used for routing /mcq/AFM
+            "code": s["code"],      # "AFM" — short display code
+            "title": s["name"],
+            "subject": f"{s['level']} \u2022 {s.get('group_name', '')}",
+            "description": s.get("description", ""),
+            "isLocked": False,
+            "is_locked": False,
+            "access_until": access_until,
+        })
+    return series_list

@@ -85,7 +85,7 @@ export default function AboutPage() {
                       onClick={() => { if (f.image) setZoomedImage(f.image); }}
                     >
                       {f.image ? (
-                        <Image src={f.image} alt={f.name} fill className="object-cover contrast-125 brightness-105" />
+                        <Image src={f.image} alt={f.name} fill className="object-cover" quality={95} />
                       ) : (
                         f.initials
                       )}
@@ -124,7 +124,7 @@ export default function AboutPage() {
                       onClick={() => { if (m.image) setZoomedImage(m.image); }}
                     >
                       {m.image ? (
-                        <Image src={m.image} alt={m.name} fill className="object-cover contrast-125 brightness-105" />
+                        <Image src={m.image} alt={m.name} fill className="object-cover" quality={95} />
                       ) : (
                         m.initials
                       )}
@@ -248,7 +248,7 @@ export default function AboutPage() {
             exit={{ opacity: 0, scale: 0.95 }}
             className="relative max-w-7xl max-h-[90vh] w-full h-full flex items-center justify-center"
           >
-            <Image src={zoomedImage} alt="Zoomed view" fill className="object-contain drop-shadow-2xl contrast-125 brightness-105" />
+            <Image src={zoomedImage} alt="Zoomed view" fill className="object-contain drop-shadow-2xl" quality={95} />
           </motion.div>
           <button
             onClick={() => setZoomedImage(null)}

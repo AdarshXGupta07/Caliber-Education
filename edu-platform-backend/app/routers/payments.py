@@ -1,18 +1,24 @@
 import hashlib
 import hmac
+import json
+import os
 from datetime import datetime, timezone
 from typing import Optional
+import uuid
 
 import razorpay
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from supabase import Client
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.dependencies import get_current_user
+from app.core.email import send_email
+from app.core.limiter import limiter
+from app.dependencies import get_current_user, require_admin
 from app.schemas.payments import CreateOrderRequest, VerifyPaymentRequest
 from app.routers.mcq import calculate_mcq_cart
+from app.routers.test_series import calculate_test_series_cart
 
 router = APIRouter(prefix="/api/payments", tags=["Payments"])
 
@@ -21,6 +27,12 @@ class CreateMCQOrderRequest(BaseModel):
     level: str
     subjectIds: list[str]
     duration: str = "1_month"
+    couponCode: Optional[str] = None
+
+
+class CreateTestSeriesOrderRequest(BaseModel):
+    level: str
+    subjectIds: list[str]
     couponCode: Optional[str] = None
 
 
@@ -62,10 +74,12 @@ def _resolve_coupon(db: Client, coupon_code: Optional[str], course_id: str, user
     now = datetime.now(timezone.utc)
     if coupon.get("valid_from"):
         vf = datetime.fromisoformat(coupon["valid_from"].replace("Z", "+00:00"))
+        if vf.tzinfo is None: vf = vf.replace(tzinfo=timezone.utc)
         if now < vf:
             return None, 0.0, None, 0.0
     if coupon.get("valid_until"):
         vu = datetime.fromisoformat(coupon["valid_until"].replace("Z", "+00:00"))
+        if vu.tzinfo is None: vu = vu.replace(tzinfo=timezone.utc)
         if now > vu:
             return None, 0.0, None, 0.0
 
@@ -154,24 +168,72 @@ def _record_coupon_usage(
 
 
 @router.post("/create-order", status_code=201)
+@limiter.limit("10/minute")
 async def create_order(
+    request: Request,
     body: CreateOrderRequest,
     current_user: dict = Depends(get_current_user),
     db: Client = Depends(get_db),
 ):
     settings = get_settings()
 
-    # Fetch course price and metadata
-    course = db.table("courses").select("id, title, price, whatsapp_link").eq("id", body.courseId).single().execute()
-    if not course.data:
-        raise HTTPException(status_code=404, detail="Course not found")
+    # Check if a bundle was mapped. course_bundles.id is a uuid column, but
+    # regular course purchases pass a text slug — querying it with a
+    # non-uuid string throws a Postgres cast error (22P02), not an empty
+    # result, so this only queries when courseId actually looks like a uuid.
+    bundle = None
+    if body.courseId:
+        try:
+            uuid.UUID(body.courseId)
+            bundle = db.table("course_bundles").select("id, title, price, course_ids").eq("id", body.courseId).execute()
+        except ValueError:
+            bundle = None
 
-    price = float(course.data.get("price") or 0)
-    original_price = price
+    is_bundle = False
+    original_price = 0.0
+
+    if bundle and bundle.data:
+        is_bundle = True
+        price = float(bundle.data[0].get("price") or 0)
+        original_price = price
+        active_course_id = body.courseId
+    elif body.courseIds and len(body.courseIds) > 0:
+        # Custom checkout cart with multiple item IDs directly passed from BundleBuilder.
+        # Check for an exact match against a real bundle first — mirrors BundleBuilder's
+        # own exact-match check client-side, so a bundle selection is priced (and, via
+        # active_course_id being the bundle's own id, entitlement-granted) as a bundle
+        # rather than as the raw sum of individual course prices. Never trusts a
+        # client-sent bundle id for pricing — resolved server-side from the selection.
+        selected_set = set(body.courseIds)
+        bundles_res = db.table("course_bundles").select("id, title, price, course_ids").execute()
+        matched_bundle = next(
+            (b for b in (bundles_res.data or []) if set(b.get("course_ids") or []) == selected_set),
+            None,
+        )
+        if matched_bundle:
+            is_bundle = True
+            price = float(matched_bundle.get("price") or 0)
+            original_price = price
+            active_course_id = matched_bundle["id"]
+        else:
+            courses_res = db.table("courses").select("id, title, price").in_("id", body.courseIds).execute()
+            if not courses_res.data:
+                raise HTTPException(status_code=404, detail="Items not found in database")
+            price = sum(float(c.get("price") or 0) for c in courses_res.data)
+            original_price = price
+            active_course_id = ",".join(body.courseIds)
+    else:
+        # Fetch standard course price and metadata
+        course = db.table("courses").select("id, title, price, whatsapp_link").eq("id", body.courseId).single().execute()
+        if not course.data:
+            raise HTTPException(status_code=404, detail="Item not found")
+        price = float(course.data.get("price") or 0)
+        original_price = price
+        active_course_id = body.courseId
 
     # Resolve coupon server-side
     coupon, discount_amount, affiliate_id, commission_amount = _resolve_coupon(
-        db, body.couponCode, body.courseId, current_user["id"], price
+        db, body.couponCode, active_course_id, current_user["id"], price
     )
 
     final_price = max(0, price - discount_amount)
@@ -183,9 +245,9 @@ async def create_order(
             order = rzp.order.create({
                 "amount": amount_paise,
                 "currency": "INR",
-                "receipt": f"course_{body.courseId[:20]}",
+                "receipt": f"course_{active_course_id[:20]}",
                 "notes": {
-                    "course_id": body.courseId,
+                    "course_id": active_course_id,
                     "user_id": current_user["id"],
                     "coupon_code": coupon["code"] if coupon else "",
                 },
@@ -195,13 +257,12 @@ async def create_order(
             raise HTTPException(status_code=502, detail=f"Razorpay error: {str(e)}")
     else:
         # Stub for dev/testing without Razorpay keys
-        import uuid
         order_id = f"order_DEMO_{uuid.uuid4().hex[:12].upper()}"
 
     # Insert pending payment record with coupon metadata
     db.table("payments").insert({
         "user_id": current_user["id"],
-        "course_id": body.courseId,
+        "course_id": active_course_id,
         "amount": final_price,
         "original_amount": original_price,
         "discount_amount": discount_amount,
@@ -223,6 +284,32 @@ async def create_order(
     }
 
 
+@router.post("/mock-confirm")
+async def mock_confirm(
+    body: VerifyPaymentRequest,
+    current_user: dict = Depends(require_admin),
+    db: Client = Depends(get_db),
+):
+    settings = get_settings()
+    if os.getenv("ALLOW_TEST_PAYMENTS", "false").lower() != "true":
+        raise HTTPException(status_code=403, detail="Test payments are currently disabled.")
+
+    # Check what type of order it is
+    payment = (
+        db.table("payments")
+        .select("*")
+        .eq("razorpay_order_id", body.razorpay_order_id)
+        .eq("user_id", current_user["id"])
+        .single()
+        .execute()
+    )
+    if not payment.data:
+        raise HTTPException(status_code=404, detail="Test payment record not found")
+
+    # Call the exact same logic as verify_payment mapping
+    return await _apply_course_grant_or_extend(db, payment.data, current_user["id"], current_user.get("email"), body.razorpay_payment_id, "mock_signature", settings)
+
+
 @router.post("/verify-payment")
 async def verify_payment(
     body: VerifyPaymentRequest,
@@ -232,16 +319,22 @@ async def verify_payment(
     settings = get_settings()
     user_id = current_user["id"]
 
-    # Verify HMAC-SHA256 signature
+    # Verify HMAC-SHA256 signature natively with Razorpay SDK. Always runs
+    # whenever a secret is configured — there is no client-controlled way to
+    # skip this (a prior "pay_TEST_"/"order_DEMO_" prefix bypass here let any
+    # caller forge those IDs and get free enrollment; removed).
     if settings.razorpay_key_secret:
-        msg = f"{body.razorpay_order_id}|{body.razorpay_payment_id}".encode()
-        expected = hmac.new(
-            settings.razorpay_key_secret.encode(), msg, hashlib.sha256
-        ).hexdigest()
-        if not hmac.compare_digest(expected, body.razorpay_signature):
+        rzp = _get_razorpay_client()
+        try:
+            params_dict = {
+                'razorpay_order_id': body.razorpay_order_id,
+                'razorpay_payment_id': body.razorpay_payment_id,
+                'razorpay_signature': body.razorpay_signature
+            }
+            rzp.utility.verify_payment_signature(params_dict)
+        except Exception as e:
             raise HTTPException(status_code=400, detail="Invalid payment signature")
 
-    # Find the pending payment row
     payment = (
         db.table("payments")
         .select("*")
@@ -253,85 +346,163 @@ async def verify_payment(
     if not payment.data:
         raise HTTPException(status_code=404, detail="Payment record not found")
 
-    course_id = payment.data["course_id"]
-    payment_id = payment.data["id"]
+    return await _apply_course_grant_or_extend(db, payment.data, user_id, current_user.get("email"), body.razorpay_payment_id, body.razorpay_signature, settings)
 
-    # Mark payment approved
+
+async def _apply_course_grant_or_extend(db: Client, payment_data: dict, user_id: str, email: str, rzp_pay_id: str, rzp_sig: str, settings):
+    course_id = payment_data["course_id"]
+    payment_id = payment_data["id"]
+
     db.table("payments").update({
         "status": "approved",
-        "razorpay_payment_id": body.razorpay_payment_id,
-        "razorpay_signature": body.razorpay_signature,
+        "razorpay_payment_id": rzp_pay_id,
+        "razorpay_signature": rzp_sig,
     }).eq("id", payment_id).execute()
 
-    # Record coupon usage if a coupon was applied
-    coupon_id = payment.data.get("coupon_id")
+    coupon_id = payment_data.get("coupon_id")
     if coupon_id:
         coupon_row = db.table("coupons").select("*").eq("id", coupon_id).single().execute()
         if coupon_row.data:
             _record_coupon_usage(
                 db, coupon_row.data, user_id, payment_id,
-                float(payment.data.get("discount_amount") or 0),
-                payment.data.get("affiliate_id"),
-                float(payment.data.get("commission_amount") or 0),
+                float(payment_data.get("discount_amount") or 0),
+                payment_data.get("affiliate_id"),
+                float(payment_data.get("commission_amount") or 0),
             )
 
-    # Enroll student
-    db.table("enrollments").upsert({
-        "user_id": user_id,
-        "course_id": course_id,
-        "added_by": "purchase",
-        "purchased_at": datetime.now(timezone.utc).isoformat(),
-    }).execute()
+    bundle = None
+    try:
+        uuid.UUID(course_id)
+        bundle = db.table("course_bundles").select("id, course_ids").eq("id", course_id).execute()
+    except ValueError:
+        bundle = None
+    custom_whatsapp_links = []
 
-    # Fetch actual whatsapp overriding link to attach to email
-    course_data = db.table("courses").select("whatsapp_link").eq("id", course_id).single().execute()
-    custom_whatsapp = course_data.data.get("whatsapp_link") if course_data.data else None
+    course_titles = []
 
-    # Automatically trigger WhatsApp Group invite email
-    if settings.sendgrid_api_key:
-        import httpx
+    if (bundle and bundle.data) or "," in course_id:
+        c_ids = bundle.data[0].get("course_ids", []) if (bundle and bundle.data) else course_id.split(",")
+        for cid in c_ids:
+            if not cid.strip(): continue
+            _atomic_extend_course(db, user_id, cid.strip(), payment_id)
+            cdata = db.table("courses").select("whatsapp_link, title").eq("id", cid.strip()).execute()
+            if cdata.data and len(cdata.data) > 0:
+                if cdata.data[0].get("whatsapp_link"):
+                    custom_whatsapp_links.append(cdata.data[0].get("whatsapp_link"))
+                if cdata.data[0].get("title"):
+                    course_titles.append(cdata.data[0].get("title"))
+            _apply_course_extras(db, user_id, cid.strip(), payment_id)
+    else:
+        _atomic_extend_course(db, user_id, course_id, payment_id)
+        course_data = db.table("courses").select("whatsapp_link, title").eq("id", course_id).single().execute()
+        if course_data.data:
+            if course_data.data.get("whatsapp_link"):
+                custom_whatsapp_links.append(course_data.data.get("whatsapp_link"))
+            if course_data.data.get("title"):
+                course_titles.append(course_data.data.get("title"))
+        _apply_course_extras(db, user_id, course_id, payment_id)
+
+    if email:
         try:
-            if custom_whatsapp:
-                whatsapp_link = custom_whatsapp
-            else:
-                parts = course_id.split("-")
-                identifier = parts[1].upper() if len(parts) > 1 else course_id.upper()
-                whatsapp_link = f"https://chat.whatsapp.com/invite/CA-{identifier}-2026"
-            
-            html_content = f"""
-            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b;">
-                <h2 style="color: #0f172a;">Welcome to the Course! 🎉</h2>
-                <p>Your payment was successful. As requested, here is your direct, auto-generated WhatsApp Group invite link:</p>
-                <div style="margin: 24px 0;">
-                    <a href="{whatsapp_link}" style="background-color: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
-                        Join WhatsApp Group
-                    </a>
-                </div>
-                <p style="font-size: 12px; color: #64748b; margin-top: 24px;">Note: The group requires admin approval. Click the link to request access, and an admin will let you in shortly.</p>
-            </div>
-            """
-            
-            async with httpx.AsyncClient() as client:
-                await client.post(
-                    "https://api.sendgrid.com/v3/mail/send",
-                    headers={"Authorization": f"Bearer {settings.sendgrid_api_key}"},
-                    json={
-                        "personalizations": [{"to": [{"email": current_user["email"]}]}],
-                        "from": {"email": settings.sendgrid_from_email},
-                        "subject": "Your Course WhatsApp Invite Link",
-                        "content": [{"type": "text/html", "value": html_content}]
-                    }
-                )
+            names = ", ".join(course_titles) if course_titles else "your course"
+            await send_email(
+                to_email=email,
+                subject="Payment confirmed — Caliber Education",
+                html_content=(
+                    f"<p>Hi,</p><p>Your payment has been verified and you now have access to "
+                    f"<strong>{names}</strong>.</p><p>Log in to your dashboard to get started.</p>"
+                ),
+            )
         except Exception as e:
-            print(f"Failed to auto-trigger whatsapp link email: {e}")
+            print(f"[EMAIL] Failed to send course purchase confirmation to {email}: {e}")
 
-    return {"success": True, "message": "Payment verified, enrollment completed, and automated WhatsApp invite scheduled."}
+    return {"success": True, "message": "Payment verified and enrollment completed/extended."}
+
+
+def _apply_course_extras(db: Client, user_id: str, course_id: str, payment_id: str):
+    """After a course purchase, grant anything bundled with it:
+      • test-series subjects attached by the admin to that course
+      • a 1:1 session booking, if the course is a 1:1 product
+    Both are no-ops for plain WhatsApp/mentorship courses."""
+    try:
+        c = db.table("courses").select(
+            "bundled_test_series_subject_ids, is_one_on_one"
+        ).eq("id", course_id).single().execute()
+    except Exception as e:
+        print(f"[EXTRAS] Could not read course {course_id}: {e}")
+        return
+    if not c.data:
+        return
+
+    # 1. Bundled test series
+    for sub_id in (c.data.get("bundled_test_series_subject_ids") or []):
+        sub_id = (sub_id or "").strip()
+        if not sub_id:
+            continue
+        try:
+            existing = (
+                db.table("test_series_enrollments").select("id")
+                .eq("user_id", user_id).eq("subject_id", sub_id).execute()
+            )
+            if not existing.data:
+                db.table("test_series_enrollments").insert({
+                    "user_id": user_id,
+                    "subject_id": sub_id,
+                    "payment_id": payment_id,
+                    "access_until": None,
+                }).execute()
+                print(f"[EXTRAS] Granted bundled test series {sub_id} to {user_id}")
+        except Exception as e:
+            print(f"[EXTRAS] Failed granting test series {sub_id}: {e}")
+
+    # 2. 1:1 session booking — created unassigned; admin picks the mentor next
+    if c.data.get("is_one_on_one"):
+        try:
+            already = (
+                db.table("session_bookings").select("id")
+                .eq("payment_id", payment_id).execute()
+            )
+            if not already.data:
+                db.table("session_bookings").insert({
+                    "student_id": user_id,
+                    "course_id": course_id,
+                    "payment_id": payment_id,
+                    "status": "pending_assignment",
+                }).execute()
+                print(f"[EXTRAS] Created 1:1 session booking for {user_id} ({course_id})")
+        except Exception as e:
+            print(f"[EXTRAS] Failed creating session booking: {e}")
+
+
+def _atomic_extend_course(db: Client, user_id: str, course_id: str, payment_id: str):
+    base_duration = 90
+    course_data = db.table("courses").select("duration").eq("id", course_id).execute()
+    if course_data.data and len(course_data.data) > 0:
+        d = course_data.data[0].get("duration") or ""
+        if "6 month" in d.lower(): base_duration = 180
+        elif "1 year" in d.lower(): base_duration = 365
+    
+    try:
+        res = db.rpc("grant_or_extend_enrollment", {
+            "p_user_id": user_id,
+            "p_course_id": course_id,
+            "p_duration_days": base_duration
+        }).execute()
+        new_expiry = res.data
+        
+        db.table("payments").update({
+            "notes": f"Item extended/granted. New Expiry: {new_expiry}"
+        }).eq("id", payment_id).execute()
+    except Exception as e:
+        print(f"Error atomic extending {course_id} for {user_id}:", e)
 
 
 # ─── MCQ Package Payment Endpoints ──────────────────────────────────────────
 
 @router.post("/create-mcq-order", status_code=201)
+@limiter.limit("10/minute")
 async def create_mcq_order(
+    request: Request,
     body: CreateMCQOrderRequest,
     current_user: dict = Depends(get_current_user),
     db: Client = Depends(get_db),
@@ -370,16 +541,17 @@ async def create_mcq_order(
             })
             order_id = order["id"]
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Razorpay error: {str(e)}")
+            print(f"Razorpay API Error during MCQ order, falling back to dummy ID: {e}")
+            order_id = f"order_MCQ_FALLBACK_{uuid.uuid4().hex[:8].upper()}"
     else:
-        import uuid
         order_id = f"order_MCQ_{uuid.uuid4().hex[:12].upper()}"
 
     # Record payment row
     try:
         db.table("payments").insert({
             "user_id": current_user["id"],
-            "course_id": f"mcq-{body.level.lower()}-{body.duration}",
+            "course_id": None, # Cannot use course_id due to foreign key constraint to courses table
+            "utr_number": f"mcq-{body.level.lower()}-{body.duration}|" + ",".join(body.subjectIds) + f"|{uuid.uuid4().hex[:8]}",
             "amount": final_price,
             "original_amount": base_price,
             "discount_amount": base_price - final_price,
@@ -387,9 +559,10 @@ async def create_mcq_order(
             "affiliate_id": affiliate_id,
             "commission_amount": commission_amount,
             "status": "pending",
-            "razorpay_order_id": order_id,
+            "razorpay_order_id": order_id
         }).execute()
-    except Exception:
+    except Exception as e:
+        print("Error inserting payment:", e)
         pass
 
     return {
@@ -406,6 +579,18 @@ async def create_mcq_order(
     }
 
 
+@router.post("/mock-confirm-mcq")
+async def mock_confirm_mcq(
+    body: VerifyPaymentRequest,
+    current_user: dict = Depends(require_admin),
+    db: Client = Depends(get_db),
+):
+    if os.getenv("ALLOW_TEST_PAYMENTS", "false").lower() != "true":
+        raise HTTPException(status_code=403, detail="Test payments are currently disabled.")
+
+    return await _apply_mcq_grant(db, body.razorpay_order_id, current_user["id"], "pay_TEST_MCQ", "mock_signature")
+
+
 @router.post("/verify-mcq-payment")
 async def verify_mcq_payment(
     body: VerifyPaymentRequest,
@@ -413,34 +598,383 @@ async def verify_mcq_payment(
     db: Client = Depends(get_db),
 ):
     settings = get_settings()
-    user_id = current_user["id"]
 
-    if settings.razorpay_key_secret and not body.razorpay_order_id.startswith("order_MCQ_"):
-        msg = f"{body.razorpay_order_id}|{body.razorpay_payment_id}".encode()
-        expected = hmac.new(
-            settings.razorpay_key_secret.encode(), msg, hashlib.sha256
-        ).hexdigest()
-        if not hmac.compare_digest(expected, body.razorpay_signature):
+    # Always verified whenever a secret is configured — see verify-payment's
+    # comment above; same client-controlled bypass removed here.
+    if settings.razorpay_key_secret:
+        rzp = _get_razorpay_client()
+        try:
+            params_dict = {
+                'razorpay_order_id': body.razorpay_order_id,
+                'razorpay_payment_id': body.razorpay_payment_id,
+                'razorpay_signature': body.razorpay_signature
+            }
+            rzp.utility.verify_payment_signature(params_dict)
+        except Exception as e:
             raise HTTPException(status_code=400, detail="Invalid payment signature")
 
-    # Mark payment approved if exists
+    return await _apply_mcq_grant(db, body.razorpay_order_id, current_user["id"], body.razorpay_payment_id, body.razorpay_signature)
+
+
+async def _apply_mcq_grant(db: Client, order_id: str, user_id: str, rzp_pay: str, rzp_sig: str):
+
     try:
-        payment = db.table("payments").select("*").eq("razorpay_order_id", body.razorpay_order_id).single().execute()
-        if payment.data:
-            payment_id = payment.data["id"]
+        payment = db.table("payments").select("*").eq("razorpay_order_id", order_id).execute()
+        if payment.data and len(payment.data) > 0:
+            payment_row = payment.data[0]
+            payment_id = payment_row["id"]
             db.table("payments").update({
                 "status": "approved",
-                "razorpay_payment_id": body.razorpay_payment_id,
-                "razorpay_signature": body.razorpay_signature,
+                "razorpay_payment_id": rzp_pay,
+                "razorpay_signature": rzp_sig,
             }).eq("id", payment_id).execute()
-    except Exception:
+
+            coupon_id = payment_row.get("coupon_id")
+            if coupon_id:
+                coupon_row = db.table("coupons").select("*").eq("id", coupon_id).single().execute()
+                if coupon_row.data:
+                    _record_coupon_usage(
+                        db, coupon_row.data, user_id, payment_id,
+                        float(payment_row.get("discount_amount") or 0),
+                        payment_row.get("affiliate_id"),
+                        float(payment_row.get("commission_amount") or 0),
+                    )
+
+            # Now, grant the actual mcq_enrollments based on the subjects packed into utr_number (separated by |)!
+            packed_course_id = payment_row.get("utr_number", "")
+            if "|" in packed_course_id:
+                base_c_id, raw_subjects = packed_course_id.split("|", 1)
+                if "|" in raw_subjects:
+                    raw_subjects = raw_subjects.split("|")[0]
+                duration_str = base_c_id.split("-")[-1] if "-" in base_c_id else "1_month"
+                
+                from datetime import datetime, timezone, timedelta
+                now = datetime.now(timezone.utc)
+                expiry = None
+                if duration_str == "1_month": expiry = (now + timedelta(days=30)).isoformat()
+                elif duration_str == "3_months": expiry = (now + timedelta(days=90)).isoformat()
+                elif duration_str == "6_months": expiry = (now + timedelta(days=180)).isoformat()
+                elif duration_str == "1_year": expiry = (now + timedelta(days=365)).isoformat()
+
+                subjects_list = raw_subjects.split(",")
+                for sub_id in subjects_list:
+                    sub_id = sub_id.strip()
+                    print(f"[MCQ ENROLL] Processing subject: {sub_id}, duration: {duration_str}")
+                    
+                    # Check if enrollment already exists
+                    existing_enroll = db.table("mcq_enrollments")\
+                        .select("id, access_until")\
+                        .eq("user_id", user_id)\
+                        .eq("subject_code", sub_id)\
+                        .execute()
+
+                    if existing_enroll.data:
+                        # Pick the row with the latest access_until
+                        def parse_dt(s):
+                            if not s: return datetime(2000, 1, 1, tzinfo=timezone.utc)
+                            try:
+                                dt = datetime.fromisoformat(s.replace("Z", "+00:00").replace(" ", "T"))
+                                if dt.tzinfo is None:
+                                    dt = dt.replace(tzinfo=timezone.utc)
+                                return dt
+                            except ValueError:
+                                return datetime(2000, 1, 1, tzinfo=timezone.utc)
+
+                        best_row = max(existing_enroll.data, key=lambda r: parse_dt(r.get("access_until")))
+                        existing_row_id = best_row["id"]
+                        existing_expiry_str = best_row.get("access_until")
+                        print(f"[MCQ ENROLL] Existing expiry for {sub_id}: {existing_expiry_str}")
+                        
+                        existing_expiry = parse_dt(existing_expiry_str)
+                        # Stack extension on top of existing expiry (if future) or from now (if expired)
+                        base_date = existing_expiry if existing_expiry > now else now
+
+                        if duration_str == "1_month":    new_expiry = (base_date + timedelta(days=30)).isoformat()
+                        elif duration_str == "3_months": new_expiry = (base_date + timedelta(days=90)).isoformat()
+                        elif duration_str == "6_months": new_expiry = (base_date + timedelta(days=180)).isoformat()
+                        elif duration_str == "1_year":   new_expiry = (base_date + timedelta(days=365)).isoformat()
+                        else:                            new_expiry = (base_date + timedelta(days=30)).isoformat()
+
+                        print(f"[MCQ ENROLL] Extending {sub_id}: {existing_expiry_str} + {duration_str} → {new_expiry}")
+
+                        # Update ONLY the latest row for this subject
+                        db.table("mcq_enrollments").update({
+                            "access_until": new_expiry,
+                            "payment_id": payment_id,
+                        }).eq("id", existing_row_id).execute()
+                    else:
+                        print(f"[MCQ ENROLL] New enrollment for {sub_id}, expiry: {expiry}")
+                        db.table("mcq_enrollments").insert({
+                            "user_id": user_id,
+                            "subject_code": sub_id,
+                            "level": base_c_id.split("-")[1].upper() if len(base_c_id.split("-")) > 1 else "FINAL",
+                            "payment_id": payment_id,
+                            "access_until": expiry
+                        }).execute()
+    except Exception as e:
+        print("Error verifying MCQ Payment:", e)
         pass
+
+    try:
+        profile = db.table("profiles").select("email").eq("id", user_id).single().execute()
+        to_email = profile.data.get("email") if profile.data else None
+        if to_email:
+            await send_email(
+                to_email=to_email,
+                subject="Payment confirmed — Caliber Education",
+                html_content=(
+                    "<p>Hi,</p><p>Your MCQ test series payment has been verified and your selected "
+                    "subjects are now unlocked.</p><p>Log in to your dashboard to get started.</p>"
+                ),
+            )
+    except Exception as e:
+        print(f"[EMAIL] Failed to send MCQ purchase confirmation for user {user_id}: {e}")
 
     return {
         "success": True,
         "message": "MCQ package activated successfully! All selected test series are now unlocked.",
     }
 
+
+# ─── Test Series Payment Endpoints ───────────────────────────────────────────
+# Same shape as the MCQ package endpoints above, minus the duration dimension
+# (test series is a one-time purchase, not a subscription).
+
+@router.post("/create-test-series-order", status_code=201)
+@limiter.limit("10/minute")
+async def create_test_series_order(
+    request: Request,
+    body: CreateTestSeriesOrderRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Client = Depends(get_db),
+):
+    settings = get_settings()
+    if not body.subjectIds:
+        raise HTTPException(status_code=400, detail="No subjects selected")
+
+    calc = calculate_test_series_cart(body.level, body.subjectIds, db)
+    if not calc.get("purchasable", True):
+        raise HTTPException(
+            status_code=400,
+            detail="Some of these papers aren't sold individually — select a full Group or add the rest of that group's papers.",
+        )
+    base_price = calc["real_total_price"]
+    discounted_price = calc["discounted_price"]
+
+    coupon, coupon_discount, affiliate_id, commission_amount = _resolve_coupon(
+        db, body.couponCode, f"testseries-{body.level.lower()}", current_user["id"], discounted_price
+    )
+    final_price = max(0.0, discounted_price - coupon_discount)
+    amount_paise = int(final_price * 100)
+
+    rzp = _get_razorpay_client()
+    if rzp:
+        try:
+            order = rzp.order.create({
+                "amount": amount_paise,
+                "currency": "INR",
+                "receipt": f"ts_{body.level[:5].lower()}",
+                "notes": {
+                    "type": "test_series",
+                    "level": body.level,
+                    "subject_ids": ",".join(body.subjectIds),
+                    "user_id": current_user["id"],
+                    "bundle_id": calc.get("applied_bundle_id") or "",
+                },
+            })
+            order_id = order["id"]
+        except Exception as e:
+            print(f"Razorpay API Error during test series order, falling back to dummy ID: {e}")
+            order_id = f"order_TS_FALLBACK_{uuid.uuid4().hex[:8].upper()}"
+    else:
+        order_id = f"order_TS_{uuid.uuid4().hex[:12].upper()}"
+
+    try:
+        db.table("payments").insert({
+            "user_id": current_user["id"],
+            "course_id": None,
+            "utr_number": f"testseries-{body.level.lower()}|" + ",".join(body.subjectIds) + f"|{uuid.uuid4().hex[:8]}",
+            "amount": final_price,
+            "original_amount": base_price,
+            "discount_amount": base_price - final_price,
+            "coupon_id": coupon["id"] if coupon else None,
+            "affiliate_id": affiliate_id,
+            "commission_amount": commission_amount,
+            "status": "pending",
+            "razorpay_order_id": order_id,
+        }).execute()
+    except Exception as e:
+        print("Error inserting test series payment:", e)
+
+    return {
+        "orderId": order_id,
+        "amount": amount_paise,
+        "currency": "INR",
+        "key": settings.razorpay_key_id or "rzp_test_demo",
+        "originalAmount": int(base_price * 100),
+        "discountAmount": int((base_price - final_price) * 100),
+        "finalAmount": int(final_price * 100),
+        "savingsAmount": calc["savings_amount"],
+        "appliedBundle": calc.get("applied_bundle_title"),
+        "couponCode": coupon["code"] if coupon else None,
+    }
+
+
+@router.post("/mock-confirm-test-series")
+async def mock_confirm_test_series(
+    body: VerifyPaymentRequest,
+    current_user: dict = Depends(require_admin),
+    db: Client = Depends(get_db),
+):
+    if os.getenv("ALLOW_TEST_PAYMENTS", "false").lower() != "true":
+        raise HTTPException(status_code=403, detail="Test payments are currently disabled.")
+    return await _apply_test_series_grant(db, body.razorpay_order_id, current_user["id"], "pay_TEST_TS", "mock_signature")
+
+
+@router.post("/verify-test-series-payment")
+async def verify_test_series_payment(
+    body: VerifyPaymentRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Client = Depends(get_db),
+):
+    settings = get_settings()
+    if settings.razorpay_key_secret:
+        rzp = _get_razorpay_client()
+        try:
+            params_dict = {
+                'razorpay_order_id': body.razorpay_order_id,
+                'razorpay_payment_id': body.razorpay_payment_id,
+                'razorpay_signature': body.razorpay_signature
+            }
+            rzp.utility.verify_payment_signature(params_dict)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail="Invalid payment signature")
+
+    return await _apply_test_series_grant(db, body.razorpay_order_id, current_user["id"], body.razorpay_payment_id, body.razorpay_signature)
+
+
+async def _apply_test_series_grant(db: Client, order_id: str, user_id: str, rzp_pay: str, rzp_sig: str):
+    try:
+        payment = db.table("payments").select("*").eq("razorpay_order_id", order_id).execute()
+        if not payment.data:
+            return {"success": True, "message": "No matching payment found"}
+
+        payment_row = payment.data[0]
+        payment_id = payment_row["id"]
+        db.table("payments").update({
+            "status": "approved",
+            "razorpay_payment_id": rzp_pay,
+            "razorpay_signature": rzp_sig,
+        }).eq("id", payment_id).execute()
+
+        coupon_id = payment_row.get("coupon_id")
+        if coupon_id:
+            coupon_row = db.table("coupons").select("*").eq("id", coupon_id).single().execute()
+            if coupon_row.data:
+                _record_coupon_usage(
+                    db, coupon_row.data, user_id, payment_id,
+                    float(payment_row.get("discount_amount") or 0),
+                    payment_row.get("affiliate_id"),
+                    float(payment_row.get("commission_amount") or 0),
+                )
+
+        packed = payment_row.get("utr_number", "")
+        if packed.startswith("testseries-") and "|" in packed:
+            subjects_list = packed.split("|", 2)[1].split(",")
+            for sub_id in subjects_list:
+                sub_id = sub_id.strip()
+                if not sub_id:
+                    continue
+                existing = (
+                    db.table("test_series_enrollments")
+                    .select("id")
+                    .eq("user_id", user_id)
+                    .eq("subject_id", sub_id)
+                    .execute()
+                )
+                if existing.data:
+                    db.table("test_series_enrollments").update({
+                        "payment_id": payment_id,
+                    }).eq("id", existing.data[0]["id"]).execute()
+                else:
+                    db.table("test_series_enrollments").insert({
+                        "user_id": user_id,
+                        "subject_id": sub_id,
+                        "payment_id": payment_id,
+                        "access_until": None,  # lifetime — one-time purchase
+                    }).execute()
+    except Exception as e:
+        print("Error verifying test series payment:", e)
+
+    try:
+        profile = db.table("profiles").select("email").eq("id", user_id).single().execute()
+        to_email = profile.data.get("email") if profile.data else None
+        if to_email:
+            await send_email(
+                to_email=to_email,
+                subject="Payment confirmed — Caliber Education",
+                html_content=(
+                    "<p>Hi,</p><p>Your test series payment has been verified and your purchased "
+                    "subjects are now unlocked.</p><p>Log in to your dashboard to get started.</p>"
+                ),
+            )
+    except Exception as e:
+        print(f"[EMAIL] Failed to send test series purchase confirmation for user {user_id}: {e}")
+
+    return {
+        "success": True,
+        "message": "Test series activated! Your purchased subjects are now unlocked.",
+    }
+
+
+# ─── Razorpay Webhook (authoritative confirmation path) ─────────────────────
+# Configure this URL + a webhook secret in the Razorpay dashboard (Settings ->
+# Webhooks), subscribed to "payment.captured". This is the source of truth
+# for entitlement grants independent of whether the client's browser stayed
+# open long enough to call /verify-payment itself.
+
+@router.post("/webhook")
+async def razorpay_webhook(request: Request, db: Client = Depends(get_db)):
+    webhook_secret = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
+    if not webhook_secret:
+        raise HTTPException(status_code=503, detail="Webhook not configured")
+
+    body_bytes = await request.body()
+    signature = request.headers.get("X-Razorpay-Signature", "")
+    expected = hmac.new(webhook_secret.encode(), body_bytes, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+
+    payload = json.loads(body_bytes)
+    if payload.get("event") != "payment.captured":
+        return {"success": True, "ignored": payload.get("event")}
+
+    entity = payload["payload"]["payment"]["entity"]
+    order_id = entity.get("order_id")
+    rzp_payment_id = entity.get("id")
+
+    payment = db.table("payments").select("*").eq("razorpay_order_id", order_id).execute()
+    if not payment.data:
+        return {"success": True, "note": "no matching payment row for this order"}
+    payment_row = payment.data[0]
+
+    if payment_row.get("status") == "approved":
+        return {"success": True, "note": "already processed"}  # idempotent — safe to retry/redeliver
+
+    utr = payment_row.get("utr_number") or ""
+    is_mcq = payment_row.get("course_id") is None and utr.startswith("mcq-")
+    is_test_series = payment_row.get("course_id") is None and utr.startswith("testseries-")
+    if is_mcq:
+        await _apply_mcq_grant(db, order_id, payment_row["user_id"], rzp_payment_id, "webhook_verified")
+    elif is_test_series:
+        await _apply_test_series_grant(db, order_id, payment_row["user_id"], rzp_payment_id, "webhook_verified")
+    else:
+        settings = get_settings()
+        user_res = db.table("profiles").select("email").eq("id", payment_row["user_id"]).single().execute()
+        email = user_res.data.get("email") if user_res.data else None
+        await _apply_course_grant_or_extend(db, payment_row, payment_row["user_id"], email, rzp_payment_id, "webhook_verified", settings)
+
+    return {"success": True}
 
 
 # ─── Manual UTR Payment Path ──────────────────────────────────────────────────

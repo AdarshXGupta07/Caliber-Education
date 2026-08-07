@@ -71,11 +71,18 @@ function ConfirmProvider({ children }: { children: React.ReactNode }) {
 }
 
 // ─── Root ────────────────────────────────────────────────────────────────
+const ADMIN_PANEL_ROLES = new Set(["admin", "super_admin", "mentor"]);
+
 export default function AdminPage() {
-  const { user, isAuthenticated, toggleRole } = useAuth();
+  const { user, isAuthenticated, isMounted } = useAuth();
   const router = useRouter();
-  useEffect(() => { if (!isAuthenticated) router.push("/login"); }, [isAuthenticated, router]);
-  if (!isAuthenticated || !user) {
+  useEffect(() => {
+    // Wait for AuthContext to finish reading localStorage before deciding
+    // to redirect — otherwise a hard refresh on /admin bounces a logged-in
+    // admin to /login because `user` starts null on every fresh mount.
+    if (isMounted && !isAuthenticated) router.push("/login");
+  }, [isMounted, isAuthenticated, router]);
+  if (!isMounted || !isAuthenticated || !user) {
     return (
       <div className="fixed inset-0 z-[100] flex items-center justify-center bg-paper/40 dark:bg-ink-navy/40 backdrop-blur-md transition-all duration-500">
         <div className="flex flex-col items-center gap-4">
@@ -87,7 +94,11 @@ export default function AdminPage() {
       </div>
     );
   }
-  if (user.role !== "admin") return <AccessDenied onToggle={toggleRole} />;
+  // Role comes only from the backend-verified JWT — there is no client-side
+  // way to grant yourself access. Every admin API call is re-checked
+  // server-side regardless, this is just what decides whether to render the
+  // panel UI at all.
+  if (!ADMIN_PANEL_ROLES.has(user.role)) return <AccessDenied />;
   return (
     <ConfirmProvider>
       <AdminDashboard />
@@ -95,7 +106,7 @@ export default function AdminPage() {
   );
 }
 
-function AccessDenied({ onToggle }: { onToggle: () => void }) {
+function AccessDenied() {
   return (
     <div className="pt-16 min-h-screen flex items-center justify-center px-4">
       <motion.div initial={{ opacity: 0, scale: 0.92 }} animate={{ opacity: 1, scale: 1 }} className="max-w-sm w-full text-center space-y-6">
@@ -104,11 +115,8 @@ function AccessDenied({ onToggle }: { onToggle: () => void }) {
         </div>
         <div>
           <h2 className="font-heading font-bold text-2xl text-ink-navy dark:text-paper">Access Denied</h2>
-          <p className="text-sm text-slate dark:text-paper/60 mt-2 leading-relaxed">Enable Admin Mode from your dashboard to access this page.</p>
+          <p className="text-sm text-slate dark:text-paper/60 mt-2 leading-relaxed">This account doesn't have admin or mentor access. Contact a super admin if you believe this is a mistake.</p>
         </div>
-        <button onClick={onToggle} className="w-full flex items-center justify-center gap-2 py-3 bg-alert-coral text-white font-bold rounded-xl hover:bg-alert-coral/90 transition-colors">
-          <Shield className="w-4 h-4" /> Enable Admin Mode
-        </button>
       </motion.div>
     </div>
   );
@@ -123,124 +131,119 @@ interface PendingEvaluation {
   testTitle: string;
   submittedAt: string;
   studentFiles: string[];
+  status?: string;
+  marksAwarded?: number | null;
+  remarks?: string | null;
+  checkedFileUrl?: string | null;
+  evaluatedAt?: string | null;
 }
 
 function EvaluationsTab() {
   const [pending, setPending] = useState<PendingEvaluation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [reviewing, setReviewing] = useState<PendingEvaluation | null>(null);
   const [marks, setMarks] = useState("");
   const [remarks, setRemarks] = useState("");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [submittingReview, setSubmittingReview] = useState(false);
+  const [reviewError, setReviewError] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"pending" | "reviewed">("pending");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchPendingSubmissions = async () => {
-      setLoading(true);
-      try {
-        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-        const token = localStorage.getItem("caliber_jwt") || "";
-        const res = await fetch(`${apiURL}/api/admin/submissions/pending`, {
-          headers: { "Authorization": `Bearer ${token}` }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setPending(data.submissions || data);
-        } else {
-          throw new Error("Unable to fetch submissions");
-        }
-      } catch (err) {
-        console.warn("Loading mock pending evaluations roster");
-        const defaultMock = [
-          {
-            id: "sub-2",
-            studentEmail: "student@caliber.com",
-            studentName: "Aditya Jain",
-            testTitle: "Advanced Financial Reporting Test",
-            submittedAt: "2026-07-28T09:00:00Z",
-            studentFiles: ["FR_consolidation_sheets.pdf", "FR_working_notes.jpg"]
-          },
-          {
-            id: "sub-3",
-            studentEmail: "tester@gmail.com",
-            studentName: "Karan Gupta",
-            testTitle: "Corporate Law Assessment",
-            submittedAt: "2026-07-29T11:45:00Z",
-            studentFiles: ["CorpLaw_Answers_Draft1.pdf"]
-          }
-        ];
-        const saved = localStorage.getItem("caliber_admin_pending_evaluations");
-        if (saved) {
-          setPending(JSON.parse(saved));
-        } else {
-          setPending(defaultMock);
-          localStorage.setItem("caliber_admin_pending_evaluations", JSON.stringify(defaultMock));
-        }
-      } finally {
-        setLoading(false);
+  const api = process.env.NEXT_PUBLIC_API_URL || "";
+  const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem("caliber_jwt") || ""}` });
+
+  async function fetchPendingSubmissions() {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const res = await fetch(`${api}/api/admin/submissions/pending?status=${statusFilter}`, { headers: authHeaders() });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const data = await res.json();
+      setPending(data.submissions || data || []);
+    } catch (err) {
+      setPending([]);
+      setLoadError("Couldn't load submissions. Check your connection and try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void fetchPendingSubmissions(); }, [statusFilter]);
+
+  async function handleDelete(id: string) {
+    if (!window.confirm("Permanently delete this submission and its evaluation record? This cannot be undone.")) return;
+    setDeletingId(id);
+    try {
+      const res = await fetch(`${api}/api/admin/submissions/${id}`, { method: "DELETE", headers: authHeaders() });
+      if (res.ok) {
+        setPending((prev) => prev.filter((p) => p.id !== id));
+      } else {
+        alert("Failed to delete. Please try again.");
       }
-    };
-    fetchPendingSubmissions();
-  }, []);
+    } catch {
+      alert("Failed to delete. Please try again.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   const handleReviewSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reviewing) return;
     setSubmittingReview(true);
+    setReviewError("");
 
     try {
-      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-      const token = localStorage.getItem("caliber_jwt") || "";
-
       const formData = new FormData();
       formData.append("marks", marks);
       formData.append("remarks", remarks);
-      if (uploadedFile) {
-        formData.append("checkedFile", uploadedFile);
-      }
+      if (uploadedFile) formData.append("checkedFile", uploadedFile);
 
-      const res = await fetch(`${apiURL}/api/admin/submissions/${reviewing.id}/review`, {
+      const res = await fetch(`${api}/api/admin/submissions/${reviewing.id}/review`, {
         method: "POST",
-        headers: { "Authorization": `Bearer ${token}` },
-        body: formData
+        headers: authHeaders(),
+        body: formData,
       });
 
       if (res.ok) {
-        setPending(prev => prev.filter(p => p.id !== reviewing.id));
+        setPending((prev) => prev.filter((p) => p.id !== reviewing.id));
+        setReviewing(null);
+        setMarks("");
+        setRemarks("");
+        setUploadedFile(null);
       } else {
-        throw new Error("Review submission endpoint rejected evaluation payload");
+        const d = await res.json().catch(() => ({}));
+        setReviewError(d.detail || "Failed to submit the review. Please try again.");
       }
-    } catch (err) {
-      console.warn("Review submission completed locally");
-      const updatedPending = pending.filter(p => p.id !== reviewing.id);
-      setPending(updatedPending);
-      localStorage.setItem("caliber_admin_pending_evaluations", JSON.stringify(updatedPending));
-
-      const studentSubs = JSON.parse(localStorage.getItem("caliber_submissions_tests") || "[]");
-      const targetSub = studentSubs.find((s: any) => s.id === reviewing.id || s.testId === "t1");
-      if (targetSub) {
-        targetSub.status = "reviewed";
-        targetSub.marksAwarded = Number(marks);
-        targetSub.remarks = remarks;
-        targetSub.checkedCopyLink = uploadedFile ? `/files/${uploadedFile.name}` : "https://caliber.education/downloads/checked-copy-demo.pdf";
-      }
-      localStorage.setItem("caliber_submissions_tests", JSON.stringify(studentSubs));
+    } catch {
+      setReviewError("Failed to submit the review. Please try again.");
     } finally {
       setSubmittingReview(false);
-      setReviewing(null);
-      setMarks("");
-      setRemarks("");
-      setUploadedFile(null);
     }
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center flex-wrap gap-3">
         <div>
           <h2 className="font-heading font-extrabold text-lg text-ink-navy dark:text-paper">Paper Evaluations</h2>
           <p className="text-xs text-slate dark:text-paper/50">Assess student mocks and upload evaluated papers.</p>
         </div>
+        {!reviewing && (
+          <div className="flex gap-1.5 p-1 bg-line-gray-light/50 dark:bg-line-gray-dark/50 rounded-lg">
+            {(["pending", "reviewed"] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
+                className={`px-3.5 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-md transition-all ${statusFilter === s ? "bg-white dark:bg-line-gray-dark text-ink-navy dark:text-paper shadow-sm" : "text-slate dark:text-paper/50 hover:text-ink-navy dark:hover:text-paper"}`}
+              >
+                {s === "pending" ? "Pending" : "Reviewed"}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {reviewing ? (
@@ -257,18 +260,26 @@ function EvaluationsTab() {
           <div className="space-y-3">
             <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase">Student Answer Sheets</p>
             <div className="flex flex-wrap gap-2">
-              {reviewing.studentFiles.map(file => (
+              {reviewing.studentFiles.length === 0 && (
+                <p className="text-xs text-slate dark:text-paper/50">No files were uploaded with this submission.</p>
+              )}
+              {reviewing.studentFiles.map((file, i) => (
                 <a
                   key={file}
-                  href={`#download-${file}`}
+                  href={file}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="px-3 py-1.5 border border-line-gray-light dark:border-line-gray-dark rounded bg-paper dark:bg-line-gray-dark/65 hover:opacity-85 text-xs text-ink-navy dark:text-paper font-medium flex items-center gap-1.5"
-                  onClick={() => alert(`Downloading student copy: ${file}`)}
                 >
-                  📄 {file}
+                  📄 Answer sheet {i + 1}
                 </a>
               ))}
             </div>
           </div>
+
+          {reviewError && (
+            <p className="text-xs font-semibold text-alert-coral bg-alert-coral/10 rounded-lg px-3 py-2">{reviewError}</p>
+          )}
 
           <form onSubmit={handleReviewSubmit} className="space-y-4 pt-2 border-t border-line-gray-light dark:border-line-gray-dark">
             <div className="grid sm:grid-cols-2 gap-4">
@@ -327,9 +338,17 @@ function EvaluationsTab() {
         </motion.div>
       ) : loading ? (
         <div className="text-center py-10 text-xs text-slate/50">Fetching student submissions lists...</div>
+      ) : loadError ? (
+        <div className="p-8 text-center border border-dashed border-alert-coral/40 bg-alert-coral/5 rounded-2xl space-y-3">
+          <p className="text-xs font-semibold text-alert-coral">{loadError}</p>
+          <button onClick={() => void fetchPendingSubmissions()}
+            className="px-4 py-1.5 text-xs font-bold border border-line-gray-light dark:border-line-gray-dark rounded-lg hover:border-signal-emerald hover:text-signal-emerald transition-colors">
+            Retry
+          </button>
+        </div>
       ) : pending.length === 0 ? (
         <div className="p-8 text-center border border-dashed border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/10 rounded-2xl text-xs text-slate/50">
-          No pending test submissions needing review right now. Nice job!
+          {statusFilter === "pending" ? "No pending test submissions needing review right now. Nice job!" : "No reviewed submissions on record."}
         </div>
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20">
@@ -339,7 +358,11 @@ function EvaluationsTab() {
                 <th className="px-5 py-3">Student Name</th>
                 <th className="px-5 py-3">Test Title</th>
                 <th className="px-5 py-3">Submitted On</th>
-                <th className="px-5 py-3">Uploaded Sheets</th>
+                {statusFilter === "pending" ? (
+                  <th className="px-5 py-3">Uploaded Sheets</th>
+                ) : (
+                  <th className="px-5 py-3">Marks / Feedback</th>
+                )}
                 <th className="px-5 py-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -356,13 +379,32 @@ function EvaluationsTab() {
                       day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"
                     })}
                   </td>
-                  <td className="px-5 py-3.5 text-slate dark:text-paper/50">{item.studentFiles.length} file(s)</td>
-                  <td className="px-5 py-3.5 text-right">
+                  {statusFilter === "pending" ? (
+                    <td className="px-5 py-3.5 text-slate dark:text-paper/50">{item.studentFiles.length} file(s)</td>
+                  ) : (
+                    <td className="px-5 py-3.5">
+                      <div className="text-ink-navy dark:text-paper font-bold font-mono">{item.marksAwarded ?? "—"}</div>
+                      {item.remarks && <div className="text-[10px] text-slate dark:text-paper/40 font-normal max-w-xs truncate" title={item.remarks}>{item.remarks}</div>}
+                      {item.checkedFileUrl && (
+                        <a href={item.checkedFileUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-signal-emerald hover:underline font-normal">Checked copy</a>
+                      )}
+                    </td>
+                  )}
+                  <td className="px-5 py-3.5 text-right space-x-2 whitespace-nowrap">
+                    {statusFilter === "pending" && (
+                      <button
+                        onClick={() => setReviewing(item)}
+                        className="px-3 py-1.5 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-[10px] font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all"
+                      >
+                        Review
+                      </button>
+                    )}
                     <button
-                      onClick={() => setReviewing(item)}
-                      className="px-3 py-1.5 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy text-[10px] font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all"
+                      onClick={() => handleDelete(item.id)}
+                      disabled={deletingId === item.id}
+                      className="px-3 py-1.5 border border-alert-coral/40 text-alert-coral text-[10px] font-bold rounded-lg hover:bg-alert-coral/10 active:scale-[0.98] transition-all disabled:opacity-40"
                     >
-                      Review
+                      {deletingId === item.id ? "Deleting..." : "Delete"}
                     </button>
                   </td>
                 </tr>
@@ -378,6 +420,7 @@ function EvaluationsTab() {
 function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<AdminTab>("payments");
   const [series, setSeries] = useState<MCQSeries[]>([]);
+  const [stats, setStats] = useState({ users: 0, courses: 0, pendingPayments: 0 });
   const { verifications } = useAuth();
 
   useEffect(() => {
@@ -405,16 +448,45 @@ function AdminDashboard() {
     loadSeries();
   }, []);
 
-  const tabs: { id: AdminTab; label: string }[] = [
+  useEffect(() => {
+    // Header stat cards previously showed hardcoded mock-data counts
+    // (registeredUsers.length / initialCourses.length) regardless of what
+    // was actually in the database — pull the real numbers instead.
+    async function loadStats() {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+        const authHeaders = { "Authorization": `Bearer ${token}` };
+        const [usersRes, coursesRes, paymentsRes] = await Promise.all([
+          fetch(`${apiURL}/api/admin/users`, { headers: authHeaders }),
+          fetch(`${apiURL}/api/courses`),
+          fetch(`${apiURL}/api/admin/payments`, { headers: authHeaders }),
+        ]);
+        const users = usersRes.ok ? await usersRes.json() : [];
+        const courses = coursesRes.ok ? await coursesRes.json() : [];
+        const payments = paymentsRes.ok ? await paymentsRes.json() : [];
+        setStats({
+          users: Array.isArray(users) ? users.length : 0,
+          courses: Array.isArray(courses) ? courses.length : 0,
+          pendingPayments: Array.isArray(payments) ? payments.filter((p: any) => p.status === "pending").length : 0,
+        });
+      } catch (e) { }
+    }
+    loadStats();
+  }, []);
+
+  const tabs: { id: AdminTab | "mcq_v2"; label: string }[] = [
     { id: "payments", label: "Payments" },
     { id: "users", label: "Users" },
     { id: "coupons", label: "Coupons" },
     { id: "affiliates", label: "Affiliates" },
-    { id: "mcq", label: "MCQ Sets" },
-    { id: "series" as any, label: "Series" },
-    { id: "courses" as any, label: "Courses" },
+    { id: "mcq_v2", label: "MCQ Hierarchy" },
+    { id: "test_series" as any, label: "Test Series" },
+    { id: "sessions" as any, label: "1:1 Sessions" },
+    { id: "courses", label: "Courses" },
     { id: "bundles" as any, label: "Bundles" },
-    { id: "evaluations" as any, label: "Evaluations" },
+    { id: "evaluations", label: "Evaluations" },
+    { id: "messages" as any, label: "Messages" },
   ];
 
   return (
@@ -434,10 +506,10 @@ function AdminDashboard() {
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
-            { icon: <Users className="w-4 h-4" />, value: registeredUsers.length.toString(), label: "Registered Users", color: "text-signal-emerald" },
-            { icon: <BookOpen className="w-4 h-4" />, value: initialCourses.length.toString(), label: "Active Courses", color: "text-blue-500" },
-            { icon: <Clock className="w-4 h-4" />, value: verifications.filter(v => v.status === "pending").length.toString(), label: "Pending Payments", color: "text-yellow-500" },
-            { icon: <Upload className="w-4 h-4" />, value: "Active", label: "MCQ Sets", color: "text-purple-500" },
+            { icon: <Users className="w-4 h-4" />, value: stats.users.toString(), label: "Registered Users", color: "text-signal-emerald" },
+            { icon: <BookOpen className="w-4 h-4" />, value: stats.courses.toString(), label: "Active Courses", color: "text-blue-500" },
+            { icon: <Clock className="w-4 h-4" />, value: stats.pendingPayments.toString(), label: "Pending Payments", color: "text-yellow-500" },
+            { icon: <Upload className="w-4 h-4" />, value: "Active", label: "MCQ Subsystem", color: "text-purple-500" },
           ].map((s, i) => (
             <motion.div key={s.label} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
               className="bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl p-4">
@@ -450,7 +522,7 @@ function AdminDashboard() {
 
         <div className="flex gap-1 p-1 bg-line-gray-light dark:bg-line-gray-dark rounded-xl w-full sm:w-fit overflow-x-auto whitespace-nowrap" style={{ scrollbarWidth: "none" }}>
           {tabs.map((t) => (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
+            <button key={t.id} onClick={() => setActiveTab(t.id as AdminTab)}
               className={`flex-shrink-0 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${(activeTab as string) === t.id ? "bg-white dark:bg-ink-navy text-ink-navy dark:text-paper shadow-sm" : "text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper"
                 }`}>
               {t.label}
@@ -464,10 +536,14 @@ function AdminDashboard() {
           {(activeTab as string) === "coupons" && <CouponsTab key="coupons" />}
           {(activeTab as string) === "affiliates" && <AffiliatesTab key="affiliates" />}
           {(activeTab as string) === "mcq" && <MCQSetsTab key="mcq" series={series} />}
+          {(activeTab as string) === "mcq_v2" && <MCQStudio key="mcq_v2" series={series} />}
           {(activeTab as string) === "series" && <SeriesTab key="series" items={series} setItems={setSeries} />}
           {(activeTab as string) === "courses" && <CoursesTab key="courses" series={series} />}
           {(activeTab as string) === "bundles" && <BundlesTab key="bundles" />}
+          {(activeTab as string) === "test_series" && <TestSeriesTab key="test_series" />}
+          {(activeTab as string) === "sessions" && <SessionsTab key="sessions" />}
           {(activeTab as string) === "evaluations" && <EvaluationsTab key="evaluations" />}
+          {(activeTab as string) === "messages" && <MessagesTab key="messages" />}
         </AnimatePresence>
       </div>
     </div>
@@ -480,7 +556,7 @@ function StatusBadge({ status }: { status: PaymentVerification["status"] }) {
     approved: { cls: "bg-signal-emerald/10 text-signal-emerald", icon: <CheckCircle className="w-3 h-3" />, label: "Approved" },
     rejected: { cls: "bg-alert-coral/10 text-alert-coral", icon: <XCircle className="w-3 h-3" />, label: "Rejected" },
     refunded: { cls: "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400", icon: <RefreshCw className="w-3 h-3" />, label: "Refunded" },
-    pending: { cls: "bg-yellow-50 dark:bg-yellow-900/20 text-yellow-600 dark:text-yellow-400", icon: <AlertTriangle className="w-3 h-3" />, label: "Pending" },
+    pending: { cls: "bg-amber-500/10 text-amber-600", icon: <AlertTriangle className="w-3 h-3" />, label: "Pending" },
   };
   const s = map[status];
   return <span className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full ${s.cls}`}>{s.icon} {s.label}</span>;
@@ -488,8 +564,66 @@ function StatusBadge({ status }: { status: PaymentVerification["status"] }) {
 
 // ─── PAYMENTS TAB ────────────────────────────────────────────────────────
 function PaymentsTab() {
-  const { verifications, approveVerification, rejectVerification } = useAuth();
-  const [statusFilter, setStatusFilter] = useState<PaymentVerification["status"] | "all">("all");
+  const [verifications, setVerifications] = useState<any[]>([]);
+  const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "approved" | "rejected" | "refunded">("all");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadPayments() {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+        const res = await fetch(`${apiURL}/api/admin/payments`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (res.ok) {
+          setVerifications(await res.json());
+        }
+      } catch (err) {
+        console.error("Failed to fetch payments", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadPayments();
+  }, []);
+
+  const approveVerification = async (id: string) => {
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/payments/${id}/approve`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setVerifications(prev => prev.map(v => (v.id === id ? { ...v, status: "approved" } : v)));
+      } else {
+        alert("Failed to approve payment");
+      }
+    } catch (e) {
+      alert("Error approving payment");
+    }
+  };
+
+  const rejectVerification = async (id: string) => {
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/payments/${id}/reject`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setVerifications(prev => prev.map(v => (v.id === id ? { ...v, status: "rejected" } : v)));
+      } else {
+        alert("Failed to reject payment");
+      }
+    } catch (e) {
+      alert("Error rejecting payment");
+    }
+  };
+
   const filtered = statusFilter === "all" ? verifications : verifications.filter(v => v.status === statusFilter);
 
   return (
@@ -566,21 +700,25 @@ function PaymentsTab() {
 // ─── USERS TAB ───────────────────────────────────────────────────────────
 function UsersTab() {
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [localUsers, setLocalUsers] = useState(registeredUsers);
-  const confirm = useConfirm();
+  const [localUsers, setLocalUsers] = useState<any[]>([]);
 
-  const handleUnenrollFromUser = async (userId: string, pIndex: number, cTitle: string) => {
-    if (!(await confirm(`Are you sure you want to unenroll student from ${cTitle}?`))) return;
-    const newUsers = [...localUsers];
-    const uIndex = newUsers.findIndex(u => u.id === userId);
-    if (uIndex !== -1) {
-      const userCopy = { ...newUsers[uIndex] };
-      userCopy.purchases = [...userCopy.purchases];
-      userCopy.purchases.splice(pIndex, 1);
-      newUsers[uIndex] = userCopy;
-      setLocalUsers(newUsers);
+  useEffect(() => {
+    async function loadUsers() {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+        const res = await fetch(`${apiURL}/api/admin/users`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (res.ok) {
+          setLocalUsers(await res.json());
+        }
+      } catch (e) {
+        console.error("Failed loading users", e);
+      }
     }
-  };
+    loadUsers();
+  }, []);
 
   const handleExportCSV = async () => {
     try {
@@ -608,7 +746,7 @@ function UsersTab() {
         const id = u.id || "";
         const email = u.email || "";
         const fullName = u.full_name || u.fullName || "";
-        const phone = u.phone_number || u.phoneNumber || "";
+        const phone = u.phone || u.phone_number || u.phoneNumber || "";
         const address = `"${(u.address || "").replace(/"/g, '""')}"`;
         const stage = u.stage || "";
         const attempt = u.attempt_status || u.attemptStatus || "";
@@ -617,12 +755,19 @@ function UsersTab() {
         if (u.purchases && u.purchases.length > 0) {
           for (const purchase of u.purchases) {
             const courseTitle = `"${(purchase.courseTitle || "").replace(/"/g, '""')}"`;
-            const enrollDate = purchase.date || "";
+            const enrollDate = purchase.purchasedAt || purchase.date || "";
 
             let duration = cMap.get(purchase.courseTitle) || "";
             let endDate = "";
 
-            if (duration && enrollDate) {
+            if (purchase.accessUntil) {
+              // Real enrollment end date from the backend — preferred over
+              // any client-side estimate.
+              const accessDate = new Date(purchase.accessUntil);
+              endDate = !isNaN(accessDate.getTime()) ? accessDate.toLocaleDateString("en-CA") : "";
+            } else if (duration && enrollDate) {
+              // Fallback for legacy purchases with no enrollments row: estimate
+              // from the course's advertised duration.
               const dNum = parseInt(duration);
               if (!isNaN(dNum)) {
                 const dateObj = new Date(enrollDate);
@@ -673,7 +818,7 @@ function UsersTab() {
         </button>
       </div>
       <div className="space-y-2">
-        {localUsers.map((u, i) => (
+        {localUsers.map((u: any, i: number) => (
           <motion.div key={u.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
             className="rounded-2xl border border-line-gray-light dark:border-line-gray-dark overflow-hidden bg-white dark:bg-line-gray-dark/20">
             <button onClick={() => setExpanded(expanded === u.id ? null : u.id)}
@@ -693,17 +838,17 @@ function UsersTab() {
                 <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
                   <div className="px-5 pb-5 pt-1 border-t border-line-gray-light dark:border-line-gray-dark space-y-4 bg-line-gray-light/10 dark:bg-line-gray-dark/10">
                     <div>
-                      <p className="text-xs font-semibold text-ink-navy dark:text-paper uppercase tracking-wide mb-2">Purchases</p>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs font-semibold text-ink-navy dark:text-paper uppercase tracking-wide">Purchases</p>
+                        <p className="text-[10px] text-slate dark:text-paper/40">To revoke a course, use Courses → Edit → Enrolled Students</p>
+                      </div>
                       {u.purchases.length === 0 ? <p className="text-xs text-slate dark:text-paper/50">No purchases yet.</p> : (
-                        <div className="space-y-1.5">{u.purchases.map((p, pi) => (
+                        <div className="space-y-1.5">{u.purchases?.map((p: any, pi: number) => (
                           <div key={pi} className="flex items-center justify-between text-xs p-2 rounded border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/40">
                             <span className="text-ink-navy dark:text-paper font-medium">{p.courseTitle}</span>
                             <div className="flex items-center gap-3 text-slate dark:text-paper/50">
                               <span className="font-mono font-semibold text-ink-navy dark:text-paper">₹{p.amount.toLocaleString()}</span>
                               <span>{p.date}</span>
-                              <button onClick={() => handleUnenrollFromUser(u.id, pi, p.courseTitle)} className="p-1 rounded bg-alert-coral/10 text-alert-coral hover:bg-alert-coral/20 hover:text-alert-coral transition-colors" title="Unenroll student">
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
                             </div>
                           </div>
                         ))}</div>
@@ -711,8 +856,8 @@ function UsersTab() {
                     </div>
                     <div>
                       <p className="text-xs font-semibold text-ink-navy dark:text-paper uppercase tracking-wide mb-2">Quiz Attempts</p>
-                      {u.quizAttempts.length === 0 ? <p className="text-xs text-slate dark:text-paper/50">No attempts yet.</p> : (
-                        <div className="space-y-1.5">{u.quizAttempts.map((q, qi) => (
+                      {u.quizAttempts?.length === 0 ? <p className="text-xs text-slate dark:text-paper/50">No attempts yet.</p> : (
+                        <div className="space-y-1.5">{u.quizAttempts?.map((q: any, qi: number) => (
                           <div key={qi} className="flex items-center justify-between text-xs">
                             <span className="text-ink-navy dark:text-paper">{q.setTitle}</span>
                             <div className="flex items-center gap-3 text-slate dark:text-paper/50">
@@ -746,7 +891,290 @@ const emptySection = (sIndex: number): SectionDraft => ({
 });
 
 function MCQSetsTab({ series }: { series: MCQSeries[] }) {
-  return <MCQStudio series={series} />;
+  const confirm = useConfirm();
+  const [sets, setSets] = useState<SetDraft[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<SetDraft | null>(null);
+  const [expandedSeries, setExpandedSeries] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadSets() {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+        const res = await fetch(`${apiURL}/api/admin/mcq-sets`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          // Enriched sets mapped nicely by backend 
+          setSets(data);
+        }
+      } catch (e) { }
+    }
+    loadSets();
+  }, []);
+
+  function openNew() {
+    const d: SetDraft = {
+      id: crypto.randomUUID(), seriesId: series[0]?.id ?? "", title: "", isLocked: false, price: 0,
+      description: "", subject: "",
+      sections: [emptySection(0)],
+      topperStats: { score: 0, totalTimeSeconds: 0, perQuestionTimes: [0] },
+    };
+    setDraft(d); setEditingId("__new__");
+  }
+
+  function openEdit(set: SetDraft) {
+    setDraft(JSON.parse(JSON.stringify(set)));
+    setEditingId(set.id);
+  }
+
+  function closeEditor() { setEditingId(null); setDraft(null); }
+
+  async function saveSet() {
+    if (!draft) return;
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/mcq-sets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify(draft)
+      });
+      if (!res.ok) throw new Error();
+      if (editingId === "__new__") setSets(prev => [...prev, draft]);
+      else setSets(prev => prev.map(s => s.id === editingId ? draft : s));
+      closeEditor();
+    } catch {
+      alert("Error saving set to database.");
+    }
+  }
+
+  async function deleteSet(id: string) {
+    if (!(await confirm("Delete MCQ Set permanently?"))) return;
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/mcq-sets/${id}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setSets(prev => prev.filter(s => s.id !== id));
+      } else alert("Delete failed");
+    } catch {
+      alert("Error contacting server");
+    }
+  }
+
+  // ΓöÇΓöÇ Draft helpers ΓÇö sections ΓöÇΓöÇ
+  function addSection() {
+    if (!draft) return;
+    setDraft({ ...draft, sections: [...draft.sections, emptySection(draft.sections.length)] });
+  }
+  function removeSection(si: number) {
+    if (!draft || draft.sections.length <= 1) return;
+    setDraft({ ...draft, sections: draft.sections.filter((_, i) => i !== si) });
+  }
+  function updateSectionTitle(si: number, title: string) {
+    if (!draft) return;
+    const sections = draft.sections.map((s, i) => i === si ? { ...s, title } : s);
+    setDraft({ ...draft, sections });
+  }
+
+  // ΓöÇΓöÇ Draft helpers ΓÇö questions ΓöÇΓöÇ
+  function addQuestion(si: number) {
+    if (!draft) return;
+    const updated = [...draft.sections];
+    updated[si].questions = [...updated[si].questions, emptyQuestion()];
+    setDraft({ ...draft, sections: updated });
+  }
+  function removeQuestion(si: number, qi: number) {
+    if (!draft) return;
+    const sections = draft.sections.map((s, i) => i === si ? { ...s, questions: s.questions.filter((_, j) => j !== qi) } : s);
+    setDraft({ ...draft, sections });
+  }
+  function updateQuestion(si: number, qi: number, updated: Question) {
+    if (!draft) return;
+    const sections = draft.sections.map((s, i) => {
+      if (i !== si) return s;
+      const questions = s.questions.map((q, j) => j === qi ? updated : q);
+      return { ...s, questions };
+    });
+    setDraft({ ...draft, sections });
+  }
+  function moveQuestion(si: number, qi: number, dir: -1 | 1) {
+    if (!draft) return;
+    const sections = draft.sections.map((s, i) => {
+      if (i !== si) return s;
+      const qs = [...s.questions];
+      const target = qi + dir;
+      if (target < 0 || target >= qs.length) return s;
+      [qs[qi], qs[target]] = [qs[target], qs[qi]];
+      return { ...s, questions: qs };
+    });
+    setDraft({ ...draft, sections });
+  }
+
+  // ΓöÇΓöÇ Builder view ΓöÇΓöÇ
+  if (editingId !== null && draft) {
+    const totalQs = draft.sections.reduce((sum, s) => sum + s.questions.length, 0);
+    return (
+      <motion.div key="set-builder" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">{editingId === "__new__" ? "New Set" : "Edit Set"}</h2>
+          <button onClick={closeEditor} className="p-2 rounded-lg hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors"><X className="w-4 h-4 text-slate dark:text-paper/60" /></button>
+        </div>
+
+        {/* Set-level fields */}
+        <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-4">
+          <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase tracking-wide">Set Details</p>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div><label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Title</label><input className={inp} placeholder="e.g. Accounting Fundamentals" value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} /></div>
+            <div><label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Series</label>
+              <select className={inp} value={draft.seriesId} onChange={e => setDraft({ ...draft, seriesId: e.target.value })}>
+                {series.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+              </select>
+            </div>
+            <div className="sm:col-span-2"><label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Description</label><textarea className={`${inp} resize-none`} rows={2} value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} /></div>
+          </div>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" checked={!draft.isLocked} onChange={() => setDraft({ ...draft, isLocked: false, price: 0 })} className="accent-signal-emerald" /><span className="text-ink-navy dark:text-paper">Free</span></label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer"><input type="radio" checked={draft.isLocked} onChange={() => setDraft({ ...draft, isLocked: true, price: draft.price || 49 })} className="accent-signal-emerald" /><span className="text-ink-navy dark:text-paper">Locked</span></label>
+            {draft.isLocked && (
+              <div className="flex items-center gap-2"><span className="text-sm text-slate dark:text-paper/60">Γé╣</span><input type="number" className={`${inp} w-24`} value={draft.price} onChange={e => setDraft({ ...draft, price: Number(e.target.value) })} /></div>
+            )}
+          </div>
+        </div>
+
+        {/* Sections */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-ink-navy dark:text-paper">{draft.sections.length} Section{draft.sections.length !== 1 ? "s" : ""} ┬╖ {totalQs} Question{totalQs !== 1 ? "s" : ""}</p>
+            <button onClick={addSection} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy rounded-xl hover:opacity-90 transition-all"><Plus className="w-3.5 h-3.5" /> Add Section</button>
+          </div>
+
+          {draft.sections.map((section, si) => (
+            <div key={section.id} className="rounded-2xl border border-line-gray-light dark:border-line-gray-dark overflow-hidden bg-white dark:bg-line-gray-dark/20">
+              {/* Section header */}
+              <div className="flex items-center gap-3 px-5 py-3 bg-line-gray-light/30 dark:bg-line-gray-dark/30 border-b border-line-gray-light dark:border-line-gray-dark">
+                <span className="font-mono text-xs font-bold text-slate dark:text-paper/50 w-5">{si + 1}</span>
+                <input className={`${inp} flex-1 text-sm font-semibold`} value={section.title} onChange={e => updateSectionTitle(si, e.target.value)} placeholder={`Section ${String.fromCharCode(65 + si)} ΓÇö name`} />
+                <button onClick={() => removeSection(si)} disabled={draft.sections.length <= 1} className="p-1.5 text-slate/40 hover:text-alert-coral hover:bg-alert-coral/10 rounded-lg transition-colors disabled:opacity-20"><Trash2 className="w-3.5 h-3.5" /></button>
+              </div>
+
+              {/* Questions in this section */}
+              <div className="p-4 space-y-4">
+                {section.questions.map((q, qi) => (
+                  <div key={qi} className="p-4 bg-line-gray-light/20 dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark rounded-xl space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-signal-emerald font-bold w-6">Q{qi + 1}</span>
+                      <div className="flex gap-1 ml-auto">
+                        <button onClick={() => moveQuestion(si, qi, -1)} disabled={qi === 0} className="p-1 rounded hover:bg-line-gray-light dark:hover:bg-line-gray-dark disabled:opacity-30 transition-colors">
+                          <GripVertical className="w-3.5 h-3.5 text-slate dark:text-paper/50 rotate-90" />
+                        </button>
+                        <button onClick={() => removeQuestion(si, qi)} className="p-1 rounded hover:bg-alert-coral/10 text-slate dark:text-paper/50 hover:text-alert-coral transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 mb-3">
+                      <label className="text-xs font-medium text-slate dark:text-paper/70">Question Type:</label>
+                      <select className={`${inp} w-auto`} value={q.type || "case"} onChange={e => updateQuestion(si, qi, { ...q, type: e.target.value as "case" | "normal" })}>
+                        <option value="case">Case Based (Default)</option>
+                        <option value="normal">Normal MCQ</option>
+                      </select>
+                    </div>
+                    {(!q.type || q.type === "case") && (
+                      <div className="mb-3"><label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Case / Passage Text</label><textarea className={`${inp} resize-y`} minLength={20} rows={4} value={q.caseText || ""} onChange={e => updateQuestion(si, qi, { ...q, caseText: e.target.value })} /></div>
+                    )}
+                    <div><label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Question Text</label><textarea className={`${inp} resize-none`} rows={2} value={q.text} onChange={e => updateQuestion(si, qi, { ...q, text: e.target.value })} /></div>
+                    <div className="grid sm:grid-cols-2 gap-2">
+                      {q.options.map((opt, oi) => (
+                        <div key={oi} className="flex items-center gap-2">
+                          <input type="radio" name={`correct-${si}-${qi}`} checked={q.correctOptionIndex === oi} onChange={() => updateQuestion(si, qi, { ...q, correctOptionIndex: oi })} className="accent-signal-emerald flex-shrink-0" title={`Mark option ${String.fromCharCode(65 + oi)} as correct`} />
+                          <input className={inp} placeholder={`Option ${String.fromCharCode(65 + oi)}`} value={opt} onChange={e => { const opts = [...q.options]; opts[oi] = e.target.value; updateQuestion(si, qi, { ...q, options: opts }); }} />
+                        </div>
+                      ))}
+                    </div>
+                    <div><label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Explanation (optional)</label><textarea className={`${inp} resize-none`} rows={2} value={q.explanation} onChange={e => updateQuestion(si, qi, { ...q, explanation: e.target.value })} /></div>
+                  </div>
+                ))}
+                <button onClick={() => addQuestion(si)} className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-bold text-signal-emerald border border-signal-emerald/30 rounded-xl hover:bg-signal-emerald/5 transition-colors"><Plus className="w-3.5 h-3.5" /> Add Question to this Section</button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex gap-3">
+          <button onClick={saveSet} className="px-6 py-2.5 bg-signal-emerald text-white text-sm font-bold rounded-xl hover:bg-signal-emerald/90 transition-colors">Save Set</button>
+          <button onClick={closeEditor} className="px-6 py-2.5 border border-line-gray-light dark:border-line-gray-dark text-sm font-semibold text-slate dark:text-paper/60 rounded-xl hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors">Cancel</button>
+        </div>
+      </motion.div>
+    );
+  }
+
+  // ΓöÇΓöÇ Table grouped by Series ΓöÇΓöÇ
+  return (
+    <motion.div key="sets-list" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">MCQ Sets</h2>
+        <button onClick={openNew} className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-signal-emerald text-white rounded-xl hover:bg-signal-emerald/90 transition-colors"><Plus className="w-3.5 h-3.5" /> New Set</button>
+      </div>
+      <div className="space-y-1">
+        {series.map((seriesItem) => {
+          const seriesSets = sets.filter(s => s.seriesId === seriesItem.id);
+          return (
+            <div key={seriesItem.id} className="rounded-2xl border border-line-gray-light dark:border-line-gray-dark overflow-hidden">
+              <button onClick={() => setExpandedSeries(expandedSeries === seriesItem.id ? null : seriesItem.id)}
+                className="w-full flex items-center gap-2 px-5 py-3 bg-line-gray-light/40 dark:bg-line-gray-dark/40 hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors text-left">
+                {expandedSeries === seriesItem.id ? <ChevronDown className="w-3.5 h-3.5 text-slate dark:text-paper/50" /> : <ChevronRight className="w-3.5 h-3.5 text-slate dark:text-paper/50" />}
+                <span className="text-xs font-bold text-ink-navy dark:text-paper">{seriesItem.title}</span>
+                <span className="text-xs font-normal text-slate dark:text-paper/50">┬╖ {seriesItem.subject} ┬╖ {seriesSets.length} set{seriesSets.length !== 1 ? "s" : ""}</span>
+              </button>
+              <AnimatePresence initial={false}>
+                {expandedSeries === seriesItem.id && (
+                  <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }} className="overflow-hidden">
+                    {seriesSets.length === 0 ? (
+                      <p className="px-5 py-4 text-xs text-slate dark:text-paper/50">No sets in this series yet.</p>
+                    ) : (
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-line-gray-light/20 dark:bg-line-gray-dark/20 text-left text-xs text-slate dark:text-paper/50 uppercase tracking-wider">
+                            {["Title", "Sections", "Questions", "Access", "Actions"].map(h => <th key={h} className="px-5 py-2 font-semibold">{h}</th>)}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-line-gray-light dark:divide-line-gray-dark bg-white dark:bg-line-gray-dark/20">
+                          {seriesSets.map((s, i) => (
+                            <motion.tr key={s.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.04 }}
+                              className="hover:bg-line-gray-light/30 dark:hover:bg-line-gray-dark/30 transition-colors">
+                              <td className="px-5 py-3 font-medium text-ink-navy dark:text-paper">{s.title}</td>
+                              <td className="px-5 py-3 font-mono text-slate dark:text-paper/60">{s.sections.length}</td>
+                              <td className="px-5 py-3 font-mono text-slate dark:text-paper/60">{s.sections.reduce((sum, sec) => sum + sec.questions.length, 0)}</td>
+                              <td className="px-5 py-3">
+                                {!s.isLocked
+                                  ? <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-signal-emerald/10 text-signal-emerald">Free</span>
+                                  : <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-slate/10 text-slate dark:text-paper/60">Γé╣{s.price}</span>}
+                              </td>
+                              <td className="px-5 py-3">
+                                <div className="flex gap-2">
+                                  <button onClick={() => openEdit(s)} className="p-1.5 rounded-lg text-slate/50 hover:text-signal-emerald hover:bg-signal-emerald/10 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
+                                  <button onClick={() => deleteSet(s.id)} className="p-1.5 rounded-lg text-slate/50 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                                </div>
+                              </td>
+                            </motion.tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        })}
+      </div>
+    </motion.div>
+  );
 }
 
 // ─── SERIES TAB ──────────────────────────────────────────────────────────
@@ -838,7 +1266,11 @@ function SeriesTab({ items, setItems }: { items: MCQSeries[]; setItems: React.Di
 }
 
 // ─── COURSES TAB ─────────────────────────────────────────────────────────
-type CourseDraft = Course & { _new?: boolean };
+type CourseDraft = Course & {
+  _new?: boolean;
+  bundledTestSeriesSubjectIds?: string[];
+  isOneOnOne?: boolean;
+};
 
 function emptyMentor(): Mentor {
   return { name: "", specialty: "", initials: "", color: "from-signal-emerald to-emerald-700", bio: "" };
@@ -858,14 +1290,17 @@ function EnrolledStudentsPanel({ courseId }: { courseId: string }) {
   const [enrolled, setEnrolled] = useState<EnrolledStudentItem[]>([]);
   const [users, setUsers] = useState<{ id: string; email: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedUserEmail, setSelectedUserEmail] = useState("");
   const [notes, setNotes] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [actionError, setActionError] = useState("");
 
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
+      setLoadError("");
       try {
         const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
         const token = localStorage.getItem("caliber_jwt") || "";
@@ -873,32 +1308,17 @@ function EnrolledStudentsPanel({ courseId }: { courseId: string }) {
         const resEnrollments = await fetch(`${apiURL}/api/admin/courses/${courseId}/enrollments`, {
           headers: { "Authorization": `Bearer ${token}` }
         });
-
         const resUsers = await fetch(`${apiURL}/api/admin/users`, {
           headers: { "Authorization": `Bearer ${token}` }
         });
 
-        if (resEnrollments.ok && resUsers.ok) {
-          const enrollmentsData = await resEnrollments.json();
-          const usersData = await resUsers.json();
-          setEnrolled(enrollmentsData);
-          setUsers(usersData);
-        } else {
-          throw new Error("Failed to load admin enrollment rosters");
-        }
+        if (!resEnrollments.ok || !resUsers.ok) throw new Error("Failed to load admin enrollment rosters");
+        setEnrolled(await resEnrollments.json());
+        setUsers(await resUsers.json());
       } catch (err: any) {
-        console.warn("Using mock enrollment lists:", err.message);
-        setEnrolled([
-          { id: "e1", email: "student@caliber.com", purchaseDate: "2026-07-28T09:00:00Z", addedBy: "purchase", notes: "Regular purchase" },
-          { id: "e2", email: "demo@caliber.com", purchaseDate: "2026-07-29T10:30:00Z", addedBy: "admin", notes: "Scholarship entry" },
-        ]);
-        setUsers([
-          { id: "u1", email: "student@caliber.com" },
-          { id: "u2", email: "demo@caliber.com" },
-          { id: "u3", email: "john.doe@example.com" },
-          { id: "u4", email: "jane.smith@example.com" },
-          { id: "u5", email: "caliber_tester@gmail.com" },
-        ]);
+        setLoadError("Couldn't load enrolled students. Check your connection and try again.");
+        setEnrolled([]);
+        setUsers([]);
       } finally {
         setLoading(false);
       }
@@ -909,6 +1329,13 @@ function EnrolledStudentsPanel({ courseId }: { courseId: string }) {
   const handleAddStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedUserEmail) return;
+
+    setActionError("");
+    const exists = enrolled.some(e => e.email.toLowerCase() === selectedUserEmail.toLowerCase());
+    if (exists) {
+      setActionError("User is already enrolled in this course.");
+      return;
+    }
 
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
@@ -921,36 +1348,23 @@ function EnrolledStudentsPanel({ courseId }: { courseId: string }) {
         },
         body: JSON.stringify({ email: selectedUserEmail, notes })
       });
-      if (res.ok) {
-        const newEnrollment = await res.json();
-        setEnrolled(prev => [...prev, newEnrollment]);
-      } else {
-        throw new Error("Add student request failed");
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail || "Failed to enroll student.");
       }
-    } catch (err) {
-      console.warn("Adding mock enrollment locally");
-      const exists = enrolled.some(e => e.email.toLowerCase() === selectedUserEmail.toLowerCase());
-      if (exists) {
-        alert("User is already enrolled in this course.");
-        return;
-      }
-      const newMockItem: EnrolledStudentItem = {
-        id: `mock-e-${Date.now()}`,
-        email: selectedUserEmail,
-        purchaseDate: new Date().toISOString(),
-        addedBy: "admin",
-        notes
-      };
-      setEnrolled(prev => [...prev, newMockItem]);
+      const newEnrollment = await res.json();
+      setEnrolled(prev => [...prev, newEnrollment]);
+      setSelectedUserEmail("");
+      setNotes("");
+      setShowAddForm(false);
+    } catch (err: any) {
+      setActionError(err.message || "Failed to enroll student.");
     }
-
-    setSelectedUserEmail("");
-    setNotes("");
-    setShowAddForm(false);
   };
 
   const handleRemoveStudent = async (enrollmentId: string) => {
     if (!(await confirm("Are you sure you want to remove this student's access?"))) return;
+    setActionError("");
 
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
@@ -959,14 +1373,10 @@ function EnrolledStudentsPanel({ courseId }: { courseId: string }) {
         method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
       });
-      if (res.ok) {
-        setEnrolled(prev => prev.filter(item => item.id !== enrollmentId));
-      } else {
-        throw new Error("Remove request failed");
-      }
-    } catch (err) {
-      console.warn("Removing mock enrollment locally");
+      if (!res.ok) throw new Error("Failed to remove this student's access.");
       setEnrolled(prev => prev.filter(item => item.id !== enrollmentId));
+    } catch (err: any) {
+      setActionError(err.message || "Failed to remove this student's access.");
     }
   };
 
@@ -1043,8 +1453,14 @@ function EnrolledStudentsPanel({ courseId }: { courseId: string }) {
         </form>
       )}
 
+      {actionError && (
+        <p className="text-xs font-semibold text-alert-coral bg-alert-coral/10 rounded-lg px-3 py-2">{actionError}</p>
+      )}
+
       {loading ? (
         <div className="text-center py-4 text-xs text-slate/50">Loading student rosters...</div>
+      ) : loadError ? (
+        <div className="text-center py-4 text-xs text-alert-coral bg-alert-coral/5 rounded-xl border border-dashed border-alert-coral/30">{loadError}</div>
       ) : enrolled.length === 0 ? (
         <div className="text-center py-4 text-xs text-slate/50 bg-paper/10 rounded-xl border border-dashed border-line-gray-light dark:border-line-gray-dark">No students currently enrolled in this course.</div>
       ) : (
@@ -1073,7 +1489,7 @@ function EnrolledStudentsPanel({ courseId }: { courseId: string }) {
                   <td className="px-4 py-2.5">
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.addedBy === "admin"
                       ? "bg-purple-100 text-purple-700 dark:bg-purple-900/35 dark:text-purple-400"
-                      : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/35 dark:text-emerald-400"
+                      : "bg-signal-emerald/10 text-signal-emerald"
                       }`}>
                       {item.addedBy === "admin" ? "Admin Override" : "Purchase Portal"}
                     </span>
@@ -1108,19 +1524,19 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
   const [draft, setDraft] = useState<CourseDraft | null>(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem("caliber_admin_courses");
-    if (saved) {
-      setCourseList(JSON.parse(saved));
-    } else {
-      setCourseList(initialCourses);
+    async function load() {
+      try {
+        const url = process.env.NEXT_PUBLIC_API_URL || "";
+        const res = await fetch(`${url}/api/courses`);
+        if (res.ok) {
+          setCourseList(await res.json());
+        }
+      } catch (e) {
+        console.error("Failed to load admin courses from DB", e);
+      }
     }
+    load();
   }, []);
-
-  useEffect(() => {
-    if (courseList.length > 0) {
-      localStorage.setItem("caliber_admin_courses", JSON.stringify(courseList));
-    }
-  }, [courseList]);
 
   function openNew() {
     const d: CourseDraft = {
@@ -1133,9 +1549,9 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
       tag: "",
       enrolledCount: 0,
       rating: 4.5,
-      outcomes: [""],
-      curriculum: [emptyModule()],
-      mentors: [emptyMentor()],
+      outcomes: [],
+      curriculum: [],
+      mentors: [],
       deliveryType: "whatsapp",
       whatsappLink: "",
       status: "coming_soon",
@@ -1143,7 +1559,21 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
     };
     setDraft(d); setEditingId("__new__");
   }
-  function openEdit(c: CourseDraft) { setDraft({ ...c, outcomes: [...c.outcomes], curriculum: c.curriculum.map(m => ({ ...m, topics: [...m.topics] })), mentors: c.mentors.map(m => ({ ...m })) }); setEditingId(c.id); }
+  function openEdit(c: CourseDraft) {
+    setDraft({
+      ...c,
+      // DB values can be null for these — controlled inputs need "" not null
+      description: c.description ?? "",
+      duration: c.duration ?? "",
+      tag: c.tag ?? "",
+      whatsappLink: c.whatsappLink ?? "",
+      price: c.price ?? 0,
+      outcomes: c.outcomes?.length ? [...c.outcomes] : [""],
+      curriculum: (c.curriculum ?? []).map(m => ({ ...m, topics: [...m.topics] })),
+      mentors: (c.mentors ?? []).map(m => ({ ...m })),
+    });
+    setEditingId(c.id);
+  }
   function closeEditor() { setEditingId(null); setDraft(null); }
   async function saveCourse() {
     if (!draft) return;
@@ -1203,7 +1633,14 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
     return (
       <motion.div key="course-builder" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-6">
         <div className="flex items-center justify-between">
-          <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">{editingId === "__new__" ? "New Course" : "Edit Course"}</h2>
+          <div>
+            <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">{editingId === "__new__" ? "New Course" : "Edit Course"}</h2>
+            {editingId === "__new__" && (
+              <p className="text-[11px] text-slate dark:text-paper/50 mt-0.5">
+                Only Basic Info and Delivery are required — Outcomes, Curriculum, and Mentors are optional, add them only if you want them on the course page.
+              </p>
+            )}
+          </div>
           <button onClick={closeEditor} className="p-2 rounded-lg hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors"><X className="w-4 h-4 text-slate dark:text-paper/60" /></button>
         </div>
         <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-4">
@@ -1259,6 +1696,27 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
             )}
           </div>
         </div>
+
+        <BundledTestSeriesPicker
+          selected={draft.bundledTestSeriesSubjectIds ?? []}
+          onChange={(ids) => setD({ bundledTestSeriesSubjectIds: ids })}
+        />
+
+        <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-3">
+          <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase tracking-wide">Session type</p>
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input type="checkbox" checked={!!draft.isOneOnOne}
+              onChange={(e) => setD({ isOneOnOne: e.target.checked })}
+              className="accent-signal-emerald mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="text-xs font-semibold text-ink-navy dark:text-paper">This is a 1:1 session product</p>
+              <p className="text-[10px] text-slate dark:text-paper/50 mt-0.5">
+                On purchase, a session booking is created automatically and appears in the Sessions tab for you to assign a mentor.
+              </p>
+            </div>
+          </label>
+        </div>
+
         <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-4">
           <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase tracking-wide">Availability</p>
           <div className="flex flex-col sm:flex-row gap-3">
@@ -1303,14 +1761,14 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
               <motion.tr key={c.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }} className="hover:bg-line-gray-light/30 dark:hover:bg-line-gray-dark/30 transition-colors">
                 <td className="px-5 py-3.5 font-medium text-ink-navy dark:text-paper max-w-[180px]"><div className="truncate">{c.title}</div><div className="text-xs text-slate dark:text-paper/50 font-normal">{c.duration}</div></td>
                 <td className="px-5 py-3.5"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.level === "Foundation" ? "bg-signal-emerald/10 text-signal-emerald" : c.level === "Final" ? "bg-alert-coral/10 text-alert-coral" : c.level === "All Levels" ? "bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400" : "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400"}`}>{c.level ?? "—"}</span></td>
-                <td className="px-5 py-3.5 font-mono font-semibold text-ink-navy dark:text-paper">{c.price === 0 ? "Free" : typeof c.price === "string" ? c.price : `₹${c.price.toLocaleString()}`}</td>
-                <td className="px-5 py-3.5 font-mono text-slate dark:text-paper/60">{c.enrolledCount.toLocaleString()}</td>
+                <td className="px-5 py-3.5 font-mono font-semibold text-ink-navy dark:text-paper">{c.price === 0 ? "Free" : typeof c.price === "string" ? c.price : `₹${(c.price || 0).toLocaleString()}`}</td>
+                <td className="px-5 py-3.5 font-mono text-slate dark:text-paper/60">{(c.enrolledCount || 0).toLocaleString()}</td>
                 <td className="px-5 py-3.5">
                   {c.status === "available"
                     ? <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-signal-emerald/10 text-signal-emerald">Live</span>
                     : <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400">Soon</span>}
                 </td>
-                <td className="px-5 py-3.5"><div className="flex gap-1">{c.mentors.map(m => <div key={m.name} title={m.name} className={`w-6 h-6 rounded-full bg-gradient-to-br ${m.color} flex items-center justify-center text-white text-[9px] font-bold`}>{m.initials}</div>)}</div></td>
+                <td className="px-5 py-3.5"><div className="flex gap-1">{(c.mentors || []).map(m => <div key={m.name} title={m.name} className={`w-6 h-6 rounded-full bg-gradient-to-br ${m.color} flex items-center justify-center text-white text-[9px] font-bold`}>{m.initials}</div>)}</div></td>
                 <td className="px-5 py-3.5"><div className="flex gap-2"><button onClick={() => openEdit(c)} className="p-1.5 rounded-lg text-slate/50 hover:text-signal-emerald hover:bg-signal-emerald/10 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button><button onClick={() => deleteCourse(c.id)} className="p-1.5 rounded-lg text-slate/50 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button></div></td>
               </motion.tr>
             ))}
@@ -1427,8 +1885,8 @@ function CouponsTab() {
       affiliate_id: draft.affiliate_id || null,
       max_uses: draft.max_uses ? parseInt(draft.max_uses) : null,
       max_uses_per_user: draft.max_uses_per_user,
-      valid_from: draft.valid_from || null,
-      valid_until: draft.valid_until || null,
+      valid_from: draft.valid_from ? new Date(draft.valid_from).toISOString() : null,
+      valid_until: draft.valid_until ? new Date(draft.valid_until).toISOString() : null,
       applicable_course_ids: draft.applicable_course_ids,
       is_active: draft.is_active,
     };
@@ -2016,3 +2474,624 @@ function BundlesTab() {
   );
 }
 
+
+// ─── TEST SERIES TAB ──────────────────────────────────────────────────────
+interface TSSubjectRow {
+  id: string; level: string; group_name: string; name: string; code: string;
+  description: string; price: number | null; is_active: boolean; sort_order: number;
+}
+interface TSPaperRow {
+  id: string; title: string; description: string | null;
+  question_file_url: string; subject_id: string | null; status: string; sort_order: number;
+}
+
+function TestSeriesTab() {
+  const confirm = useConfirm();
+  const [subjects, setSubjects] = useState<TSSubjectRow[]>([]);
+  const [bundles, setBundles] = useState<any[]>([]);
+  const [papers, setPapers] = useState<TSPaperRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState("");
+
+  // Level -> Subject authoring flow, mirrors the MCQ Hierarchy paper editor.
+  const [selLevel, setSelLevel] = useState("FOUNDATION");
+  const [selSubjectId, setSelSubjectId] = useState("");
+  const [newPaper, setNewPaper] = useState({ title: "", description: "" });
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const api = process.env.NEXT_PUBLIC_API_URL || "";
+  const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem("caliber_jwt") || ""}` });
+
+  useEffect(() => { void loadAll(); }, []);
+
+  async function loadAll() {
+    try {
+      const [s, b] = await Promise.all([
+        fetch(`${api}/api/admin/test-series/subjects`, { headers: authHeaders() }),
+        fetch(`${api}/api/admin/test-series/bundles`, { headers: authHeaders() }),
+      ]);
+      setSubjects(s.ok ? await s.json() : []);
+      setBundles(b.ok ? await b.json() : []);
+    } catch {
+      setMsg("Couldn't load test series. Is the migration applied?");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadPapers(subjectId: string) {
+    if (!subjectId) { setPapers([]); return; }
+    const r = await fetch(`${api}/api/admin/test-series/papers?subject_id=${subjectId}`, { headers: authHeaders() });
+    setPapers(r.ok ? await r.json() : []);
+  }
+
+  useEffect(() => { void loadPapers(selSubjectId); }, [selSubjectId]);
+
+  async function savePrice(id: string, price: string, isBundle = false) {
+    const path = isBundle ? "bundles" : "subjects";
+    const r = await fetch(`${api}/api/admin/test-series/${path}/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ price: price === "" ? null : Number(price) }),
+    });
+    setMsg(r.ok ? "Price saved." : "Failed to save price.");
+    setTimeout(() => setMsg(""), 2500);
+  }
+
+  async function uploadPaper() {
+    if (!selSubjectId) { setMsg("Choose a subject first."); return; }
+    if (!newPaper.title.trim()) { setMsg("Give the paper a title."); return; }
+    if (!file) { setMsg("Choose a PDF to upload."); return; }
+    if (file.type !== "application/pdf") { setMsg("Only PDF files are accepted."); return; }
+
+    setUploading(true);
+    const fd = new FormData();
+    fd.append("subject_id", selSubjectId);
+    fd.append("title", newPaper.title);
+    fd.append("description", newPaper.description);
+    fd.append("file", file);
+
+    try {
+      const r = await fetch(`${api}/api/admin/test-series/papers/upload`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: fd,
+      });
+      if (r.ok) {
+        setNewPaper({ title: "", description: "" });
+        setFile(null);
+        void loadPapers(selSubjectId);
+        setMsg("Uploaded — students who own this subject can see it now.");
+      } else {
+        const d = await r.json().catch(() => ({}));
+        setMsg(d.detail || "Failed to upload paper.");
+      }
+    } catch {
+      setMsg("Failed to upload paper.");
+    } finally {
+      setUploading(false);
+      setTimeout(() => setMsg(""), 3500);
+    }
+  }
+
+  async function deletePaper(id: string) {
+    if (!(await confirm("Delete this paper permanently?"))) return;
+    await fetch(`${api}/api/admin/test-series/papers/${id}`, { method: "DELETE", headers: authHeaders() });
+    void loadPapers(selSubjectId);
+  }
+
+  const levels = ["FOUNDATION", "INTERMEDIATE", "FINAL"];
+  const subjectsForLevel = subjects.filter((s) => s.level === selLevel);
+  const activeSubjectRow = subjects.find((s) => s.id === selSubjectId);
+
+  return (
+    <motion.div key="test_series" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Test Series</h2>
+        {msg && <span className="text-xs font-semibold text-signal-emerald">{msg}</span>}
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-slate dark:text-paper/50">Loading...</p>
+      ) : subjects.length === 0 ? (
+        <div className="p-6 border border-line-gray-light dark:border-line-gray-dark rounded-2xl text-sm text-slate dark:text-paper/60">
+          No test series subjects found. Run <code>RUN_THIS_test_series_and_contact.sql</code> in the Supabase SQL Editor first.
+        </div>
+      ) : (
+        <>
+          {/* ─── Add a paper: Level -> Subject -> PDF upload (mirrors MCQ Hierarchy) ─── */}
+          <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-4">
+            <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase tracking-wide">Add a question paper</p>
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate uppercase mb-1">Level</label>
+                <select className={inp} value={selLevel}
+                  onChange={(e) => { setSelLevel(e.target.value); setSelSubjectId(""); }}>
+                  {levels.map((l) => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate uppercase mb-1">Subject</label>
+                <select className={inp} value={selSubjectId} onChange={(e) => setSelSubjectId(e.target.value)}>
+                  <option value="">-- Select Subject --</option>
+                  {subjectsForLevel.length === 0
+                    ? <option disabled>No subjects for {selLevel}</option>
+                    : subjectsForLevel.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {selSubjectId && (
+              <>
+                <div className="grid sm:grid-cols-2 gap-2">
+                  <input className={inp} placeholder="Paper title (e.g. RTP May 2026)" value={newPaper.title}
+                    onChange={(e) => setNewPaper({ ...newPaper, title: e.target.value })} />
+                  <input className={inp} placeholder="Description (optional)" value={newPaper.description}
+                    onChange={(e) => setNewPaper({ ...newPaper, description: e.target.value })} />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate uppercase mb-1">Question paper (PDF)</label>
+                  <input type="file" accept="application/pdf"
+                    onChange={(e) => setFile(e.target.files?.[0] || null)}
+                    className={`${inp} file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-signal-emerald/10 file:text-signal-emerald cursor-pointer`} />
+                  {file && <p className="text-[10px] text-slate dark:text-paper/50 mt-1">{file.name} · {(file.size / 1024 / 1024).toFixed(2)} MB</p>}
+                </div>
+
+                <button onClick={uploadPaper} disabled={uploading}
+                  className="px-4 py-2 text-xs font-bold bg-signal-emerald text-white rounded-xl hover:bg-signal-emerald/90 transition-colors disabled:opacity-50">
+                  {uploading ? "Uploading..." : "Upload paper"}
+                </button>
+
+                <div className="pt-2 border-t border-line-gray-light/60 dark:border-line-gray-dark/60">
+                  <p className="text-xs font-semibold text-slate dark:text-paper/60 mb-2">
+                    Papers in {activeSubjectRow?.name}
+                  </p>
+                  {papers.length === 0 && <p className="text-xs text-slate dark:text-paper/50">No papers yet.</p>}
+                  {papers.map((p) => (
+                    <div key={p.id} className="flex items-center gap-3 py-2 border-b border-line-gray-light/60 dark:border-line-gray-dark/60 last:border-0">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-ink-navy dark:text-paper">{p.title}</p>
+                        {p.question_file_url
+                          ? <a href={p.question_file_url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-signal-emerald hover:underline truncate block">View PDF</a>
+                          : <p className="text-[10px] text-alert-coral">No file uploaded</p>}
+                      </div>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${p.status === "published" ? "bg-signal-emerald/10 text-signal-emerald" : "bg-slate/10 text-slate dark:text-paper/60"}`}>
+                        {p.status}
+                      </span>
+                      <button onClick={() => deletePaper(p.id)} className="p-1.5 text-slate/40 hover:text-alert-coral rounded-lg">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* ─── Subject pricing ─── */}
+          {levels.map((lvl) => {
+            const rows = subjects.filter((s) => s.level === lvl);
+            if (!rows.length) return null;
+            return (
+              <div key={lvl} className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl">
+                <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase tracking-wide mb-3">{lvl}</p>
+                <div className="space-y-2">
+                  {rows.map((s) => (
+                    <div key={s.id} className="flex items-center gap-3 flex-wrap py-2 border-b border-line-gray-light/60 dark:border-line-gray-dark/60 last:border-0">
+                      <div className="flex-1 min-w-[180px]">
+                        <p className="text-sm font-semibold text-ink-navy dark:text-paper">{s.name}</p>
+                        <p className="text-[10px] text-slate dark:text-paper/50">{s.code} · {s.group_name}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-slate dark:text-paper/60">₹</span>
+                        <input type="number" defaultValue={s.price ?? ""} placeholder="Set price"
+                          onBlur={(e) => savePrice(s.id, e.target.value)}
+                          className={`${inp} w-28`} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl">
+            <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase tracking-wide mb-3">Bundle pricing</p>
+            <div className="space-y-2">
+              {bundles.map((b) => (
+                <div key={b.id} className="flex items-center gap-3 flex-wrap py-2 border-b border-line-gray-light/60 dark:border-line-gray-dark/60 last:border-0">
+                  <div className="flex-1 min-w-[180px]">
+                    <p className="text-sm font-semibold text-ink-navy dark:text-paper">{b.title}</p>
+                    <p className="text-[10px] text-slate dark:text-paper/50">{b.level} · {(b.subject_ids || []).length} papers</p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-slate dark:text-paper/60">₹</span>
+                    <input type="number" defaultValue={b.price ?? ""} placeholder="Set price"
+                      onBlur={(e) => savePrice(b.id, e.target.value, true)} className={`${inp} w-28`} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </motion.div>
+  );
+}
+
+// ─── CONTACT MESSAGES TAB ─────────────────────────────────────────────────
+function MessagesTab() {
+  const [items, setItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const api = process.env.NEXT_PUBLIC_API_URL || "";
+
+  useEffect(() => {
+    fetch(`${api}/api/admin/contact-messages`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("caliber_jwt") || ""}` },
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setItems)
+      .catch(() => setItems([]))
+      .finally(() => setLoading(false));
+  }, [api]);
+
+  return (
+    <motion.div key="messages" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
+      <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Contact messages</h2>
+      {loading ? (
+        <p className="text-sm text-slate dark:text-paper/50">Loading...</p>
+      ) : items.length === 0 ? (
+        <p className="text-sm text-slate dark:text-paper/60">No messages yet.</p>
+      ) : (
+        <div className="space-y-3">
+          {items.map((m) => (
+            <div key={m.id} className="p-4 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl">
+              <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                <p className="text-sm font-bold text-ink-navy dark:text-paper">{m.name}</p>
+                <p className="text-[10px] font-mono text-slate dark:text-paper/50">{(m.created_at || "").split("T")[0]}</p>
+              </div>
+              <a href={`mailto:${m.email}`} className="text-xs text-signal-emerald hover:underline">{m.email}</a>
+              <p className="text-xs text-slate dark:text-paper/70 mt-2 whitespace-pre-wrap">{m.message}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ─── BUNDLED TEST SERIES PICKER (used inside the course editor) ────────────
+function BundledTestSeriesPicker({
+  selected, onChange,
+}: { selected: string[]; onChange: (ids: string[]) => void }) {
+  const [subjects, setSubjects] = useState<TSSubjectRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const api = process.env.NEXT_PUBLIC_API_URL || "";
+
+  useEffect(() => {
+    fetch(`${api}/api/test-series/catalog`)
+      .then((r) => (r.ok ? r.json() : { subjects: [] }))
+      .then((d) => setSubjects(d.subjects || []))
+      .catch(() => setSubjects([]))
+      .finally(() => setLoading(false));
+  }, [api]);
+
+  const toggle = (id: string) =>
+    onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+
+  const levels = ["FOUNDATION", "INTERMEDIATE", "FINAL"];
+
+  return (
+    <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-3">
+      <div>
+        <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase tracking-wide">Include Test Series</p>
+        <p className="text-[10px] text-slate dark:text-paper/50 mt-1">
+          Optional. Any subjects ticked here are unlocked automatically when a student buys this course — use this for
+          &quot;Mentorship Program [With Test Series]&quot; style products. Tick as many as you like.
+        </p>
+      </div>
+
+      {loading ? (
+        <p className="text-xs text-slate dark:text-paper/50">Loading subjects...</p>
+      ) : subjects.length === 0 ? (
+        <p className="text-xs text-slate dark:text-paper/50">
+          No test series subjects yet — run the test-series migration first.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {levels.map((lvl) => {
+            const rows = subjects.filter((s) => s.level === lvl);
+            if (!rows.length) return null;
+            return (
+              <div key={lvl}>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate dark:text-paper/40 mb-1.5">{lvl}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {rows.map((s) => {
+                    const on = selected.includes(s.id);
+                    return (
+                      <button key={s.id} type="button" onClick={() => toggle(s.id)}
+                        className={`px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border transition-colors ${on
+                          ? "border-signal-emerald bg-signal-emerald/10 text-signal-emerald"
+                          : "border-line-gray-light dark:border-line-gray-dark text-slate dark:text-paper/60 hover:border-ink-navy dark:hover:border-paper"}`}>
+                        {on ? "✓ " : ""}{s.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+          {selected.length > 0 && (
+            <p className="text-[10px] text-signal-emerald font-semibold">
+              {selected.length} test series subject{selected.length > 1 ? "s" : ""} will be unlocked on purchase.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Converts an ISO timestamp to the "YYYY-MM-DDTHH:mm" shape a
+// datetime-local input expects, in the browser's local timezone (not UTC).
+function toDatetimeLocalValue(iso: string): string {
+  const d = new Date(iso);
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+// ─── 1:1 SESSIONS TAB ──────────────────────────────────────────────────────
+interface SessionRow {
+  id: string;
+  status: string;
+  studentEmail: string;
+  studentName: string;
+  studentPhone: string;
+  mentorId: string | null;
+  mentorName: string | null;
+  courseTitle: string;
+  scheduledAt: string | null;
+  meetLink: string | null;
+  mentorNote: string | null;
+  createdAt: string;
+}
+
+function SessionsTab() {
+  const { user } = useAuth();
+  const [rows, setRows] = useState<SessionRow[]>([]);
+  const [mentors, setMentors] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState("");
+  const [scheduling, setScheduling] = useState<string | null>(null);
+  const [form, setForm] = useState({ scheduledAt: "", meetLink: "", note: "" });
+  const [enablingSelf, setEnablingSelf] = useState(false);
+
+  const api = process.env.NEXT_PUBLIC_API_URL || "";
+  const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem("caliber_jwt") || ""}` });
+
+  useEffect(() => { void load(); }, []);
+
+  const isSelfMentor = mentors.some((m) => user?.email && m.email?.toLowerCase() === user.email.toLowerCase());
+
+  async function enableSelfAsMentor() {
+    setEnablingSelf(true);
+    try {
+      const r = await fetch(`${api}/api/admin/mentors/enable-self`, { method: "POST", headers: authHeaders() });
+      setMsg(r.ok ? "Mentor mode enabled for your account." : "Failed to enable mentor mode.");
+      setTimeout(() => setMsg(""), 3000);
+      if (r.ok) void load();
+    } catch {
+      setMsg("Failed to enable mentor mode.");
+      setTimeout(() => setMsg(""), 3000);
+    } finally {
+      setEnablingSelf(false);
+    }
+  }
+
+  async function load() {
+    try {
+      const [s, m] = await Promise.all([
+        fetch(`${api}/api/admin/sessions`, { headers: authHeaders() }),
+        fetch(`${api}/api/mentors`),
+      ]);
+      setRows(s.ok ? await s.json() : []);
+      setMentors(m.ok ? await m.json() : []);
+    } catch { setMsg("Couldn't load sessions."); }
+    finally { setLoading(false); }
+  }
+
+  async function assign(sessionId: string, mentorId: string) {
+    if (!mentorId) return;
+    const r = await fetch(`${api}/api/admin/sessions/${sessionId}/assign`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ mentorId }),
+    });
+    setMsg(r.ok ? "Mentor assigned." : "Failed to assign mentor.");
+    setTimeout(() => setMsg(""), 2500);
+    if (r.ok) void load();
+  }
+
+  async function schedule(sessionId: string) {
+    if (!form.scheduledAt || !form.meetLink.trim()) {
+      setMsg("Pick a date/time and paste a meeting link.");
+      return;
+    }
+    const r = await fetch(`${api}/api/admin/sessions/${sessionId}/schedule`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        scheduledAt: new Date(form.scheduledAt).toISOString(),
+        meetLink: form.meetLink.trim(),
+        note: form.note,
+      }),
+    });
+    if (r.ok) {
+      setScheduling(null);
+      setForm({ scheduledAt: "", meetLink: "", note: "" });
+      void load();
+      setMsg("Session scheduled — the student can now see the time and link.");
+      setTimeout(() => setMsg(""), 3000);
+    } else setMsg("Failed to schedule.");
+  }
+
+  async function complete(sessionId: string) {
+    await fetch(`${api}/api/admin/sessions/${sessionId}/complete`, { method: "PATCH", headers: authHeaders() });
+    void load();
+  }
+
+  const label: Record<string, { text: string; cls: string }> = {
+    pending_assignment: { text: "Needs mentor", cls: "bg-amber-500/10 text-amber-600" },
+    pending_schedule: { text: "Needs slot", cls: "bg-blue-500/10 text-blue-600" },
+    booked: { text: "Scheduled", cls: "bg-signal-emerald/10 text-signal-emerald" },
+    completed: { text: "Completed", cls: "bg-slate/10 text-slate dark:text-paper/60" },
+  };
+
+  return (
+    <motion.div key="sessions" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">1:1 Sessions</h2>
+        <div className="flex items-center gap-3">
+          {msg && <span className="text-xs font-semibold text-signal-emerald">{msg}</span>}
+          {!isSelfMentor && (
+            <button onClick={enableSelfAsMentor} disabled={enablingSelf}
+              className="px-3.5 py-1.5 text-xs font-bold bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50">
+              {enablingSelf ? "Enabling..." : "Enable mentor mode for my account"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {loading ? <p className="text-sm text-slate dark:text-paper/50">Loading...</p>
+        : rows.length === 0 ? (
+          <p className="text-sm text-slate dark:text-paper/60">
+            No 1:1 sessions yet. They appear here automatically when a student buys a 1:1 product.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {rows.map((s) => {
+              const st = label[s.status] || { text: s.status, cls: "bg-slate/10 text-slate" };
+              return (
+                <div key={s.id} className="p-4 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-3">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-ink-navy dark:text-paper">{s.courseTitle}</p>
+                      <p className="text-[11px] text-slate dark:text-paper/60 mt-0.5">
+                        {s.studentName || s.studentEmail}
+                        {s.studentPhone ? ` · ${s.studentPhone}` : ""}
+                      </p>
+                      <p className="text-[10px] text-slate dark:text-paper/40 mt-0.5">{s.studentEmail}</p>
+                    </div>
+                    <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${st.cls}`}>{st.text}</span>
+                  </div>
+
+                  {s.status === "pending_assignment" && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs text-slate dark:text-paper/60">Assign mentor:</span>
+                      <select className={`${inp} max-w-[220px]`} defaultValue=""
+                        onChange={(e) => assign(s.id, e.target.value)}>
+                        <option value="">Choose...</option>
+                        {mentors.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+
+                  {s.status === "pending_schedule" && (
+                    scheduling === s.id ? (
+                      <div className="space-y-2">
+                        <div className="grid sm:grid-cols-2 gap-2">
+                          <input type="datetime-local" className={inp} value={form.scheduledAt}
+                            onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })} />
+                          <input className={inp} placeholder="Paste Google Meet link" value={form.meetLink}
+                            onChange={(e) => setForm({ ...form, meetLink: e.target.value })} />
+                        </div>
+                        <input className={inp} placeholder="Note for the student (optional)" value={form.note}
+                          onChange={(e) => setForm({ ...form, note: e.target.value })} />
+                        <div className="flex gap-2">
+                          <button onClick={() => schedule(s.id)}
+                            className="px-4 py-2 text-xs font-bold bg-signal-emerald text-white rounded-xl hover:bg-signal-emerald/90">
+                            Confirm session
+                          </button>
+                          <button onClick={() => setScheduling(null)}
+                            className="px-4 py-2 text-xs font-bold border border-line-gray-light dark:border-line-gray-dark rounded-xl text-slate dark:text-paper/60">
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs text-slate dark:text-paper/60">Mentor: {s.mentorName}</span>
+                        <button onClick={() => setScheduling(s.id)}
+                          className="px-3 py-1.5 text-xs font-bold border border-line-gray-light dark:border-line-gray-dark rounded-lg hover:border-signal-emerald hover:text-signal-emerald transition-colors">
+                          Set time + link
+                        </button>
+                      </div>
+                    )
+                  )}
+
+                  {s.status === "booked" && (
+                    scheduling === s.id ? (
+                      <div className="space-y-2">
+                        <div className="grid sm:grid-cols-2 gap-2">
+                          <input type="datetime-local" className={inp} value={form.scheduledAt}
+                            onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })} />
+                          <input className={inp} placeholder="Paste Google Meet link" value={form.meetLink}
+                            onChange={(e) => setForm({ ...form, meetLink: e.target.value })} />
+                        </div>
+                        <input className={inp} placeholder="Note for the student (optional)" value={form.note}
+                          onChange={(e) => setForm({ ...form, note: e.target.value })} />
+                        <div className="flex gap-2">
+                          <button onClick={() => schedule(s.id)}
+                            className="px-4 py-2 text-xs font-bold bg-signal-emerald text-white rounded-xl hover:bg-signal-emerald/90">
+                            Save changes
+                          </button>
+                          <button onClick={() => setScheduling(null)}
+                            className="px-4 py-2 text-xs font-bold border border-line-gray-light dark:border-line-gray-dark rounded-xl text-slate dark:text-paper/60">
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3 flex-wrap text-xs">
+                        <span className="text-slate dark:text-paper/70">
+                          {s.scheduledAt ? new Date(s.scheduledAt).toLocaleString() : ""} · {s.mentorName}
+                        </span>
+                        {s.meetLink && (
+                          <a href={s.meetLink} target="_blank" rel="noopener noreferrer"
+                            className="font-bold text-signal-emerald hover:underline">Join link</a>
+                        )}
+                        <button onClick={() => {
+                          setForm({
+                            scheduledAt: s.scheduledAt ? toDatetimeLocalValue(s.scheduledAt) : "",
+                            meetLink: s.meetLink || "",
+                            note: s.mentorNote || "",
+                          });
+                          setScheduling(s.id);
+                        }}
+                          className="px-3 py-1.5 text-[11px] font-bold border border-line-gray-light dark:border-line-gray-dark rounded-lg hover:border-signal-emerald hover:text-signal-emerald transition-colors">
+                          Edit
+                        </button>
+                        <button onClick={() => complete(s.id)}
+                          className="px-3 py-1.5 text-[11px] font-bold border border-line-gray-light dark:border-line-gray-dark rounded-lg hover:border-signal-emerald hover:text-signal-emerald transition-colors">
+                          Mark completed
+                        </button>
+                      </div>
+                    )
+                  )}
+
+                  {s.status === "completed" && s.scheduledAt && (
+                    <p className="text-xs text-slate dark:text-paper/50">
+                      Held {new Date(s.scheduledAt).toLocaleString()} with {s.mentorName}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+    </motion.div>
+  );
+}

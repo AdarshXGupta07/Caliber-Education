@@ -48,14 +48,45 @@ def get_current_user(
     return result.data
 
 
-def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
-    """Raises 403 if the authenticated user is not an admin, except in local development."""
-    from app.core.config import get_settings
-    settings = get_settings()
+ADMIN_ROLES = {"admin", "super_admin"}
+MENTOR_ROLES = {"mentor", "admin", "super_admin"}
 
-    if settings.app_env != "development" and current_user.get("role") != "admin":
+
+def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """Raises 403 if the authenticated user is not an admin or super_admin.
+
+    No environment-based bypass: this check must always run. (A dev-mode
+    bypass here previously shipped as the app's default and opened every
+    admin endpoint to any logged-in student.)
+    """
+    if current_user.get("role") not in ADMIN_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",
+        )
+    return current_user
+
+
+def require_super_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """Raises 403 unless the authenticated user is super_admin.
+
+    Use this specifically for role-assignment endpoints (granting admin/
+    mentor access) — regular admins can manage content/payments but must
+    not be able to promote themselves or others further.
+    """
+    if current_user.get("role") != "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin access required",
+        )
+    return current_user
+
+
+def require_mentor(current_user: dict = Depends(get_current_user)) -> dict:
+    """Raises 403 unless the authenticated user is a mentor, admin, or super_admin."""
+    if current_user.get("role") not in MENTOR_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Mentor access required",
         )
     return current_user

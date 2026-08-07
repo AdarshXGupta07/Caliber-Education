@@ -10,3 +10,4 @@ pydantic-settings==2.6.1
 email-validator>=2.0.0
 setuptools>=70.0.0,<72.0.0
 python-dotenv==1.0.1
+slowapi==0.1.10

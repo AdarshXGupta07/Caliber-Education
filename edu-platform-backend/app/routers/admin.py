@@ -1,16 +1,17 @@
 import csv
 import io
 import json
+import os
 import uuid
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from datetime import datetime, timedelta, timezone
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from supabase import Client
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.dependencies import require_admin
+from app.dependencies import require_admin, require_mentor, require_super_admin
 from app.schemas.admin import ManualEnrollRequest
 from app.schemas.courses import CourseUpsertRequest
 from app.schemas.mcq import BulkImportRequest
@@ -40,6 +41,101 @@ async def get_summary(
     }
 
 
+# ─── Payments ─────────────────────────────────────────────────────────────────
+
+@router.get("/payments")
+async def list_payments(
+    admin: dict = Depends(require_admin),
+    db: Client = Depends(get_db),
+):
+    payments_res = db.table("payments").select("id, user_id, course_id, utr_number, amount, status, created_at").order("created_at", desc=True).execute()
+    payments = payments_res.data or []
+    
+    users_res = db.table("profiles").select("id, email, full_name").execute()
+    users_map = {u["id"]: u for u in (users_res.data or [])}
+    
+    courses_res = db.table("courses").select("id, title").execute()
+    courses_map = {c["id"]: c["title"] for c in (courses_res.data or [])}
+
+    verifications = []
+    for p in payments:
+        user = users_map.get(p.get("user_id"))
+        email = user.get("email", "Unknown") if user else "Unknown"
+        
+        course_title = "Multiple/Bundle"
+        raw_c_id = p.get("course_id")
+        utr = p.get("utr_number", "")
+        
+        if raw_c_id and raw_c_id in courses_map:
+            course_title = courses_map[raw_c_id]
+        elif utr.startswith("mcq-"):
+            course_title = utr.split("|")[0]
+            
+        verifications.append({
+            "id": p["id"],
+            "studentEmail": email,
+            "courseTitle": course_title,
+            "amount": float(p.get("amount") or 0.0),
+            "date": p.get("created_at", "").split("T")[0] if p.get("created_at") else "",
+            "status": p.get("status", "pending"),
+            "utrNumber": utr
+        })
+        
+    return verifications
+
+@router.post("/payments/{payment_id}/approve")
+@router.patch("/payments/{payment_id}/approve")
+async def approve_payment(
+    payment_id: str,
+    admin: dict = Depends(require_admin),
+    db: Client = Depends(get_db),
+):
+    """Single canonical approve path (was previously duplicated as a POST and
+    a PATCH route with diverging logic — the PATCH version didn't understand
+    MCQ/bundle payments and would silently fail to grant them). Delegates to
+    the same grant helpers the real Razorpay verify flow and webhook use, so
+    there's exactly one place that knows how to grant a course vs an MCQ
+    subject, and coupon usage is recorded consistently either way."""
+    from app.routers.payments import _apply_course_grant_or_extend, _apply_mcq_grant
+    from app.core.config import get_settings
+
+    payment_res = db.table("payments").select("*").eq("id", payment_id).single().execute()
+    if not payment_res.data:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    payment = payment_res.data
+    if payment["status"] == "approved":
+        return {"success": True, "message": "Already approved"}
+
+    user_id = payment["user_id"]
+    utr_number = payment.get("utr_number") or ""
+    is_mcq = not payment.get("course_id") and utr_number.startswith("mcq-")
+
+    if is_mcq:
+        _apply_mcq_grant(db, payment["razorpay_order_id"], user_id, "admin_approved", "admin_approved")
+    else:
+        user_res = db.table("profiles").select("email").eq("id", user_id).single().execute()
+        email = user_res.data.get("email") if user_res.data else None
+        _apply_course_grant_or_extend(db, payment, user_id, email, "admin_approved", "admin_approved", get_settings())
+
+    return {"success": True}
+
+@router.post("/payments/{payment_id}/reject")
+@router.patch("/payments/{payment_id}/reject")
+async def reject_payment(
+    payment_id: str,
+    body: dict = None,
+    admin: dict = Depends(require_admin),
+    db: Client = Depends(get_db),
+):
+    """Body: { "reason": "..." } (optional) — reason is returned to the caller
+    to show the student; add a dedicated `rejection_reason` column if you want
+    it persisted rather than just relayed at approval time."""
+    rejection_note = (body or {}).get("reason", "")
+    db.table("payments").update({"status": "rejected"}).eq("id", payment_id).execute()
+    return {"success": True, "reason": rejection_note}
+
+
 # ─── Users ────────────────────────────────────────────────────────────────────
 
 @router.get("/users")
@@ -47,8 +143,139 @@ async def list_users(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    result = db.table("profiles").select("*").order("created_at", desc=True).execute()
-    return result.data or []
+    # Fetch all profiles
+    profiles_res = db.table("profiles").select("*").order("created_at", desc=True).execute()
+    profiles = profiles_res.data or []
+    
+    # We will also fetch enrollments and their course details, and mcq purchases
+    # For a high performance fetch, we collect all and process in memory
+    users_mapped = []
+
+    try:
+        payments = db.table("payments").select("*").eq("status", "approved").execute().data or []
+        courses = db.table("courses").select("id, title").execute().data or []
+        course_map = {c["id"]: c["title"] for c in courses}
+
+        attempts = db.table("quiz_attempts").select("*").execute().data or []
+        papers = db.table("mcq_papers").select("id, title").execute().data or []
+        paper_map = {p["id"]: p["title"] for p in papers}
+
+        enrollments = db.table("enrollments").select("user_id, course_id, purchased_at, access_until").execute().data or []
+    except Exception as e:
+        return {"error": str(e.args) if hasattr(e, 'args') else str(e)}
+
+    # Real enrollment dates, keyed by (user_id, course_id) — this is the
+    # source of truth for when access actually ends, replacing the
+    # client-side course-duration guess the CSV export used to make.
+    enrollment_map = {
+        (e.get("user_id"), e.get("course_id")): e
+        for e in enrollments
+    }
+
+    # Group payments
+    payments_by_user = {}
+    for p in payments:
+        uid = p.get("user_id")
+        if uid not in payments_by_user:
+            payments_by_user[uid] = []
+        c_id = p.get("course_id")
+        course_title = course_map.get(c_id, p.get("utr_number") or "Unknown Purchase")
+        enrollment = enrollment_map.get((uid, c_id), {})
+        payments_by_user[uid].append({
+            "courseTitle": course_title,
+            "amount": float(p.get("amount") or 0),
+            "date": p.get("created_at") or p.get("updated_at"),
+            "purchasedAt": enrollment.get("purchased_at"),
+            "accessUntil": enrollment.get("access_until"),
+        })
+
+    # Group attempts
+    attempts_by_user = {}
+    for a in attempts:
+        uid = a.get("user_id")
+        if uid not in attempts_by_user:
+            attempts_by_user[uid] = []
+        p_id = a.get("set_id")
+        attempts_by_user[uid].append({
+            "setTitle": paper_map.get(p_id, "Unknown Set"),
+            "score": a.get("score") or 0,
+            "total": a.get("total") or 0,
+            "date": a.get("created_at")
+        })
+
+    for p in profiles:
+        uid = p.get("id")
+        users_mapped.append({
+            "id": uid,
+            "email": p.get("email", ""),
+            "joinDate": p.get("created_at", ""),
+            "full_name": p.get("full_name", ""),
+            "phone": p.get("phone", ""),
+            "address": p.get("address", ""),
+            "stage": p.get("stage", ""),
+            "attempt_status": p.get("attempt_status", ""),
+            "purchases": payments_by_user.get(uid, []),
+            "quizAttempts": attempts_by_user.get(uid, []),
+        })
+
+    return users_mapped
+
+
+class SetUserRoleRequest(BaseModel):
+    role: str  # "student" | "mentor" | "admin" | "super_admin"
+
+
+@router.patch("/users/{user_id}/role")
+async def set_user_role(
+    user_id: str,
+    body: SetUserRoleRequest,
+    super_admin: dict = Depends(require_super_admin),
+    db: Client = Depends(get_db),
+):
+    """Grant/revoke admin or mentor access. Only the super admin can do this —
+    regular admins manage content/payments but must not be able to promote
+    themselves or anyone else further."""
+    if body.role not in {"student", "mentor", "admin", "super_admin"}:
+        raise HTTPException(status_code=400, detail="Invalid role")
+
+    target = db.table("profiles").select("id, email").eq("id", user_id).single().execute()
+    if not target.data:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    db.table("profiles").update({"role": body.role}).eq("id", user_id).execute()
+
+    # Mentors need a matching row in `mentors` so evaluation/session-booking
+    # queries can resolve them — create one if it doesn't exist yet.
+    if body.role == "mentor":
+        existing = db.table("mentors").select("id").eq("profile_id", user_id).execute()
+        if not existing.data:
+            db.table("mentors").insert({
+                "profile_id": user_id,
+                "name": target.data.get("email", "").split("@")[0],
+                "email": target.data.get("email", ""),
+            }).execute()
+
+    return {"success": True, "userId": user_id, "role": body.role}
+
+
+@router.post("/mentors/enable-self")
+async def enable_self_as_mentor(
+    admin: dict = Depends(require_admin),
+    db: Client = Depends(get_db),
+):
+    """Lets an admin/super_admin add themselves to the `mentors` table so
+    they show up in the 1:1 session assignment dropdown — reuses the exact
+    mentors-insert logic from set_user_role's mentor-promotion path above,
+    but never touches profiles.role (the caller keeps their admin role)."""
+    user_id = admin["id"]
+    existing = db.table("mentors").select("id").eq("profile_id", user_id).execute()
+    if not existing.data:
+        db.table("mentors").insert({
+            "profile_id": user_id,
+            "name": (admin.get("email") or "").split("@")[0],
+            "email": admin.get("email", ""),
+        }).execute()
+    return {"success": True, "userId": user_id}
 
 
 # ─── Courses CRUD ─────────────────────────────────────────────────────────────
@@ -76,7 +303,7 @@ async def list_enrollments(
     for e in (result.data or []):
         profile = e.get("profiles") or {}
         data.append({
-            "id": f"{e['user_id']}:{e['course_id']}",
+            "id": e["user_id"],
             "email": profile.get("email", ""),
             "purchaseDate": e.get("purchased_at", ""),
             "addedBy": e.get("added_by", "purchase"),
@@ -98,14 +325,21 @@ async def manual_enroll(
         raise HTTPException(status_code=404, detail=f"No user found with email {body.email}")
 
     user_id = profile.data["id"]
+    purchased_at = datetime.now(timezone.utc).isoformat()
     db.table("enrollments").upsert({
         "user_id": user_id,
         "course_id": course_id,
         "added_by": "admin",
         "notes": body.notes,
-        "purchased_at": datetime.now(timezone.utc).isoformat(),
+        "purchased_at": purchased_at,
     }).execute()
-    return {"success": True, "message": f"Student {body.email} enrolled successfully"}
+    return {
+        "id": user_id,
+        "email": body.email,
+        "purchaseDate": purchased_at,
+        "addedBy": "admin",
+        "notes": body.notes,
+    }
 
 
 @router.delete("/courses/{course_id}/enrollments/{user_id}")
@@ -123,49 +357,12 @@ async def revoke_enrollment(
 
 @router.get("/mcq-series")
 async def admin_list_series(admin: dict = Depends(require_admin), db: Client = Depends(get_db)):
-    return db.table("mcq_series").select("*").execute().data or []
+    # mcq_series table may not exist — return empty list gracefully
+    try:
+        return db.table("mcq_series").select("*").execute().data or []
+    except Exception:
+        return []
 
-
-# ─── MCQ Sets CRUD ────────────────────────────────────────────────────────────
-
-@router.get("/mcq-sets")
-async def admin_list_sets(admin: dict = Depends(require_admin), db: Client = Depends(get_db)):
-    # Fetch all sets
-    sets_data = db.table("mcq_papers").select("*").execute().data or []
-    
-    # Pre-fetch all sections and questions to avoid N+1 issues or loops if possible
-    # For a moderately sized admin dashboard, a loop is ok for now.
-    enriched_sets = []
-    for s in sets_data:
-        sections_res = db.table("exam_sections").select("*").eq("paper_id", s["id"]).execute()
-        sections = sections_res.data or []
-        enriched_sections = []
-        for sec in sections:
-            q_res = db.table("questions").select("*").eq("section_id", sec["id"]).execute()
-            mapped_qs = []
-            for q in (q_res.data or []):
-                mapped_qs.append({
-                    "id": q["id"],
-                    "type": q.get("type", "case"),
-                    "caseText": "",
-                    "text": q.get("content", q.get("text", "")),
-                    "options": q["options"],
-                    "correctOptionIndex": q.get("correct_option", q.get("correct_option_index", 0)),
-                    "explanation": q["explanation"]
-                })
-            enriched_sections.append({**sec, "questions": mapped_qs})
-        # Map DB keys back to camelCase for frontend where needed
-        enriched_sets.append({
-            "id": s["id"],
-            "seriesId": s.get("series_id"),
-            "title": s["title"],
-            "isLocked": s.get("is_locked", False),
-            "price": s.get("price", 0),
-            "description": s.get("description", ""),
-            "subject": s.get("subject", ""),
-            "sections": enriched_sections
-        })
-    return enriched_sets
 
 
 # ─── Content Management (Courses, Series, Sets) ─────────────────────────────
@@ -195,6 +392,10 @@ async def admin_upsert_course(
         "whatsapp_link": body.get("whatsappLink"),
         "linked_series_id": body.get("linkedSeriesId"),
         "status": body.get("status", "available"),
+        # Test-series subjects bundled with this course — granted automatically
+        # on purchase. Optional, any number.
+        "bundled_test_series_subject_ids": body.get("bundledTestSeriesSubjectIds", []),
+        "is_one_on_one": body.get("isOneOnOne", False),
     }
     # Clean none values so supabase uses defaults
     data = {k: v for k, v in data.items() if v is not None}
@@ -255,6 +456,297 @@ async def admin_delete_bundle(
 ):
     db.table("course_bundles").delete().eq("id", bundle_id).execute()
     return {"success": True}
+
+# ─── Test Series admin CRUD ──────────────────────────────────────────────────
+
+@router.get("/test-series/subjects")
+async def admin_list_ts_subjects(admin: dict = Depends(require_admin), db: Client = Depends(get_db)):
+    return db.table("test_series_subjects").select("*").order("sort_order").execute().data or []
+
+
+@router.patch("/test-series/subjects/{subject_id}")
+async def admin_update_ts_subject(
+    subject_id: str, body: dict,
+    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+):
+    """Set price / toggle active. Catalog itself is seeded from the product sheet."""
+    allowed = {k: v for k, v in body.items() if k in {"price", "is_active", "name", "description", "sort_order"}}
+    if not allowed:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    db.table("test_series_subjects").update(allowed).eq("id", subject_id).execute()
+    return {"success": True}
+
+
+@router.get("/test-series/bundles")
+async def admin_list_ts_bundles(admin: dict = Depends(require_admin), db: Client = Depends(get_db)):
+    return db.table("test_series_bundles").select("*").execute().data or []
+
+
+@router.patch("/test-series/bundles/{bundle_id}")
+async def admin_update_ts_bundle(
+    bundle_id: str, body: dict,
+    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+):
+    allowed = {k: v for k, v in body.items() if k in {"price", "is_active", "title", "subject_ids"}}
+    if not allowed:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    db.table("test_series_bundles").update(allowed).eq("id", bundle_id).execute()
+    return {"success": True}
+
+
+@router.get("/test-series/papers")
+async def admin_list_ts_papers(
+    subject_id: Optional[str] = None,
+    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+):
+    q = db.table("tests").select("*")
+    if subject_id:
+        q = q.eq("subject_id", subject_id)
+    return q.order("sort_order").execute().data or []
+
+
+MAX_TEST_SERIES_PAPER_BYTES = 20 * 1024 * 1024
+
+
+@router.post("/test-series/papers/upload", status_code=201)
+async def admin_upload_ts_paper(
+    subject_id: str = Form(...),
+    title: str = Form(...),
+    description: str = Form(""),
+    file: UploadFile = File(...),
+    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+):
+    """Upload a question paper PDF straight into Supabase Storage and create
+    the `tests` row pointing at it — mirrors the MCQ Hierarchy's
+    Level -> Subject -> content authoring flow. Published immediately so
+    students who own the subject can see it right away."""
+    if not title.strip():
+        raise HTTPException(status_code=400, detail="Title is required")
+    subj = db.table("test_series_subjects").select("id").eq("id", subject_id).execute()
+    if not subj.data:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    if (file.content_type or "") != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+    raw = await file.read()
+    if len(raw) > MAX_TEST_SERIES_PAPER_BYTES:
+        raise HTTPException(status_code=400, detail="File must be under 20MB")
+
+    settings = get_settings()
+    path = f"{subject_id}/{uuid.uuid4().hex[:10]}-{file.filename}"
+    try:
+        db.storage.from_(settings.supabase_test_series_bucket).upload(
+            path, raw, {"content-type": "application/pdf"}
+        )
+    except Exception:
+        raise HTTPException(status_code=502, detail="Couldn't upload the file. Please try again.")
+    url = (
+        f"{settings.supabase_url}/storage/v1/object/public/"
+        f"{settings.supabase_test_series_bucket}/{path}"
+    )
+
+    row = {
+        "title": title,
+        "description": description,
+        "question_file_url": url,
+        "subject_id": subject_id,
+        "status": "published",
+        "sort_order": 0,
+        "created_by": admin["id"],
+    }
+    res = db.table("tests").insert(row).execute()
+    return {"success": True, "id": res.data[0]["id"] if res.data else None, "url": url}
+
+
+@router.patch("/test-series/papers/{paper_id}")
+async def admin_update_ts_paper(
+    paper_id: str, body: dict,
+    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+):
+    allowed = {k: v for k, v in body.items() if k in {"title", "description", "question_file_url", "status", "sort_order", "subject_id"}}
+    if not allowed:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    db.table("tests").update(allowed).eq("id", paper_id).execute()
+    return {"success": True}
+
+
+@router.delete("/test-series/papers/{paper_id}")
+async def admin_delete_ts_paper(
+    paper_id: str,
+    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+):
+    db.table("tests").delete().eq("id", paper_id).execute()
+    return {"success": True}
+
+
+# ─── 1:1 Sessions ────────────────────────────────────────────────────────────
+
+@router.get("/sessions")
+async def admin_list_sessions(
+    staff: dict = Depends(require_mentor), db: Client = Depends(get_db),
+):
+    """All 1:1 bookings. Mentors see only their own once assigned; admins see all."""
+    q = db.table("session_bookings").select(
+        "*, profiles!session_bookings_student_id_fkey(email, full_name, phone_number), mentors(name, email), courses(title)"
+    ).neq("status", "cancelled").order("created_at", desc=True)
+    rows = q.execute().data or []
+
+    if staff.get("role") == "mentor":
+        me = db.table("mentors").select("id").eq("profile_id", staff["id"]).execute()
+        my_ids = {m["id"] for m in (me.data or [])}
+        rows = [r for r in rows if r.get("mentor_id") in my_ids or r.get("status") == "pending_assignment"]
+
+    out = []
+    for r in rows:
+        student = r.get("profiles") or {}
+        mentor = r.get("mentors") or {}
+        course = r.get("courses") or {}
+        out.append({
+            "id": r["id"],
+            "status": r.get("status"),
+            "studentEmail": student.get("email", ""),
+            "studentName": student.get("full_name") or "",
+            "studentPhone": student.get("phone_number") or "",
+            "mentorId": r.get("mentor_id"),
+            "mentorName": mentor.get("name"),
+            "courseTitle": course.get("title", "1:1 Session"),
+            "scheduledAt": r.get("scheduled_at"),
+            "meetLink": r.get("google_meet_link"),
+            "mentorNote": r.get("mentor_note"),
+            "createdAt": r.get("created_at"),
+        })
+    return out
+
+
+class AssignMentorRequest(BaseModel):
+    mentorId: str
+
+
+@router.patch("/sessions/{session_id}/assign")
+async def admin_assign_session_mentor(
+    session_id: str, body: AssignMentorRequest,
+    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+):
+    """Admin picks which mentor takes this paid 1:1 session."""
+    mentor = db.table("mentors").select("id").eq("id", body.mentorId).execute()
+    if not mentor.data:
+        raise HTTPException(status_code=404, detail="Mentor not found")
+    db.table("session_bookings").update({
+        "mentor_id": body.mentorId,
+        "status": "pending_schedule",
+    }).eq("id", session_id).execute()
+    return {"success": True}
+
+
+class ScheduleSessionRequest(BaseModel):
+    scheduledAt: str      # ISO datetime
+    meetLink: str
+    note: Optional[str] = ""
+
+
+@router.patch("/sessions/{session_id}/schedule")
+async def mentor_schedule_session(
+    session_id: str, body: ScheduleSessionRequest,
+    staff: dict = Depends(require_mentor), db: Client = Depends(get_db),
+):
+    """Mentor sets the agreed slot + pastes their own Google Meet link."""
+    if not body.meetLink.strip():
+        raise HTTPException(status_code=400, detail="A meeting link is required")
+    db.table("session_bookings").update({
+        "scheduled_at": body.scheduledAt,
+        "google_meet_link": body.meetLink.strip(),
+        "mentor_note": body.note or "",
+        "status": "booked",
+    }).eq("id", session_id).execute()
+    return {"success": True}
+
+
+@router.patch("/sessions/{session_id}/complete")
+async def mentor_complete_session(
+    session_id: str,
+    staff: dict = Depends(require_mentor), db: Client = Depends(get_db),
+):
+    db.table("session_bookings").update({"status": "completed"}).eq("id", session_id).execute()
+    return {"success": True}
+
+
+# ─── File retention: 7-day auto-delete ───────────────────────────────────────
+
+@router.post("/maintenance/purge-old-files")
+async def purge_old_submission_files(
+    request: Request,
+    db: Client = Depends(get_db),
+):
+    """Deletes answer-sheet + checked-copy PDFs older than 7 days from Storage,
+    keeping the marks/remarks rows intact. Called by a scheduled job; protected
+    by a shared secret rather than a user session so cron can invoke it."""
+    settings = get_settings()
+    expected = os.getenv("MAINTENANCE_SECRET", "")
+    provided = request.headers.get("X-Maintenance-Secret", "")
+    if not expected or provided != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    purged_subs, purged_evals = 0, 0
+
+    def _storage_path(url: str, bucket: str) -> Optional[str]:
+        marker = f"/storage/v1/object/public/{bucket}/"
+        return url.split(marker, 1)[1] if marker in url else None
+
+    # Student submissions
+    subs = (
+        db.table("test_submissions").select("id, submission_files, submitted_at")
+        .lt("submitted_at", cutoff).is_("files_purged_at", "null").execute().data or []
+    )
+    for s in subs:
+        paths = [p for p in (_storage_path(u, settings.supabase_submission_bucket) for u in (s.get("submission_files") or [])) if p]
+        if paths:
+            try:
+                db.storage.from_(settings.supabase_submission_bucket).remove(paths)
+            except Exception as e:
+                print(f"[PURGE] submission {s['id']}: {e}")
+        db.table("test_submissions").update({
+            "submission_files": [],
+            "files_purged_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", s["id"]).execute()
+        purged_subs += 1
+
+    # Evaluated copies
+    evals = (
+        db.table("test_evaluations").select("id, checked_file_url, evaluated_at")
+        .lt("evaluated_at", cutoff).is_("files_purged_at", "null").execute().data or []
+    )
+    for ev in evals:
+        url = ev.get("checked_file_url") or ""
+        path = _storage_path(url, settings.supabase_evaluation_bucket) if url else None
+        if path:
+            try:
+                db.storage.from_(settings.supabase_evaluation_bucket).remove([path])
+            except Exception as e:
+                print(f"[PURGE] evaluation {ev['id']}: {e}")
+        db.table("test_evaluations").update({
+            "checked_file_url": None,
+            "files_purged_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", ev["id"]).execute()
+        purged_evals += 1
+
+    return {"success": True, "purgedSubmissions": purged_subs, "purgedEvaluations": purged_evals}
+
+
+# ─── Contact form messages ───────────────────────────────────────────────────
+
+@router.get("/contact-messages")
+async def admin_list_contact_messages(admin: dict = Depends(require_admin), db: Client = Depends(get_db)):
+    return db.table("contact_messages").select("*").order("created_at", desc=True).execute().data or []
+
+
+@router.patch("/contact-messages/{message_id}")
+async def admin_mark_contact_read(
+    message_id: str,
+    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+):
+    db.table("contact_messages").update({"is_read": True}).eq("id", message_id).execute()
+    return {"success": True}
+
 
 @router.post("/mcq-series")
 async def admin_upsert_series(
@@ -440,13 +932,6 @@ async def admin_list_sets(
                 "title": s.get("title", "Untitled Set"),
                 "level": s.get("level", "FINAL"),
                 "groupName": s.get("group_name", "GROUP_1"),
-                "subjectCode": s.get("subject_code") or s.get("subject", ""),
-                "testType": s.get("test_type", "FULL_SUBJECT"),
-                "chapterName": s.get("chapter_name"),
-                "durationMinutes": s.get("duration_minutes", 60),
-                "passingMarks": float(s.get("passing_marks") or 40.0),
-                "totalMarks": float(s.get("total_marks") or 30.0),
-                "status": s.get("status", "published"),
                 "shuffleQuestions": s.get("shuffle_questions", False),
                 "shuffleOptions": s.get("shuffle_options", False),
                 "allowRetake": s.get("allow_retake", True),
@@ -484,15 +969,13 @@ async def admin_get_set(
             mapped_questions.append({
                 "id": q["id"],
                 "type": q.get("type", "normal"),
-                "caseText": "",
-                "caseId": q.get("case_id"),
-                "chapterTag": q.get("chapter_tag"),
+                "case_narrative": q.get("case_narrative", ""),
                 "difficulty": q.get("difficulty", "medium"),
                 "marks": float(q.get("marks") or 1.0),
-                "negativeMarks": float(q.get("negative_marks") or 0.0),
-                "text": q.get("content", q.get("text", "")),
-                "options": q["options"],
-                "correctOptionIndex": q.get("correct_option", q.get("correct_option_index", 0)),
+                "negative_marks": float(q.get("negative_marks") or 0.0),
+                "content": q.get("content", ""),
+                "options": q.get("options", ["", "", "", ""]),
+                "correct_option": int(q.get("correct_option") or 0),
                 "explanation": q.get("explanation", ""),
             })
         enriched_sections.append({
@@ -533,32 +1016,68 @@ async def admin_upsert_set(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    set_id = body.get("id") or f"set-{uuid.uuid4().hex[:10]}"
+    set_id = body.get("id")
+    # Generate a proper UUID if no id provided (DB column is UUID type)
+    if not set_id or set_id == "":
+        set_id = str(uuid.uuid4())
+
+    subject_code = (body.get("subjectCode") or body.get("subject_code") or "").strip()
+    if not subject_code:
+        raise HTTPException(status_code=400, detail="Select a subject before saving this paper.")
+
+    sections_payload = body.get("sections", [])
+    question_number = 0
+    for sec in sections_payload:
+        sec_title = sec.get("title", "Untitled section")
+        for q in sec.get("questions", []):
+            question_number += 1
+            content = (q.get("content") or q.get("text") or "").strip()
+            if not content:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f'Question {question_number} (in section "{sec_title}") is missing its question text.'
+                )
+            options = q.get("options") or []
+            if len(options) == 0 or any(not (opt or "").strip() for opt in options):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f'Question {question_number} (in section "{sec_title}") has a blank answer option.'
+                )
+
+    VALID_TEST_TYPES = ("COMPLETE_GROUP", "FULL_SUBJECT", "CHAPTER_WISE")
+    raw_test_type = body.get("testType") or body.get("test_type") or "FULL_SUBJECT"
+    safe_test_type = raw_test_type if raw_test_type in VALID_TEST_TYPES else "FULL_SUBJECT"
+
+    VALID_LEVELS = ("FINAL", "INTERMEDIATE", "FOUNDATION")
+    raw_level = body.get("level", "FINAL")
+    safe_level = raw_level if raw_level in VALID_LEVELS else "FINAL"
+
+    VALID_GROUPS = ("GROUP_1", "GROUP_2", "BOTH", "NONE")
+    raw_group = body.get("groupName") or body.get("group_name") or "GROUP_1"
+    safe_group = raw_group if raw_group in VALID_GROUPS else "GROUP_1"
+
     data = {
         "id": set_id,
-        "series_id": body.get("seriesId") or body.get("series_id"),
-        "title": body.get("title", "Untitled Test Set"),
-        "level": body.get("level", "FINAL").upper(),
-        "group_name": body.get("groupName") or body.get("group_name") or "GROUP_1",
-        "subject_code": body.get("subjectCode") or body.get("subject_code") or body.get("subject", ""),
-        "category": body.get("testType") or body.get("test_type") or "FULL_SUBJECT",
-        "chapter_name": body.get("chapterName") or body.get("chapter_name"),
+        "title": body.get("title", "Untitled Test Paper"),
+        "level": safe_level,
+        "group_name": safe_group,
+        "subject_code": subject_code,
+        "test_type": safe_test_type,
+        "chapter_name": body.get("chapterName") or body.get("chapter_name") or "",
         "duration_minutes": int(body.get("durationMinutes") or body.get("duration_minutes") or 60),
         "passing_marks": float(body.get("passingMarks") or body.get("passing_marks") or 40.0),
-        "total_marks": float(body.get("totalMarks") or body.get("total_marks") or 30.0),
-        "status": body.get("status", "published"),
+        "total_marks": float(body.get("totalMarks") or body.get("total_marks") or 100.0),
+        "status": body.get("status", "draft"),
         "shuffle_questions": bool(body.get("shuffleQuestions") or body.get("shuffle_questions", False)),
         "shuffle_options": bool(body.get("shuffleOptions") or body.get("shuffle_options", False)),
-        "allow_retake": bool(body.get("allowRetake") if body.get("allowRetake") is not None else body.get("allow_retake", True)),
-        "max_attempts": body.get("maxAttempts") or body.get("max_attempts"),
-        "description": body.get("description", ""),
-        "subject": body.get("subject") or body.get("subjectCode") or "",
-        "is_locked": bool(body.get("isLocked") or body.get("is_locked", False)),
-        "price": float(body.get("price") or 0.0),
     }
 
     # 1. Upsert the Set Wrapper
-    result = db.table("mcq_papers").upsert(data).execute()
+    try:
+        result = db.table("mcq_papers").upsert(data).execute()
+    except Exception as e:
+        print(f"MCQ SAVE ERROR: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save paper: {e}")
     
     # 2. Sync Sections & Questions
     existing_sections = db.table("exam_sections").select("id").eq("paper_id", set_id).execute()
@@ -570,9 +1089,9 @@ async def admin_upsert_set(
         except Exception:
             pass
 
-    sections_payload = body.get("sections", [])
     for sec_idx, sec in enumerate(sections_payload):
-        sec_id = sec.get("id") or f"sec-{uuid.uuid4().hex[:10]}"
+        # Always generate a fresh UUID — frontend uses Date.now() strings which are not valid UUIDs
+        sec_id = str(uuid.uuid4())
         db.table("exam_sections").insert({
             "id": sec_id,
             "paper_id": set_id,
@@ -582,21 +1101,21 @@ async def admin_upsert_set(
         # Insert questions
         questions_payload = sec.get("questions", [])
         for q_idx, q in enumerate(questions_payload):
-            q_id = q.get("id") or f"q-{uuid.uuid4().hex[:10]}"
+            # Always generate a fresh UUID for questions too
+            q_id = str(uuid.uuid4())
             db.table("questions").insert({
                 "id": str(q_id),
                 "section_id": sec_id,
                 "type": q.get("type", "normal"),
-                "case_text": q.get("caseText") or "",
-                "case_id": q.get("caseId") or q.get("case_id"),
-                "chapter_tag": q.get("chapterTag") or q.get("chapter_tag") or data.get("chapter_name"),
+                "case_narrative": q.get("case_narrative") or q.get("caseText") or "",
                 "difficulty": q.get("difficulty", "medium"),
                 "marks": float(q.get("marks") or 1.0),
-                "negative_marks": float(q.get("negativeMarks") or q.get("negative_marks") or 0.0),
-                "text": q.get("text", f"Question {q_idx + 1}"),
+                "negative_marks": float(q.get("negative_marks") or q.get("negativeMarks") or 0.0),
+                "content": q.get("content") or q.get("text") or f"Question {q_idx + 1}",
                 "options": q.get("options", ["Option A", "Option B", "Option C", "Option D"]),
-                "correct_option_index": int(q.get("correctOptionIndex") if q.get("correctOptionIndex") is not None else q.get("correct_option_index", 0)),
-                "explanation": q.get("explanation", "")
+                "correct_option": int(q.get("correct_option") if q.get("correct_option") is not None else q.get("correctOptionIndex", 0)),
+                "explanation": q.get("explanation", ""),
+                "order_index": q_idx
             }).execute()
 
     return result.data[0] if result.data else data
@@ -634,7 +1153,7 @@ async def admin_import_questions(
         if secs.data:
             target_sec_id = secs.data[0]["id"]
         else:
-            new_sec_id = f"sec-{uuid.uuid4().hex[:10]}"
+            new_sec_id = str(uuid.uuid4())
             db.table("exam_sections").insert({
                 "id": new_sec_id,
                 "paper_id": set_id,
@@ -643,6 +1162,7 @@ async def admin_import_questions(
             target_sec_id = new_sec_id
 
     parsed_questions = []
+    next_order_index = db.table("questions").select("id", count="exact").eq("section_id", target_sec_id).execute().count or 0
 
     if body.format.lower() == "csv":
         f = io.StringIO(body.content.strip())
@@ -674,27 +1194,27 @@ async def admin_import_questions(
                 corr_idx = 0
 
             q_type = (row.get("type") or "normal").strip().lower()
-            case_text = row.get("case_text") or row.get("caseText") or ""
+            case_narrative = row.get("case_narrative") or row.get("case_text") or row.get("caseText") or ""
             explanation = row.get("explanation") or row.get("Explanation") or ""
             marks = float(row.get("marks") or body.defaultMarks)
             neg_marks = float(row.get("negative_marks") or row.get("negativeMarks") or body.defaultNegativeMarks)
             difficulty = (row.get("difficulty") or "medium").strip().lower()
-            chapter_tag = row.get("chapter_tag") or row.get("chapterTag") or mcq_set.data.get("chapter_name")
 
             parsed_questions.append({
-                "id": f"q-{uuid.uuid4().hex[:10]}",
+                "id": str(uuid.uuid4()),
                 "section_id": target_sec_id,
                 "type": q_type,
-                "case_text": case_text,
-                "chapter_tag": chapter_tag,
+                "case_narrative": case_narrative,
                 "difficulty": difficulty,
                 "marks": marks,
                 "negative_marks": neg_marks,
-                "text": text,
+                "content": text,
                 "options": options,
-                "correct_option_index": corr_idx,
-                "explanation": explanation
+                "correct_option": corr_idx,
+                "explanation": explanation,
+                "order_index": next_order_index,
             })
+            next_order_index += 1
 
     elif body.format.lower() == "json":
         try:
@@ -705,21 +1225,24 @@ async def admin_import_questions(
                 if not text:
                     continue
                 options = item.get("options", ["A", "B", "C", "D"])
-                corr_idx = int(item.get("correctOptionIndex") if item.get("correctOptionIndex") is not None else item.get("correct_option_index", 0))
+                corr_idx = int(item.get("correctOptionIndex") if item.get("correctOptionIndex") is not None else item.get("correct_option", 0))
+                # Always generate a fresh UUID — imported files often carry
+                # non-UUID ids (e.g. "q1") which the questions table rejects.
                 parsed_questions.append({
-                    "id": str(item.get("id") or f"q-{uuid.uuid4().hex[:10]}"),
+                    "id": str(uuid.uuid4()),
                     "section_id": target_sec_id,
                     "type": item.get("type", "normal"),
-                    "case_text": item.get("caseText") or item.get("case_text", ""),
-                    "chapter_tag": item.get("chapterTag") or item.get("chapter_tag") or mcq_set.data.get("chapter_name"),
+                    "case_narrative": item.get("caseNarrative") or item.get("case_narrative") or item.get("caseText") or item.get("case_text", ""),
                     "difficulty": item.get("difficulty", "medium"),
                     "marks": float(item.get("marks") or body.defaultMarks),
                     "negative_marks": float(item.get("negativeMarks") or item.get("negative_marks") or body.defaultNegativeMarks),
-                    "text": text,
+                    "content": text,
                     "options": options,
-                    "correct_option_index": corr_idx,
-                    "explanation": item.get("explanation", "")
+                    "correct_option": corr_idx,
+                    "explanation": item.get("explanation", ""),
+                    "order_index": next_order_index,
                 })
+                next_order_index += 1
         except Exception as err:
             raise HTTPException(status_code=400, detail=f"Invalid JSON format: {str(err)}")
 
@@ -759,21 +1282,29 @@ async def admin_delete_set(
 
 @router.get("/submissions/pending")
 async def list_pending_submissions(
+    status: str = "pending",
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    subs = (
+    """Default (no `status` param) is unchanged — still just pending
+    submissions, for backward compatibility. Pass `status=reviewed` to see
+    already-evaluated records (with their marks/remarks/checked file), or
+    `status=all` for both."""
+    query = (
         db.table("test_submissions")
-        .select("*, profiles(email), tests(title)")
-        .eq("status", "pending")
+        .select("*, profiles(email), tests(title), test_evaluations(marks, remarks, checked_file_url, evaluated_at)")
         .order("submitted_at", desc=False)
-        .execute()
     )
+    if status != "all":
+        query = query.eq("status", status)
+    subs = query.execute()
     result = []
     for s in (subs.data or []):
         profile = s.get("profiles") or {}
         test = s.get("tests") or {}
         email = profile.get("email", "")
+        evaluations = s.get("test_evaluations") or []
+        evaluation = evaluations[0] if evaluations else None
         result.append({
             "id": s["id"],
             "studentEmail": email,
@@ -781,8 +1312,59 @@ async def list_pending_submissions(
             "testTitle": test.get("title", ""),
             "submittedAt": s["submitted_at"],
             "studentFiles": s.get("submission_files", []),
+            "status": s.get("status", "pending"),
+            "marksAwarded": evaluation.get("marks") if evaluation else None,
+            "remarks": evaluation.get("remarks") if evaluation else None,
+            "checkedFileUrl": evaluation.get("checked_file_url") if evaluation else None,
+            "evaluatedAt": evaluation.get("evaluated_at") if evaluation else None,
         })
     return {"submissions": result}
+
+
+@router.delete("/submissions/{submission_id}")
+async def delete_submission(
+    submission_id: str,
+    admin: dict = Depends(require_admin),
+    db: Client = Depends(get_db),
+):
+    """Permanently removes a submission record and its evaluation (if any),
+    including any remaining Storage files — same buckets/path convention the
+    7-day auto-purge cron uses (see maintenance/purge-old-files above)."""
+    settings = get_settings()
+
+    def _storage_path(url: str, bucket: str) -> Optional[str]:
+        marker = f"/storage/v1/object/public/{bucket}/"
+        return url.split(marker, 1)[1] if marker in url else None
+
+    sub = db.table("test_submissions").select("submission_files").eq("id", submission_id).execute()
+    if not sub.data:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    sub_paths = [p for p in (_storage_path(u, settings.supabase_submission_bucket) for u in (sub.data[0].get("submission_files") or [])) if p]
+    if sub_paths:
+        try:
+            db.storage.from_(settings.supabase_submission_bucket).remove(sub_paths)
+        except Exception as e:
+            print(f"[DELETE SUBMISSION] storage cleanup failed for {submission_id}: {e}")
+
+    evals = db.table("test_evaluations").select("id, checked_file_url").eq("submission_id", submission_id).execute()
+    for ev in (evals.data or []):
+        url = ev.get("checked_file_url") or ""
+        path = _storage_path(url, settings.supabase_evaluation_bucket) if url else None
+        if path:
+            try:
+                db.storage.from_(settings.supabase_evaluation_bucket).remove([path])
+            except Exception as e:
+                print(f"[DELETE SUBMISSION] evaluation storage cleanup failed for {ev['id']}: {e}")
+
+    db.table("test_evaluations").delete().eq("submission_id", submission_id).execute()
+    db.table("test_submissions").delete().eq("id", submission_id).execute()
+
+    return {"success": True}
+
+
+MAX_EVALUATION_FILE_BYTES = 15 * 1024 * 1024  # 15MB
+ALLOWED_EVALUATION_CONTENT_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
 
 
 @router.post("/submissions/{submission_id}/review", status_code=200)
@@ -791,26 +1373,40 @@ async def review_submission(
     marks: float = Form(...),
     remarks: str = Form(...),
     checkedFile: Optional[UploadFile] = File(None),
-    admin: dict = Depends(require_admin),
+    mentor_user: dict = Depends(require_mentor),
     db: Client = Depends(get_db),
 ):
-    """Admin uploads evaluated paper and submits mark + feedback."""
+    """Mentor/admin uploads the evaluated paper and submits marks + feedback;
+    the student is emailed the result and the checked-file link. This is the
+    single canonical review endpoint — it used to be duplicated with a
+    JSON-only variant that silently shadowed this one and never actually
+    emailed the student despite claiming to."""
     settings = get_settings()
 
     # Verify submission exists
-    sub = db.table("test_submissions").select("*").eq("id", submission_id).single().execute()
+    sub = (
+        db.table("test_submissions")
+        .select("*, profiles(email), tests(title)")
+        .eq("id", submission_id)
+        .single()
+        .execute()
+    )
     if not sub.data:
         raise HTTPException(status_code=404, detail="Submission not found")
 
     checked_file_url = None
     if checkedFile:
+        content_type = checkedFile.content_type or ""
+        if content_type not in ALLOWED_EVALUATION_CONTENT_TYPES:
+            raise HTTPException(status_code=400, detail="Checked file must be a PDF, JPG, or PNG")
         raw = await checkedFile.read()
+        if len(raw) > MAX_EVALUATION_FILE_BYTES:
+            raise HTTPException(status_code=400, detail="Checked file must be under 15MB")
         path = f"evaluated/{submission_id}/{checkedFile.filename}"
         try:
             db.storage.from_(settings.supabase_evaluation_bucket).upload(
-                path, raw, {"content-type": checkedFile.content_type or "application/pdf"}
+                path, raw, {"content-type": content_type}
             )
-            # Build public URL
             checked_file_url = (
                 f"{settings.supabase_url}/storage/v1/object/public/"
                 f"{settings.supabase_evaluation_bucket}/{path}"
@@ -818,11 +1414,11 @@ async def review_submission(
         except Exception:
             checked_file_url = None
 
-    # Find/create mentor entry for the admin
-    mentor = db.table("mentors").select("id").eq("profile_id", admin["id"]).execute()
+    # Find this mentor's mentors-table row (created by a super_admin via the
+    # admin panel when granting the mentor role)
+    mentor = db.table("mentors").select("id").eq("profile_id", mentor_user["id"]).execute()
     mentor_id = mentor.data[0]["id"] if mentor.data else None
 
-    # Insert evaluation record
     db.table("test_evaluations").insert({
         "submission_id": submission_id,
         "mentor_id": mentor_id,
@@ -832,74 +1428,34 @@ async def review_submission(
         "evaluated_at": datetime.now(timezone.utc).isoformat(),
     }).execute()
 
-    # Mark submission as reviewed
     db.table("test_submissions").update({"status": "reviewed"}).eq("id", submission_id).execute()
 
+    student_profile = sub.data.get("profiles") or {}
+    test_info = sub.data.get("tests") or {}
+    student_email = student_profile.get("email", "")
+
+    if settings.sendgrid_api_key and student_email:
+        import httpx
+        file_line = f'<p><a href="{checked_file_url}">Download your checked answer sheet</a></p>' if checked_file_url else ""
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    "https://api.sendgrid.com/v3/mail/send",
+                    headers={"Authorization": f"Bearer {settings.sendgrid_api_key}"},
+                    json={
+                        "personalizations": [{"to": [{"email": student_email}]}],
+                        "from": {"email": settings.sendgrid_from_email},
+                        "subject": f"Your {test_info.get('title', 'Test')} has been evaluated!",
+                        "content": [{
+                            "type": "text/html",
+                            "value": f"<h2>Test Evaluation Result</h2><p>Marks: {marks}</p><p>{remarks}</p>{file_line}",
+                        }],
+                    },
+                )
+        except Exception as e:
+            print(f"Failed to email evaluation result to {student_email}: {e}")
+
     return {"success": True, "message": "Evaluation submitted and student notified"}
-
-
-# ─── Payments (Admin view) ────────────────────────────────────────────────────
-
-@router.get("/payments")
-async def admin_list_payments(
-    admin: dict = Depends(require_admin),
-    db: Client = Depends(get_db),
-):
-    return db.table("payments").select("*, profiles(email), courses(title)").order("created_at", desc=True).execute().data or []
-
-
-@router.patch("/payments/{payment_id}/approve")
-async def approve_payment(
-    payment_id: str,
-    admin: dict = Depends(require_admin),
-    db: Client = Depends(get_db),
-):
-    payment = db.table("payments").select("*").eq("id", payment_id).single().execute()
-    if not payment.data:
-        raise HTTPException(status_code=404, detail="Payment not found")
-    db.table("payments").update({"status": "approved"}).eq("id", payment_id).execute()
-    db.table("enrollments").upsert({
-        "user_id": payment.data["user_id"],
-        "course_id": payment.data["course_id"],
-        "added_by": "admin",
-        "purchased_at": datetime.now(timezone.utc).isoformat(),
-    }).execute()
-
-    # Record coupon usage if applicable (for UTR/manual payments)
-    coupon_id = payment.data.get("coupon_id")
-    if coupon_id:
-        from app.routers.payments import _record_coupon_usage
-        coupon_row = db.table("coupons").select("*").eq("id", coupon_id).single().execute()
-        if coupon_row.data:
-            _record_coupon_usage(
-                db, coupon_row.data, payment.data["user_id"], payment_id,
-                float(payment.data.get("discount_amount") or 0),
-                payment.data.get("affiliate_id"),
-                float(payment.data.get("commission_amount") or 0),
-            )
-
-    return {"success": True}
-
-
-@router.patch("/payments/{payment_id}/reject")
-async def reject_payment(
-    payment_id: str,
-    body: dict = None,
-    admin: dict = Depends(require_admin),
-    db: Client = Depends(get_db),
-):
-    """
-    Reject a payment with an optional reason note visible to the student.
-    Body: { "reason": "UTR not matching bank records" } (optional)
-    """
-    rejection_note = (body or {}).get("reason", "")
-    db.table("payments").update({
-        "status": "rejected",
-        # Store rejection reason — add a `rejection_reason` text column to payments table
-        # or reuse an existing notes-style column. Here we overwrite razorpay_signature field
-        # as a quick slot; replace with a dedicated column in production.
-    }).eq("id", payment_id).execute()
-    return {"success": True, "reason": rejection_note}
 
 
 # ─── Admin: Tests CRUD ──────────────────────────────────────────────────────
@@ -1135,6 +1691,7 @@ async def schedule_session(
     from datetime import datetime
     try:
         dt = datetime.fromisoformat(body.scheduledAt.replace("Z", "+00:00"))
+        if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
         time_formatted = dt.strftime("%A, %d %B %Y at %I:%M %p (IST)")
     except Exception:
         time_formatted = body.scheduledAt
@@ -1171,77 +1728,5 @@ async def schedule_session(
     return {"success": True, "message": f"Session scheduled and confirmation email sent to {student_email}"}
 
 
-# ─── Admin: Test Review (marks entry) ──────────────────────────────────────────
-
-@router.post("/submissions/{submission_id}/review")
-async def review_submission(
-    submission_id: str,
-    body: dict,
-    admin: dict = Depends(require_admin),
-    db: Client = Depends(get_db),
-):
-    """
-    Admin enters marks + remarks after checking the answer sheet offline.
-    No file upload needed — mentor already has the sheet via email.
-    Body: { "marks": 78, "remarks": "Good attempt, audit section weak" }
-    """
-    import httpx
-    marks = body.get("marks")
-    remarks = body.get("remarks", "")
-
-    sub = (
-        db.table("test_submissions")
-        .select("*, profiles(email), tests(title)")
-        .eq("id", submission_id)
-        .single()
-        .execute()
-    )
-    if not sub.data:
-        raise HTTPException(status_code=404, detail="Submission not found")
-
-    student_profile = sub.data.get("profiles") or {}
-    test_info = sub.data.get("tests") or {}
-    student_email = student_profile.get("email", "")
-
-    # Find mentor id for the admin
-    mentor_row = db.table("mentors").select("id").eq("profile_id", admin["id"]).execute()
-    mentor_id = mentor_row.data[0]["id"] if mentor_row.data else None
-
-    db.table("test_evaluations").insert({
-        "submission_id": submission_id,
-        "mentor_id": mentor_id,
-        "marks": marks,
-        "remarks": remarks,
-        "evaluated_at": datetime.now(timezone.utc).isoformat(),
-    }).execute()
-
-    db.table("test_submissions").update({"status": "reviewed"}).eq("id", submission_id).execute()
-
-    # Email student with marks
-    settings = get_settings()
-    if settings.sendgrid_api_key and student_email:
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                "https://api.sendgrid.com/v3/mail/send",
-                headers={"Authorization": f"Bearer {settings.sendgrid_api_key}"},
-                json={
-                    "personalizations": [{"to": [{"email": student_email}]}],
-                    "from": {"email": settings.sendgrid_from_email},
-                    "subject": f"Your {test_info.get('title', 'Test')} has been evaluated!",
-                    "content": [{
-                        "type": "text/html",
-                        "value": f"""
-                        <h2>Test Evaluation Result</h2>
-                        <p><strong>Test:</strong> {test_info.get('title', '')}</p>
-                        <p><strong>Marks Awarded:</strong> {marks} / 100</p>
-                        <p><strong>Remarks:</strong> {remarks}</p>
-                        <br/>
-                        <p>Log in to your <a href="https://caliber-education.netlify.app/dashboard">dashboard</a> to view the full evaluation.</p>
-                        """
-                    }],
-                },
-            )
-    else:
-        print(f"[EMAIL STUB] Would email {student_email} with marks: {marks}")
-
-    return {"success": True, "message": "Marks submitted and student notified by email"}
+# (duplicate JSON-only "/submissions/{submission_id}/review" removed — see the
+# single canonical multipart version above, which now also sends this email)

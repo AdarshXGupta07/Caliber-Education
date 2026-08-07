@@ -21,6 +21,7 @@ export default function LoginPage() {
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState("");
   const [turnstileToken, setTurnstileToken] = useState("");
+  const [turnstileKey, setTurnstileKey] = useState(0);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -37,6 +38,10 @@ export default function LoginPage() {
       setStep("done");
       setTimeout(() => router.push("/dashboard"), 1400);
     } catch (err: any) {
+      // Turnstile tokens are single-use — force a fresh widget so a retry
+      // isn't doomed to fail bot-check with the already-spent token.
+      setTurnstileToken("");
+      setTurnstileKey((k) => k + 1);
       setError(err.message || "Invalid credentials.");
     }
   }
@@ -97,7 +102,7 @@ export default function LoginPage() {
               {error && <p className="text-xs text-alert-coral">{error}</p>}
 
               {/* Invisible Turnstile widget */}
-              <Turnstile onVerify={setTurnstileToken} />
+              <Turnstile key={turnstileKey} onVerify={setTurnstileToken} />
 
               <button type="submit"
                 className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm">

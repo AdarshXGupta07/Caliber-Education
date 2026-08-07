@@ -1,1 +1,0 @@
-{"sets": ["id", "series_id", "title", "is_locked", "price", "description", "subject", "topper_score", "topper_total_time_seconds", "topper_per_question_times", "created_at"], "series": ["id", "title", "subject", "description", "price", "is_locked", "created_at"]}

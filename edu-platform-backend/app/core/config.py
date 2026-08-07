@@ -23,13 +23,21 @@ class Settings(BaseSettings):
     sendgrid_api_key: str = ""
     sendgrid_from_email: str = "noreply@calibereducation.com"
 
+    # Where contact-form submissions are forwarded — swap this once you have
+    # a real support inbox
+    contact_notification_email: str = "adarshguptaa1108@gmail.com"
+
     # Supabase Storage Buckets
     supabase_submission_bucket: str = "test-submissions"
     supabase_evaluation_bucket: str = "evaluated-papers"
+    supabase_test_series_bucket: str = "test-series-papers"
 
     # App
     frontend_url: str = "http://localhost:3000"
-    app_env: str = "development"
+    # Fail closed: missing/unset APP_ENV must behave like production, not
+    # skip auth/bot-check/OTP safeguards. Set APP_ENV=development explicitly
+    # in your local .env to opt into dev conveniences.
+    app_env: str = "production"
 
     class Config:
         env_file = ".env"

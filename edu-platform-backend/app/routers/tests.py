@@ -1,19 +1,19 @@
 """
-Tests Router — Email-based submission flow.
+Tests Router — written test submission & evaluation.
 
 Student Flow:
-  1. Student views test, downloads question paper PDF link
-  2. Student uploads answer photos/files
-  3. POST /api/tests/:id/submit — backend emails the files as attachments to the mentor's email
-  4. Student sees "Submitted" status on dashboard
+  1. Student downloads the question paper PDF
+  2. Student uploads their answer sheet as a PDF
+  3. POST /api/tests/:id/submit — file stored in Supabase Storage
+  4. Student sees "Under evaluation" on their dashboard
 
-Admin/Mentor Flow:
-  1. Mentor receives email with student's answer sheet attached
-  2. Mentor checks it offline, then logs into admin panel
-  3. Admin enters marks + remarks via POST /api/admin/submissions/:id/review
-  4. Student sees marks on dashboard
+Mentor/Admin Flow:
+  1. Submission appears in the admin panel's Evaluations queue
+  2. Mentor opens the PDF, marks it, uploads the checked copy
+  3. POST /api/admin/submissions/:id/review records marks + remarks
+  4. Student sees marks + checked copy on their dashboard
 """
-import base64
+import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from supabase import Client
@@ -99,6 +99,7 @@ async def list_submissions(
             "marksAwarded": evaluation["marks"] if evaluation else None,
             "maxMarks": 100,
             "remarks": evaluation["remarks"] if evaluation else None,
+            "checkedFileUrl": evaluation["checked_file_url"] if evaluation else None,
         })
     return result
 
@@ -110,70 +111,53 @@ async def submit_test(
     current_user: dict = Depends(get_current_user),
     db: Client = Depends(get_db),
 ):
-    """
-    Student uploads answer sheet photos/PDFs.
-    Backend emails them directly to the test's assigned mentor.
-    No file storage bucket needed.
-    """
-    student_email = current_user["email"]
-    student_name = student_email.split("@")[0]
+    """Student uploads their answer sheet as PDF(s). Files go to Supabase
+    Storage and appear in the mentor's evaluation queue in the admin panel —
+    no email provider involved, so a submission can never be silently lost."""
+    settings = get_settings()
 
-    # Verify test exists + get mentor email
-    test = db.table("tests").select("*, profiles(email)").eq("id", test_id).single().execute()
+    test = db.table("tests").select("id, title, subject_id").eq("id", test_id).single().execute()
     if not test.data:
         raise HTTPException(status_code=404, detail="Test not found")
 
-    test_data = test.data
-    test_title = test_data.get("title", "Test")
-    # Mentor email: the admin who created the test
-    creator_profile = test_data.get("profiles") or {}
-    mentor_email = creator_profile.get("email", "")
-
-    # Also check if test has a linked mentor email stored directly
-    # (admin can set mentor_email column — add this optionally per test)
-    mentor_email = test_data.get("mentor_email") or mentor_email
-
-    if not mentor_email:
-        raise HTTPException(
-            status_code=400,
-            detail="No mentor email configured for this test. Please contact admin."
+    subject_id = test.data.get("subject_id")
+    if subject_id and current_user.get("role") not in {"admin", "super_admin", "mentor"}:
+        enroll = (
+            db.table("test_series_enrollments")
+            .select("access_until")
+            .eq("user_id", current_user["id"])
+            .eq("subject_id", subject_id)
+            .execute()
         )
+        if not enroll.data:
+            raise HTTPException(status_code=403, detail="Purchase this subject before submitting an answer sheet")
 
-    # Build attachments for SendGrid
-    attachments = []
-    filenames = []
+    MAX_BYTES = 15 * 1024 * 1024
+    stored_urls = []
     for upload in files:
+        if (upload.content_type or "") != "application/pdf":
+            raise HTTPException(status_code=400, detail="Only PDF files are accepted. Please combine your answer sheet into a single PDF.")
         raw = await upload.read()
-        encoded = base64.b64encode(raw).decode("utf-8")
-        attachments.append({
-            "content": encoded,
-            "filename": upload.filename,
-            "type": upload.content_type or "application/octet-stream",
-            "disposition": "attachment",
-        })
-        filenames.append(upload.filename)
+        if len(raw) > MAX_BYTES:
+            raise HTTPException(status_code=400, detail="Each file must be under 15MB.")
 
-    # Send email to mentor with answer sheet attached
-    await _send_email_with_attachments(
-        to=mentor_email,
-        subject=f"Answer Sheet: {test_title} — {student_name}",
-        html=f"""
-        <h2>New Answer Sheet Submission</h2>
-        <p><strong>Student:</strong> {student_email}</p>
-        <p><strong>Test:</strong> {test_title}</p>
-        <p><strong>Files:</strong> {', '.join(filenames)}</p>
-        <br/>
-        <p>Please check the attachment(s), evaluate the answers, and log into the
-        <strong>Admin Panel</strong> to enter the marks and remarks.</p>
-        """,
-        attachments=attachments,
-    )
+        path = f"submissions/{current_user['id']}/{test_id}/{uuid.uuid4().hex[:8]}-{upload.filename}"
+        try:
+            db.storage.from_(settings.supabase_submission_bucket).upload(
+                path, raw, {"content-type": "application/pdf"}
+            )
+            stored_urls.append(
+                f"{settings.supabase_url}/storage/v1/object/public/"
+                f"{settings.supabase_submission_bucket}/{path}"
+            )
+        except Exception as e:
+            print(f"[TESTS] Upload failed for {path}: {e}")
+            raise HTTPException(status_code=500, detail="Couldn't upload your file. Please try again.")
 
-    # Record submission in DB
     submission = db.table("test_submissions").insert({
         "student_id": current_user["id"],
         "test_id": test_id,
-        "submission_files": filenames,
+        "submission_files": stored_urls,
         "status": "pending",
         "submitted_at": datetime.now(timezone.utc).isoformat(),
     }).execute()
@@ -181,5 +165,5 @@ async def submit_test(
     return {
         "success": True,
         "submissionId": submission.data[0]["id"] if submission.data else "unknown",
-        "message": f"Your answer sheet has been emailed to the mentor for review. You'll see your marks here once evaluated.",
+        "message": "Answer sheet submitted. You'll see your marks here once a mentor has evaluated it.",
     }

@@ -8,32 +8,40 @@ from app.dependencies import get_current_user
 router = APIRouter(prefix="/api/courses", tags=["Courses"])
 
 
+def map_course(c: dict) -> dict:
+    if "enrolled_count" in c: c["enrolledCount"] = c.pop("enrolled_count")
+    if "delivery_type" in c: c["deliveryType"] = c.pop("delivery_type")
+    if "whatsapp_link" in c: c["whatsappLink"] = c.pop("whatsapp_link")
+    if "linked_series_id" in c: c["linkedSeriesId"] = c.pop("linked_series_id")
+    if "bundled_test_series_subject_ids" in c: c["bundledTestSeriesSubjectIds"] = c.pop("bundled_test_series_subject_ids")
+    if "is_one_on_one" in c: c["isOneOnOne"] = c.pop("is_one_on_one")
+    return c
+
 @router.get("")
 async def list_courses(
     level: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     db: Client = Depends(get_db),
 ):
-    query = db.table("courses").select("*")
+    query = db.table("courses").select("*").order('price', desc=True)
     if level:
         query = query.eq("level", level)
     if status:
         query = query.eq("status", status)
     result = query.execute()
-    return result.data or []
+    return [map_course(c) for c in (result.data or [])]
 
 @router.get("/bundles", summary="Get all available course bundle discounts")
 async def list_course_bundles(db: Client = Depends(get_db)):
     result = db.table("course_bundles").select("*").execute()
     return result.data or []
 
-
 @router.get("/{course_id}")
 async def get_course(course_id: str, db: Client = Depends(get_db)):
     result = db.table("courses").select("*").eq("id", course_id).single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Course not found")
-    return result.data
+    return map_course(result.data)
 
 
 @router.get("/{course_id}/whatsapp-access")

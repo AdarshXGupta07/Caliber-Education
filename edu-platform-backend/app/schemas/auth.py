@@ -29,7 +29,8 @@ class ForgotPasswordRequest(BaseModel):
 
 
 class ResetPasswordRequest(BaseModel):
-    token: str
+    accessToken: str
+    refreshToken: str
     newPassword: str
 
 
@@ -37,6 +38,7 @@ class UserResponse(BaseModel):
     id: str
     email: str
     role: str
+    profileComplete: bool = False
 
 
 class TokenResponse(BaseModel):

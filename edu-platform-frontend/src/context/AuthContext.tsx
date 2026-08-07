@@ -4,17 +4,20 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { courses, registeredUsers, pendingVerifications, type PaymentVerification } from "@/lib/mockData";
 
 interface User {
+  id: string;
   email: string;
-  role: "student" | "admin";
+  role: "student" | "mentor" | "admin" | "super_admin";
+  profileComplete: boolean;
 }
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isMounted: boolean;
-  login: (email: string, password?: string, botToken?: string) => Promise<void>;
+  login: (email: string, password?: string, turnstileToken?: string) => Promise<void>;
+  setSession: (token: string, user: User) => void;
   logout: () => void;
-  toggleRole: () => void;
+  markProfileComplete: () => void;
   verifications: PaymentVerification[];
   purchasedCourseIds: string[];
   enrollFreeCourse: (courseId: string) => void;
@@ -29,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [verifications, setVerifications] = useState<PaymentVerification[]>([]);
   const [localPurchasedIds, setLocalPurchasedIds] = useState<string[]>([]);
+  const [realPurchasedIds, setRealPurchasedIds] = useState<string[]>([]);
   const [mounted, setMounted] = useState(false);
 
   // Load from localStorage on mount
@@ -70,17 +74,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("caliber_local_purchased", JSON.stringify(localPurchasedIds));
   }, [localPurchasedIds, mounted]);
 
-  const login = async (email: string, password?: string, botToken?: string) => {
+  // Real, backend-verified course enrolments (Razorpay purchases stored in
+  // the `enrollments` table) — this is the source of truth for "which
+  // courses does this user actually own", separate from the local-only free
+  // enrolments and mock verifications below.
+  useEffect(() => {
+    if (!mounted) return;
+    if (!user) { setRealPurchasedIds([]); return; }
+    const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+    const token = localStorage.getItem("caliber_jwt") || "";
+    if (!token) { setRealPurchasedIds([]); return; }
+    fetch(`${apiURL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => setRealPurchasedIds(data?.purchases || []))
+      .catch(() => setRealPurchasedIds([]));
+  }, [user, mounted]);
+
+  const login = async (email: string, password?: string, turnstileToken?: string) => {
     const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
     try {
       const res = await fetch(`${apiURL}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, botToken }),
+        body: JSON.stringify({ email, password, turnstileToken }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Login failed");
+        // FastAPI's HTTPException body is {"detail": "..."}, not {"error": "..."}
+        throw new Error(err.detail || "Login failed");
       }
       const data = await res.json();
       if (data.token) {
@@ -88,10 +109,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       setUser(data.user);
     } catch (err: any) {
-      console.warn("API login failed, falling back to mock authentication:", err.message);
-      const role = email.toLowerCase().includes("admin") ? ("admin" as const) : ("student" as const);
-      setUser({ email, role });
+      // No mock-user fallback: a failed login must surface as a failed
+      // login, not silently sign the caller in (this previously let anyone
+      // become an "admin" locally just by having "admin" in their email).
+      throw err;
     }
+  };
+
+  // Hydrate the session directly from a token+user pair a backend call
+  // already returned (e.g. register's response) — skips a second network
+  // round trip, and avoids reusing a single-use Turnstile token twice.
+  const setSession = (token: string, sessionUser: User) => {
+    localStorage.setItem("caliber_jwt", token);
+    setUser(sessionUser);
   };
 
   const logout = () => {
@@ -100,11 +130,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("caliber_jwt");
   };
 
-  const toggleRole = () => {
-    if (!user) return;
-    setUser((prev) =>
-      prev ? { ...prev, role: prev.role === "student" ? "admin" : "student" } : null
-    );
+  const markProfileComplete = () => {
+    setUser((prev) => (prev ? { ...prev, profileComplete: true } : prev));
   };
 
   // Compute purchased courses for the current user
@@ -129,8 +156,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return email.toLowerCase() === user.email.toLowerCase();
     }).map(item => item.split("::")[1]);
 
-    return Array.from(new Set([...initialCourseIds, ...approvedCourseIds, ...userLocalFree]));
-  }, [user, verifications, localPurchasedIds]);
+    return Array.from(new Set([...initialCourseIds, ...approvedCourseIds, ...userLocalFree, ...realPurchasedIds]));
+  }, [user, verifications, localPurchasedIds, realPurchasedIds]);
 
   const enrollFreeCourse = (courseId: string) => {
     if (!user) return;
@@ -178,8 +205,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!user,
         isMounted: mounted,
         login,
+        setSession,
         logout,
-        toggleRole,
+        markProfileComplete,
         verifications,
         purchasedCourseIds,
         enrollFreeCourse,

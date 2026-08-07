@@ -124,29 +124,30 @@ async def list_sessions(
     current_user: dict = Depends(get_current_user),
     db: Client = Depends(get_db),
 ):
-    """Student's session requests — both pending and confirmed."""
+    """Student's 1:1 sessions — purchased, assigned, scheduled and completed."""
     user_id = current_user["id"]
     sessions = (
         db.table("session_bookings")
-        .select("*, mentors(name, specialty)")
+        .select("*, mentors(name, specialty), courses(title)")
         .eq("student_id", user_id)
         .neq("status", "cancelled")
-        .order("scheduled_at", desc=False)
+        .order("created_at", desc=True)
         .execute()
     )
 
     result = []
     for s in (sessions.data or []):
         mentor_info = s.get("mentors") or {}
-        is_pending = s.get("google_event_id") == "PENDING"
-        meet_link = s.get("google_meet_link")
+        course_info = s.get("courses") or {}
         result.append({
             "id": s["id"],
-            "mentorName": mentor_info.get("name", "Mentor"),
+            "courseTitle": course_info.get("title", "1:1 Session"),
+            "mentorName": mentor_info.get("name") or None,
             "specialty": mentor_info.get("specialty", ""),
-            "datetime": s["scheduled_at"],
-            "status": "pending_schedule" if is_pending else s["status"],
-            "meetLink": meet_link,
+            "datetime": s.get("scheduled_at"),
+            "status": s.get("status", "pending_assignment"),
+            "meetLink": s.get("google_meet_link"),
+            "mentorNote": s.get("mentor_note"),
         })
     return {"sessions": result}
 
