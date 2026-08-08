@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.dependencies import require_admin, require_mentor, require_super_admin
+from app.routers.payments import grant_test_series_subjects
 from app.schemas.admin import ManualEnrollRequest
 from app.schemas.courses import CourseUpsertRequest
 from app.schemas.mcq import BulkImportRequest
@@ -161,6 +162,14 @@ async def list_users(
         paper_map = {p["id"]: p["title"] for p in papers}
 
         enrollments = db.table("enrollments").select("user_id, course_id, purchased_at, access_until").execute().data or []
+
+        mcq_enrollments = db.table("mcq_enrollments").select("user_id, subject_code, access_until, created_at").execute().data or []
+        mcq_subjects = db.table("mcq_subjects").select("id, name").execute().data or []
+        mcq_subject_map = {s["id"]: s["name"] for s in mcq_subjects}
+
+        test_series_enrollments = db.table("test_series_enrollments").select("user_id, subject_id, access_until, created_at").execute().data or []
+        test_series_subjects = db.table("test_series_subjects").select("id, name").execute().data or []
+        test_series_subject_map = {s["id"]: s["name"] for s in test_series_subjects}
     except Exception as e:
         return {"error": str(e.args) if hasattr(e, 'args') else str(e)}
 
@@ -203,6 +212,32 @@ async def list_users(
             "date": a.get("created_at")
         })
 
+    # Group MCQ subject ownership. Every row is shown (not deduped by
+    # subject like /me does) — an admin audit view should show every
+    # renewal/extension, not just the current live one.
+    mcq_by_user = {}
+    for e in mcq_enrollments:
+        uid = e.get("user_id")
+        if uid not in mcq_by_user:
+            mcq_by_user[uid] = []
+        mcq_by_user[uid].append({
+            "subjectTitle": mcq_subject_map.get(e.get("subject_code"), e.get("subject_code") or "Unknown Subject"),
+            "accessUntil": e.get("access_until"),
+            "date": e.get("created_at"),
+        })
+
+    # Group test-series subject ownership, same pattern.
+    test_series_by_user = {}
+    for e in test_series_enrollments:
+        uid = e.get("user_id")
+        if uid not in test_series_by_user:
+            test_series_by_user[uid] = []
+        test_series_by_user[uid].append({
+            "subjectTitle": test_series_subject_map.get(e.get("subject_id"), e.get("subject_id") or "Unknown Subject"),
+            "accessUntil": e.get("access_until"),
+            "date": e.get("created_at"),
+        })
+
     for p in profiles:
         uid = p.get("id")
         users_mapped.append({
@@ -216,6 +251,8 @@ async def list_users(
             "attempt_status": p.get("attempt_status", ""),
             "purchases": payments_by_user.get(uid, []),
             "quizAttempts": attempts_by_user.get(uid, []),
+            "mcqPurchases": mcq_by_user.get(uid, []),
+            "testSeriesPurchases": test_series_by_user.get(uid, []),
         })
 
     return users_mapped
@@ -401,7 +438,20 @@ async def admin_upsert_course(
     data = {k: v for k, v in data.items() if v is not None}
     
     result = db.table("courses").upsert(data).execute()
-    return result.data[0] if result.data else {}
+    saved = result.data[0] if result.data else {}
+
+    # Retroactive grant: if the admin (re)saved the course's bundled
+    # test-series list, extend that access to everyone who already owns this
+    # course, not just future purchasers. Only fires when the field was
+    # actually sent — omitting it never triggers anything.
+    if "bundledTestSeriesSubjectIds" in body and saved.get("id"):
+        subject_ids = body.get("bundledTestSeriesSubjectIds") or []
+        if subject_ids:
+            owners = db.table("enrollments").select("user_id").eq("course_id", saved["id"]).execute()
+            for row in (owners.data or []):
+                grant_test_series_subjects(db, row["user_id"], subject_ids)
+
+    return saved
 
 @router.delete("/courses/{course_id}")
 async def admin_delete_course(

@@ -190,6 +190,7 @@ async def create_order(
             bundle = None
 
     is_bundle = False
+    is_multi_course_cart = False
     original_price = 0.0
 
     if bundle and bundle.data:
@@ -198,30 +199,18 @@ async def create_order(
         original_price = price
         active_course_id = body.courseId
     elif body.courseIds and len(body.courseIds) > 0:
-        # Custom checkout cart with multiple item IDs directly passed from BundleBuilder.
-        # Check for an exact match against a real bundle first — mirrors BundleBuilder's
-        # own exact-match check client-side, so a bundle selection is priced (and, via
-        # active_course_id being the bundle's own id, entitlement-granted) as a bundle
-        # rather than as the raw sum of individual course prices. Never trusts a
-        # client-sent bundle id for pricing — resolved server-side from the selection.
-        selected_set = set(body.courseIds)
-        bundles_res = db.table("course_bundles").select("id, title, price, course_ids").execute()
-        matched_bundle = next(
-            (b for b in (bundles_res.data or []) if set(b.get("course_ids") or []) == selected_set),
-            None,
-        )
-        if matched_bundle:
-            is_bundle = True
-            price = float(matched_bundle.get("price") or 0)
-            original_price = price
-            active_course_id = matched_bundle["id"]
-        else:
-            courses_res = db.table("courses").select("id, title, price").in_("id", body.courseIds).execute()
-            if not courses_res.data:
-                raise HTTPException(status_code=404, detail="Items not found in database")
-            price = sum(float(c.get("price") or 0) for c in courses_res.data)
-            original_price = price
-            active_course_id = ",".join(body.courseIds)
+        is_multi_course_cart = True
+        # Custom checkout cart with multiple item IDs directly passed from BundleBuilder
+        courses_res = db.table("courses").select("id, title, price").in_("id", body.courseIds).execute()
+        if not courses_res.data:
+            raise HTTPException(status_code=404, detail="Items not found in database")
+        price = sum(float(c.get("price") or 0) for c in courses_res.data)
+        original_price = price
+        # Only used for Razorpay's receipt/notes below and for coupon
+        # applicability matching — the actual `payments` row can't store this
+        # (comma-joined, not a real course id) since course_id has a foreign
+        # key to courses.id. See the packed utr_number below instead.
+        active_course_id = ",".join(body.courseIds)
     else:
         # Fetch standard course price and metadata
         course = db.table("courses").select("id, title, price, whatsapp_link").eq("id", body.courseId).single().execute()
@@ -259,10 +248,14 @@ async def create_order(
         # Stub for dev/testing without Razorpay keys
         order_id = f"order_DEMO_{uuid.uuid4().hex[:12].upper()}"
 
-    # Insert pending payment record with coupon metadata
-    db.table("payments").insert({
+    # Insert pending payment record with coupon metadata. A multi-course cart
+    # can't store its comma-joined id list in course_id (foreign key to
+    # courses.id would reject it) — same reason the MCQ/test-series order
+    # endpoints below pack their item list into utr_number with course_id
+    # left NULL instead.
+    payment_row = {
         "user_id": current_user["id"],
-        "course_id": active_course_id,
+        "course_id": None if is_multi_course_cart else active_course_id,
         "amount": final_price,
         "original_amount": original_price,
         "discount_amount": discount_amount,
@@ -271,7 +264,10 @@ async def create_order(
         "commission_amount": commission_amount,
         "status": "pending",
         "razorpay_order_id": order_id,
-    }).execute()
+    }
+    if is_multi_course_cart:
+        payment_row["utr_number"] = "courses|" + ",".join(body.courseIds) + f"|{uuid.uuid4().hex[:8]}"
+    db.table("payments").insert(payment_row).execute()
 
     return {
         "orderId": order_id,
@@ -350,7 +346,7 @@ async def verify_payment(
 
 
 async def _apply_course_grant_or_extend(db: Client, payment_data: dict, user_id: str, email: str, rzp_pay_id: str, rzp_sig: str, settings):
-    course_id = payment_data["course_id"]
+    course_id = payment_data.get("course_id")
     payment_id = payment_data["id"]
 
     db.table("payments").update({
@@ -370,18 +366,32 @@ async def _apply_course_grant_or_extend(db: Client, payment_data: dict, user_id:
                 float(payment_data.get("commission_amount") or 0),
             )
 
+    # Multi-course cart purchases store course_id as NULL (a comma-joined id
+    # list can't satisfy the foreign key to courses.id) and pack the real
+    # course ids into utr_number instead — see create_order's insert.
+    utr = payment_data.get("utr_number") or ""
+    packed_course_ids = None
+    if course_id is None and utr.startswith("courses|"):
+        packed_course_ids = [c.strip() for c in utr.split("|", 2)[1].split(",") if c.strip()]
+
     bundle = None
-    try:
-        uuid.UUID(course_id)
-        bundle = db.table("course_bundles").select("id, course_ids").eq("id", course_id).execute()
-    except ValueError:
-        bundle = None
+    if course_id:
+        try:
+            uuid.UUID(course_id)
+            bundle = db.table("course_bundles").select("id, course_ids").eq("id", course_id).execute()
+        except ValueError:
+            bundle = None
     custom_whatsapp_links = []
 
     course_titles = []
 
-    if (bundle and bundle.data) or "," in course_id:
-        c_ids = bundle.data[0].get("course_ids", []) if (bundle and bundle.data) else course_id.split(",")
+    if (bundle and bundle.data) or packed_course_ids or (course_id and "," in course_id):
+        if bundle and bundle.data:
+            c_ids = bundle.data[0].get("course_ids", [])
+        elif packed_course_ids is not None:
+            c_ids = packed_course_ids
+        else:
+            c_ids = course_id.split(",")
         for cid in c_ids:
             if not cid.strip(): continue
             _atomic_extend_course(db, user_id, cid.strip(), payment_id)
@@ -419,6 +429,32 @@ async def _apply_course_grant_or_extend(db: Client, payment_data: dict, user_id:
     return {"success": True, "message": "Payment verified and enrollment completed/extended."}
 
 
+def grant_test_series_subjects(db: Client, user_id: str, subject_ids: list, payment_id: str | None = None):
+    """Idempotent insert-if-not-exists grant of test-series subject access for
+    one user. Shared by the purchase-time flow (_apply_course_extras below)
+    and the admin retroactive-grant flow (admin.py, when a course's bundled
+    subject list is edited after the fact)."""
+    for sub_id in (subject_ids or []):
+        sub_id = (sub_id or "").strip()
+        if not sub_id:
+            continue
+        try:
+            existing = (
+                db.table("test_series_enrollments").select("id")
+                .eq("user_id", user_id).eq("subject_id", sub_id).execute()
+            )
+            if not existing.data:
+                db.table("test_series_enrollments").insert({
+                    "user_id": user_id,
+                    "subject_id": sub_id,
+                    "payment_id": payment_id,
+                    "access_until": None,
+                }).execute()
+                print(f"[EXTRAS] Granted test series {sub_id} to {user_id}")
+        except Exception as e:
+            print(f"[EXTRAS] Failed granting test series {sub_id}: {e}")
+
+
 def _apply_course_extras(db: Client, user_id: str, course_id: str, payment_id: str):
     """After a course purchase, grant anything bundled with it:
       • test-series subjects attached by the admin to that course
@@ -435,25 +471,7 @@ def _apply_course_extras(db: Client, user_id: str, course_id: str, payment_id: s
         return
 
     # 1. Bundled test series
-    for sub_id in (c.data.get("bundled_test_series_subject_ids") or []):
-        sub_id = (sub_id or "").strip()
-        if not sub_id:
-            continue
-        try:
-            existing = (
-                db.table("test_series_enrollments").select("id")
-                .eq("user_id", user_id).eq("subject_id", sub_id).execute()
-            )
-            if not existing.data:
-                db.table("test_series_enrollments").insert({
-                    "user_id": user_id,
-                    "subject_id": sub_id,
-                    "payment_id": payment_id,
-                    "access_until": None,
-                }).execute()
-                print(f"[EXTRAS] Granted bundled test series {sub_id} to {user_id}")
-        except Exception as e:
-            print(f"[EXTRAS] Failed granting test series {sub_id}: {e}")
+    grant_test_series_subjects(db, user_id, c.data.get("bundled_test_series_subject_ids") or [], payment_id)
 
     # 2. 1:1 session booking — created unassigned; admin picks the mentor next
     if c.data.get("is_one_on_one"):

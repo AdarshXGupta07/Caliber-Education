@@ -484,7 +484,6 @@ function AdminDashboard() {
     { id: "test_series" as any, label: "Test Series" },
     { id: "sessions" as any, label: "1:1 Sessions" },
     { id: "courses", label: "Courses" },
-    { id: "bundles" as any, label: "Bundles" },
     { id: "evaluations", label: "Evaluations" },
     { id: "messages" as any, label: "Messages" },
   ];
@@ -539,7 +538,6 @@ function AdminDashboard() {
           {(activeTab as string) === "mcq_v2" && <MCQStudio key="mcq_v2" series={series} />}
           {(activeTab as string) === "series" && <SeriesTab key="series" items={series} setItems={setSeries} />}
           {(activeTab as string) === "courses" && <CoursesTab key="courses" series={series} />}
-          {(activeTab as string) === "bundles" && <BundlesTab key="bundles" />}
           {(activeTab as string) === "test_series" && <TestSeriesTab key="test_series" />}
           {(activeTab as string) === "sessions" && <SessionsTab key="sessions" />}
           {(activeTab as string) === "evaluations" && <EvaluationsTab key="evaluations" />}
@@ -737,9 +735,14 @@ function UsersTab() {
 
       const headers = [
         "ID", "Email", "Full Name", "Phone", "Address", "Stage", "Attempt Status",
-        "User Joined At", "Course Selected", "Enrollment Date", "End Date", "Total Duration"
+        "User Joined At", "Type", "Item", "Enrollment Date", "End Date", "Total Duration"
       ];
       const csvRows = [headers.join(",")];
+
+      const formatDate = (iso: string) => {
+        const d = new Date(iso);
+        return !isNaN(d.getTime()) ? d.toLocaleDateString("en-CA") : "";
+      };
 
       for (const user of usersToExport) {
         const u = user as any;
@@ -751,48 +754,66 @@ function UsersTab() {
         const stage = u.stage || "";
         const attempt = u.attempt_status || u.attemptStatus || "";
         const joined = u.created_at || u.joinDate || "";
+        const rowPrefix = [id, email, fullName, phone, address, stage, attempt, joined];
 
-        if (u.purchases && u.purchases.length > 0) {
-          for (const purchase of u.purchases) {
-            const courseTitle = `"${(purchase.courseTitle || "").replace(/"/g, '""')}"`;
-            const enrollDate = purchase.purchasedAt || purchase.date || "";
+        const purchases = u.purchases || [];
+        const mcqPurchases = u.mcqPurchases || [];
+        const testSeriesPurchases = u.testSeriesPurchases || [];
 
-            let duration = cMap.get(purchase.courseTitle) || "";
-            let endDate = "";
+        for (const purchase of purchases) {
+          const courseTitle = `"${(purchase.courseTitle || "").replace(/"/g, '""')}"`;
+          const enrollDate = purchase.purchasedAt || purchase.date || "";
 
-            if (purchase.accessUntil) {
-              // Real enrollment end date from the backend — preferred over
-              // any client-side estimate.
-              const accessDate = new Date(purchase.accessUntil);
-              endDate = !isNaN(accessDate.getTime()) ? accessDate.toLocaleDateString("en-CA") : "";
-            } else if (duration && enrollDate) {
-              // Fallback for legacy purchases with no enrollments row: estimate
-              // from the course's advertised duration.
-              const dNum = parseInt(duration);
-              if (!isNaN(dNum)) {
-                const dateObj = new Date(enrollDate);
-                if (!isNaN(dateObj.getTime())) {
-                  if (duration.toLowerCase().includes("week")) {
-                    dateObj.setDate(dateObj.getDate() + dNum * 7);
-                    endDate = dateObj.toLocaleDateString("en-CA");
-                  } else if (duration.toLowerCase().includes("month")) {
-                    dateObj.setMonth(dateObj.getMonth() + dNum);
-                    endDate = dateObj.toLocaleDateString("en-CA");
-                  } else {
-                    endDate = "N/A";
-                  }
+          let duration = cMap.get(purchase.courseTitle) || "";
+          let endDate = "";
+
+          if (purchase.accessUntil) {
+            // Real enrollment end date from the backend — preferred over
+            // any client-side estimate.
+            endDate = formatDate(purchase.accessUntil);
+          } else if (duration && enrollDate) {
+            // Fallback for legacy purchases with no enrollments row: estimate
+            // from the course's advertised duration.
+            const dNum = parseInt(duration);
+            if (!isNaN(dNum)) {
+              const dateObj = new Date(enrollDate);
+              if (!isNaN(dateObj.getTime())) {
+                if (duration.toLowerCase().includes("week")) {
+                  dateObj.setDate(dateObj.getDate() + dNum * 7);
+                  endDate = dateObj.toLocaleDateString("en-CA");
+                } else if (duration.toLowerCase().includes("month")) {
+                  dateObj.setMonth(dateObj.getMonth() + dNum);
+                  endDate = dateObj.toLocaleDateString("en-CA");
                 } else {
                   endDate = "N/A";
                 }
               } else {
                 endDate = "N/A";
               }
+            } else {
+              endDate = "N/A";
             }
-
-            csvRows.push([id, email, fullName, phone, address, stage, attempt, joined, courseTitle, enrollDate, endDate, duration].join(","));
           }
-        } else {
-          csvRows.push([id, email, fullName, phone, address, stage, attempt, joined, "None", "", "", ""].join(","));
+
+          csvRows.push([...rowPrefix, "Course", courseTitle, enrollDate, endDate, duration].join(","));
+        }
+
+        for (const mcq of mcqPurchases) {
+          const subjectTitle = `"${(mcq.subjectTitle || "").replace(/"/g, '""')}"`;
+          const enrollDate = mcq.date || "";
+          const endDate = mcq.accessUntil ? formatDate(mcq.accessUntil) : "";
+          csvRows.push([...rowPrefix, "MCQ", subjectTitle, enrollDate, endDate, ""].join(","));
+        }
+
+        for (const ts of testSeriesPurchases) {
+          const subjectTitle = `"${(ts.subjectTitle || "").replace(/"/g, '""')}"`;
+          const enrollDate = ts.date || "";
+          const endDate = ts.accessUntil ? formatDate(ts.accessUntil) : "Lifetime";
+          csvRows.push([...rowPrefix, "Test Series", subjectTitle, enrollDate, endDate, ""].join(","));
+        }
+
+        if (purchases.length === 0 && mcqPurchases.length === 0 && testSeriesPurchases.length === 0) {
+          csvRows.push([...rowPrefix, "None", "", "", "", ""].join(","));
         }
       }
 
@@ -2321,159 +2342,6 @@ function AffiliatesTab() {
 }
 
 // ─── BUNDLES TAB ────────────────────────────────────────────────────────
-
-function BundlesTab() {
-  const [bundles, setBundles] = useState<any[]>([]);
-  const [courses, setCourses] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [draft, setDraft] = useState<any | null>(null);
-
-  useEffect(() => {
-    async function load() {
-      try {
-        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-        const token = localStorage.getItem("caliber_jwt") || "";
-        const resB = await fetch(`${apiURL}/api/admin/course-bundles`, { headers: { "Authorization": `Bearer ${token}` } });
-        const resC = await fetch(`${apiURL}/api/courses`, { headers: { "Authorization": `Bearer ${token}` } });
-        if (resB.ok) setBundles(await resB.json());
-        if (resC.ok) setCourses(await resC.json());
-      } catch (e) { }
-      setLoading(false);
-    }
-    load();
-  }, []);
-
-  async function saveBundle() {
-    if (!draft.title || !draft.price) return;
-    try {
-      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-      const token = localStorage.getItem("caliber_jwt") || "";
-      const res = await fetch(`${apiURL}/api/admin/course-bundles`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify(draft)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setBundles(prev => {
-          const exists = prev.find(b => b.id === draft.id);
-          if (exists) return prev.map(b => b.id === draft.id ? draft : b);
-          return [...prev, { ...draft, id: data.id }];
-        });
-        setDraft(null);
-      }
-    } catch (e) {
-      alert("Save failed");
-    }
-  }
-
-  async function deleteBundle(id: string) {
-    if (!window.confirm("Delete this bundle pricing module?")) return;
-    try {
-      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-      const token = localStorage.getItem("caliber_jwt") || "";
-      await fetch(`${apiURL}/api/admin/course-bundles/${id}`, {
-        method: "DELETE", headers: { "Authorization": `Bearer ${token}` }
-      });
-      setBundles(prev => prev.filter(b => b.id !== id));
-    } catch (e) { }
-  }
-
-  function toggleCourse(courseId: string) {
-    setDraft((prev: any) => {
-      const ids = prev.courseIds || [];
-      if (ids.includes(courseId)) return { ...prev, courseIds: ids.filter((id: string) => id !== courseId) };
-      return { ...prev, courseIds: [...ids, courseId] };
-    });
-  }
-
-  if (loading) return <div className="p-10 text-center text-xs">Loading bundles...</div>;
-
-  return (
-    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-      {!draft ? (
-        <div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Tiered Pricing Modules</h2>
-            <button onClick={() => setDraft({ title: "", description: "", level: "Multiple", courseIds: [], price: 0 })} className="flex items-center gap-1.5 px-4 py-2 bg-signal-emerald text-white font-bold text-xs rounded-lg hover:bg-emerald-600 transition-colors">
-              <Plus className="w-3.5 h-3.5" /> Create Bundle
-            </button>
-          </div>
-          <div className="grid gap-4">
-            {bundles.length === 0 ? (
-              <p className="text-xs text-slate dark:text-paper/50 italic py-6 text-center bg-white dark:bg-line-gray-dark/20 rounded-xl border border-line-gray-light dark:border-line-gray-dark border-dashed">No bundles configured.</p>
-            ) : bundles.map(b => (
-              <div key={b.id} className="p-4 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-xl flex items-start justify-between">
-                <div>
-                  <h3 className="font-bold text-ink-navy dark:text-paper">{b.title}</h3>
-                  <p className="text-xs text-slate dark:text-paper/60 mt-1">{b.description || "No description"} — {b.courseIds?.length || 0} courses included</p>
-                  <p className="font-mono text-sm font-bold text-signal-emerald mt-2">₹{b.price}</p>
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => setDraft(b)} className="p-1.5 text-slate hover:text-signal-emerald"><Edit2 className="w-4 h-4" /></button>
-                  <button onClick={() => deleteBundle(b.id)} className="p-1.5 text-slate hover:text-alert-coral"><Trash2 className="w-4 h-4" /></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="font-heading font-bold text-lg">Edit Bundle</h3>
-            <button onClick={() => setDraft(null)} className="p-1.5 hover:bg-line-gray-light dark:hover:bg-line-gray-dark rounded-xl"><X className="w-4 h-4" /></button>
-          </div>
-          <div className="grid sm:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-semibold mb-1 block">Bundle Title</label>
-              <input className={inp} value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} placeholder="e.g. CA Inter Group 1 Complete" />
-            </div>
-            <div>
-              <label className="text-xs font-semibold mb-1 block">Discounted Price (₹)</label>
-              <input type="number" className={inp} value={draft.price} onChange={e => setDraft({ ...draft, price: Number(e.target.value) })} />
-            </div>
-            <div>
-              <label className="text-xs font-semibold mb-1 block">Bundle Level</label>
-              <select className={inp} value={draft.level || "Intermediate"} onChange={e => setDraft({ ...draft, level: e.target.value })}>
-                <option value="Foundation">Foundation</option>
-                <option value="Intermediate">Intermediate</option>
-                <option value="Final">Final</option>
-                <option value="Others">Others</option>
-              </select>
-            </div>
-            <div className="sm:col-span-2">
-              <label className="text-xs font-semibold mb-1 block">Description</label>
-              <textarea className={`${inp} resize-none`} rows={2} value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs font-semibold mb-2 block border-t border-line-gray-light dark:border-line-gray-dark pt-4">Select Courses to Bundle</label>
-            <div className="grid sm:grid-cols-2 gap-2 max-h-[300px] overflow-y-auto pr-2">
-              {courses.filter(c => (draft.level === "Others" ? c.level === null : c.level === (draft.level || "Intermediate"))).map(c => (
-                <div key={c.id} onClick={() => toggleCourse(c.id)} className={`p-3 rounded-lg border flex gap-3 items-start cursor-pointer transition-colors ${draft.courseIds?.includes(c.id) ? "border-signal-emerald bg-signal-emerald/5" : "border-line-gray-light dark:border-line-gray-dark hover:border-slate/40"}`}>
-                  <div className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center ${draft.courseIds?.includes(c.id) ? "bg-signal-emerald border-signal-emerald text-white" : "border-slate/40"}`}>
-                    {draft.courseIds?.includes(c.id) && <CheckCircle className="w-3 h-3" />}
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold">{c.title}</p>
-                    <p className="text-[10px] text-slate opacity-70">₹{c.price}</p>
-                  </div>
-                </div>
-              ))}
-              {courses.filter(c => (draft.level === "Others" ? c.level === null : c.level === (draft.level || "Intermediate"))).length === 0 && (
-                <p className="text-xs text-slate/50 py-4 col-span-2 text-center border border-dashed rounded-lg">No courses available for this level.</p>
-              )}
-            </div>
-          </div>
-          <div className="pt-2 flex justify-end">
-            <button onClick={saveBundle} className="px-5 py-2 bg-ink-navy text-white font-bold text-sm rounded-xl hover:bg-opacity-90">Save Bundle</button>
-          </div>
-        </div>
-      )}
-    </motion.div>
-  );
-}
-
 
 // ─── TEST SERIES TAB ──────────────────────────────────────────────────────
 interface TSSubjectRow {

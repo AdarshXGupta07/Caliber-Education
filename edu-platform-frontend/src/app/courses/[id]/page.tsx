@@ -43,10 +43,8 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const token = localStorage.getItem("caliber_jwt");
       if (!token) return;
-      const res = await fetch(`${apiURL}/api/auth/profile`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({})
+      const res = await fetch(`${apiURL}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
         const data = await res.json();
@@ -61,6 +59,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     isAuthenticated,
     verifications,
     purchasedCourseIds,
+    refreshPurchases,
     enrollFreeCourse,
     submitUTR
   } = useAuth();
@@ -231,7 +230,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
             }),
           });
           if (mRes.ok) {
-            await fetchUserEnrollment();
+            await Promise.all([fetchUserEnrollment(), refreshPurchases()]);
             if (course.deliveryType === "whatsapp") {
               router.push(`/courses/${course.id}/success`);
             } else {
@@ -266,7 +265,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
               }),
             });
             if (verifyRes.ok) {
-              await fetchUserEnrollment();
+              await Promise.all([fetchUserEnrollment(), refreshPurchases()]);
               if (course.deliveryType === "whatsapp") {
                 router.push(`/courses/${course.id}/success`);
               } else {
@@ -304,11 +303,6 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   };
 
   const isPurchasedBool = !!activeEnrollment;
-  let computedDaysLeft = 0;
-  if (activeEnrollment && activeEnrollment.access_until) {
-    const diff = new Date(activeEnrollment.access_until).getTime() - new Date().getTime();
-    computedDaysLeft = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
-  }
 
   return (
     <div className="pt-16 pb-20">
@@ -556,26 +550,21 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                       className="w-full py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm">
                       <Zap className="w-4 h-4" /> Enrol for Free
                     </button>
-                  ) : (
+                  ) : isPurchasedBool ? (
                     <div className="space-y-3">
-                      {isPurchasedBool && !activeEnrollment?.access_until ? (
-                        <div className="w-full py-3 bg-signal-emerald/10 border border-signal-emerald/20 text-signal-emerald font-bold rounded-lg flex items-center justify-center gap-2 text-sm">
-                          <CheckCircle className="w-4 h-4" /> Already Purchased
-                        </div>
-                      ) : (
-                        <button onClick={handleBuyNow} disabled={purchaseLoading}
-                          className="w-full py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                          <Lock className="w-4 h-4" /> {purchaseLoading ? "Processing Razorpay..." : isPurchasedBool ? `Extend with Razorpay (${computedDaysLeft}d left)` : "Pay with Razorpay"}
-                        </button>
-                      )}
-
-                      {isPurchasedBool && (
-                        <Link href="/dashboard?tab=courses"
-                          className="w-full py-3 mt-2 text-center border active:scale-[0.98] border-emerald-600/30 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-700 dark:text-emerald-400 font-bold rounded-lg transition-all flex items-center justify-center gap-2 text-sm">
-                          <MessageCircle className="w-4 h-4" /> Go to Course Deliveries Tracker
-                        </Link>
-                      )}
+                      <div className="w-full py-3 bg-signal-emerald/10 border border-signal-emerald/20 text-signal-emerald font-bold rounded-lg flex items-center justify-center gap-2 text-sm">
+                        <CheckCircle className="w-4 h-4" /> Already Purchased
+                      </div>
+                      <Link href="/dashboard?tab=courses"
+                        className="w-full py-3 text-center border active:scale-[0.98] border-emerald-600/30 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-700 dark:text-emerald-400 font-bold rounded-lg transition-all flex items-center justify-center gap-2 text-sm">
+                        <MessageCircle className="w-4 h-4" /> Go to My Courses Dashboard
+                      </Link>
                     </div>
+                  ) : (
+                    <button onClick={handleBuyNow} disabled={purchaseLoading}
+                      className="w-full py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                      <Lock className="w-4 h-4" /> {purchaseLoading ? "Processing Razorpay..." : "Pay with Razorpay"}
+                    </button>
                   )}
 
                   <div className="space-y-3 pt-4 border-t border-line-gray-light dark:border-line-gray-dark">

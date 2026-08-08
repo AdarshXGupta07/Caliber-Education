@@ -396,7 +396,7 @@ export default function MCQPackagesPage() {
       border: "border-emerald-500/30",
       text: "text-emerald-400",
     },
-    FOUNDATIONS: {
+    FOUNDATION: {
       label: "CA Foundation",
       tag: "Speed, Accuracy & Fundamentals",
       bg: "from-purple-500/20 via-pink-500/10 to-transparent",
@@ -481,7 +481,7 @@ export default function MCQPackagesPage() {
         <div className="max-w-7xl mx-auto px-6 sm:px-8 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
           {/* Level Tabs */}
           <div className="flex items-center p-1.5 bg-white/90 dark:bg-slate-900/90 border border-white/10 rounded-2xl w-full md:w-auto shadow-inner">
-            {(["FINAL", "INTERMEDIATE", "FOUNDATIONS"] as MCQLevel[]).map((level) => {
+            {(["FINAL", "INTERMEDIATE", "FOUNDATION"] as MCQLevel[]).map((level) => {
               const isActive = activeLevel === level;
               return (
                 <button
@@ -529,7 +529,7 @@ export default function MCQPackagesPage() {
             </div>
 
             {/* Quick Filter Group Chips (if level has groups) */}
-            {activeLevel !== "FOUNDATIONS" && (
+            {activeLevel !== "FOUNDATION" && (
               <div className="hidden sm:flex items-center gap-1.5 bg-white/70 dark:bg-slate-900/70 p-1 border border-white/10 rounded-xl text-xs">
                 {["ALL", "Group I", "Group II"].map((grp) => (
                   <button
@@ -586,8 +586,24 @@ export default function MCQPackagesPage() {
           </div>
         </div>
 
-        {/* Empty State */}
-        {filteredSubjects.length === 0 ? (
+        {/* Loading State */}
+        {loading ? (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="rounded-3xl border border-white/10 bg-white dark:bg-slate-900/60 p-6 space-y-4 animate-pulse">
+                <div className="flex items-center justify-between">
+                  <div className="h-5 w-16 rounded-lg bg-slate-200 dark:bg-white/10" />
+                  <div className="h-5 w-12 rounded-lg bg-slate-200 dark:bg-white/10" />
+                </div>
+                <div className="h-5 w-3/4 rounded bg-slate-200 dark:bg-white/10" />
+                <div className="h-3 w-full rounded bg-slate-200 dark:bg-white/10" />
+                <div className="h-3 w-2/3 rounded bg-slate-200 dark:bg-white/10" />
+                <div className="h-10 w-full rounded-xl bg-slate-200 dark:bg-white/10 mt-4" />
+              </div>
+            ))}
+          </div>
+        ) : /* Empty State */
+        filteredSubjects.length === 0 ? (
           <div className="text-center py-24 bg-slate-100/50 dark:bg-slate-900/30 border border-white/5 rounded-3xl backdrop-blur-xl">
             <BookOpen className="w-12 h-12 text-slate-600 mx-auto mb-3" />
             <h3 className="text-lg font-bold text-ink-navy dark:text-white">No subjects found</h3>

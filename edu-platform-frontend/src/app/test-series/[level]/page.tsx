@@ -165,7 +165,15 @@ export default function TestSeriesLevelPage({ params }: { params: Promise<{ leve
       </p>
 
       {loading ? (
-        <p className="text-sm text-slate dark:text-paper/50">Loading...</p>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 rounded-2xl p-5 space-y-3 animate-pulse">
+              <div className="h-3 w-16 bg-line-gray-light dark:bg-line-gray-dark rounded" />
+              <div className="h-4 w-3/4 bg-line-gray-light dark:bg-line-gray-dark rounded" />
+              <div className="h-3 w-1/2 bg-line-gray-light dark:bg-line-gray-dark rounded" />
+            </div>
+          ))}
+        </div>
       ) : subjects.length === 0 ? (
         <p className="text-sm text-slate dark:text-paper/60">No test series available for this level yet.</p>
       ) : (

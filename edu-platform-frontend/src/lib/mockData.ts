@@ -315,7 +315,7 @@ export interface MCQSet {
   id: string;
   seriesId?: string;
   title: string;
-  level?: "FINAL" | "INTERMEDIATE" | "FOUNDATIONS" | string;
+  level?: "FINAL" | "INTERMEDIATE" | "FOUNDATION" | string;
   groupName?: "GROUP_1" | "GROUP_2" | "BOTH" | "NONE" | string;
   subjectCode?: string;
   testType?: "COMPLETE_GROUP" | "FULL_SUBJECT" | "CHAPTER_WISE" | string;

@@ -20,6 +20,7 @@ interface AuthContextType {
   markProfileComplete: () => void;
   verifications: PaymentVerification[];
   purchasedCourseIds: string[];
+  refreshPurchases: () => Promise<void>;
   enrollFreeCourse: (courseId: string) => void;
   submitUTR: (courseId: string, utr: string) => void;
   approveVerification: (id: string) => void;
@@ -77,17 +78,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Real, backend-verified course enrolments (Razorpay purchases stored in
   // the `enrollments` table) — this is the source of truth for "which
   // courses does this user actually own", separate from the local-only free
-  // enrolments and mock verifications below.
-  useEffect(() => {
-    if (!mounted) return;
+  // enrolments and mock verifications below. Re-fetchable on demand via
+  // refreshPurchases() so pages can pull in a just-completed purchase
+  // immediately instead of waiting for the next login/mount.
+  const refreshPurchases = async () => {
     if (!user) { setRealPurchasedIds([]); return; }
     const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
     const token = localStorage.getItem("caliber_jwt") || "";
     if (!token) { setRealPurchasedIds([]); return; }
-    fetch(`${apiURL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(res => (res.ok ? res.json() : null))
-      .then(data => setRealPurchasedIds(data?.purchases || []))
-      .catch(() => setRealPurchasedIds([]));
+    try {
+      const res = await fetch(`${apiURL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = res.ok ? await res.json() : null;
+      setRealPurchasedIds(data?.purchases || []);
+    } catch {
+      setRealPurchasedIds([]);
+    }
+  };
+
+  useEffect(() => {
+    if (!mounted) return;
+    refreshPurchases();
   }, [user, mounted]);
 
   const login = async (email: string, password?: string, turnstileToken?: string) => {
@@ -210,6 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         markProfileComplete,
         verifications,
         purchasedCourseIds,
+        refreshPurchases,
         enrollFreeCourse,
         submitUTR,
         approveVerification,

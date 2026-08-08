@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { courses as defaultCourses, type Course } from "@/lib/mockData";
 import {
   ArrowRight, Lock, Users, Star, Clock, Zap,
-  Search, ChevronUp, ChevronDown, SlidersHorizontal, X, ArrowUp
+  Search, ChevronUp, ChevronDown, SlidersHorizontal, X, ArrowUp, Tag
 } from "lucide-react";
 
 // ─── Level Filter options ────────────
@@ -152,21 +152,18 @@ export default function CoursesPage() {
   const [showScrollTop, setShowScrollTop] = useState(false);
 
   const [courses, setCourses] = useState<Course[]>([]);
-  const [bundles, setBundles] = useState<any[]>([]);
+  const [loadingCourses, setLoadingCourses] = useState(true);
 
   useEffect(() => {
     async function loadData() {
       try {
         const url = process.env.NEXT_PUBLIC_API_URL || "";
-        // 1. Fetch courses
         const cRes = await fetch(`${url}/api/courses`);
         if (cRes.ok) setCourses(await cRes.json());
-
-        // 2. Fetch bundles
-        const bRes = await fetch(`${url}/api/courses/bundles`);
-        if (bRes.ok) setBundles(await bRes.json());
       } catch (e) {
-        console.error("Could not load courses or bundles", e);
+        console.error("Could not load courses", e);
+      } finally {
+        setLoadingCourses(false);
       }
     }
     loadData();
@@ -247,7 +244,7 @@ export default function CoursesPage() {
 
           {/* Bundle Builder Widget */}
           <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5, delay: 0.1 }} className="z-10">
-            <BundleBuilder courses={courses} bundles={bundles} onBuyIndividual={() => window.scrollTo({ top: 700, behavior: "smooth" })} />
+            <BundleBuilder courses={courses} loading={loadingCourses} onBuyIndividual={() => window.scrollTo({ top: 700, behavior: "smooth" })} />
           </motion.div>
         </div>
 
@@ -385,7 +382,19 @@ export default function CoursesPage() {
               )}
             </div>
 
-            {displayed.length > 0 ? (
+            {loadingCourses ? (
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                {[0, 1, 2, 3, 4, 5].map((i) => (
+                  <div key={i} className="h-64 rounded-xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 p-5 space-y-4 animate-pulse">
+                    <div className="h-4 w-16 bg-line-gray-light dark:bg-line-gray-dark rounded" />
+                    <div className="h-4 w-3/4 bg-line-gray-light dark:bg-line-gray-dark rounded" />
+                    <div className="h-3 w-full bg-line-gray-light dark:bg-line-gray-dark rounded" />
+                    <div className="h-3 w-2/3 bg-line-gray-light dark:bg-line-gray-dark rounded" />
+                    <div className="h-8 w-full bg-line-gray-light dark:bg-line-gray-dark rounded mt-6" />
+                  </div>
+                ))}
+              </div>
+            ) : displayed.length > 0 ? (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 <AnimatePresence mode="popLayout">
                   {displayed.map((course, i) => (
@@ -452,7 +461,7 @@ function CourseCard({ course, index }: { course: Course; index: number }) {
       transition={{ delay: index * 0.03, duration: 0.3 }}
       className="h-full"
     >
-      <Link href={`/courses/${course.id}`} className="group block h-full">
+      <Link href={isPurchased && !isComingSoon ? "/dashboard?tab=courses" : `/courses/${course.id}`} className="group block h-full">
         <div className="h-full flex flex-col bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark rounded-xl overflow-hidden hover:border-ink-navy dark:hover:border-paper transition-all duration-200 shadow-sm hover:shadow-md">
           <div className="p-5 flex flex-col flex-1 gap-4">
 
@@ -542,7 +551,7 @@ function CourseCard({ course, index }: { course: Course; index: number }) {
                 </span>
               ) : isPurchased ? (
                 <span className="flex items-center gap-1 text-xs font-semibold text-signal-emerald group-hover:gap-1.5 transition-all">
-                  Go to course
+                  Go to My Courses Dashboard
                   <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
                 </span>
               ) : (
@@ -560,17 +569,19 @@ function CourseCard({ course, index }: { course: Course; index: number }) {
   );
 }
 // ─── BUNDLE BUILDER WIDGET ──────────────────────────────────────────────────
-function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[]; bundles: any[]; onBuyIndividual: () => void }) {
+function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[]; loading: boolean; onBuyIndividual: () => void }) {
   const [level, setLevel] = useState<string>("Intermediate");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const { user, isAuthenticated, enrollFreeCourse, purchasedCourseIds, refreshPurchases } = useAuth();
 
   // Update selections when level changes (clear them so they don't buy mix-level bundles if not intended)
   useEffect(() => {
     setSelectedIds([]);
   }, [level]);
 
-  // Which courses apply to this level tab
-  const availableCourses = courses.filter(c => c.level === level && typeof c.price === "number" && c.price > 0);
+  // Which courses apply to this level tab — already-owned courses are excluded,
+  // you can't add something you already own to a new multi-course cart.
+  const availableCourses = courses.filter(c => c.level === level && typeof c.price === "number" && c.price > 0 && !purchasedCourseIds.includes(c.id));
 
   // Compute logic
   const toggleCourse = (id: string) => {
@@ -582,20 +593,66 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
     return sum + (c ? Number(c.price) || 0 : 0);
   }, 0);
 
-  // Evaluate if the exact selection forms a Bundle match
-  const selectedSorted = [...selectedIds].sort().join(",");
-  const exactBundleMatch = bundles.find(b => {
-    if (!b.course_ids) return false;
-    return [...b.course_ids].sort().join(",") === selectedSorted;
-  });
+  // ─── Coupon state ────────────────────────────────────────────────────────
+  const [couponCode, setCouponCode] = useState("");
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [appliedCoupon, setAppliedCoupon] = useState<{
+    code: string;
+    discount_amount: number;
+    message: string;
+  } | null>(null);
+  const [couponError, setCouponError] = useState("");
 
-  const isDiscounted = !!exactBundleMatch;
-  const finalPrice = isDiscounted ? Number(exactBundleMatch.price) : rawPrice;
-  const discountAmount = rawPrice - finalPrice;
+  // The applied discount was computed against a specific cart total — if the
+  // selection changes, it needs to be re-validated against the new total.
+  useEffect(() => {
+    setAppliedCoupon(null);
+    setCouponError("");
+  }, [selectedIds.join(",")]);
+
+  const handleApplyCoupon = async () => {
+    if (!couponCode.trim() || selectedIds.length === 0) return;
+    setCouponLoading(true);
+    setCouponError("");
+    setAppliedCoupon(null);
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/coupons/validate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({ code: couponCode.trim(), cart_amount: rawPrice }),
+      });
+      const data = await res.json();
+      if (data.valid) {
+        setAppliedCoupon({
+          code: data.code,
+          discount_amount: data.discount_amount,
+          message: data.message,
+        });
+      } else {
+        setCouponError(data.message || "Invalid coupon code.");
+      }
+    } catch {
+      setCouponError("Unable to validate coupon. Try again.");
+    } finally {
+      setCouponLoading(false);
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponCode("");
+    setCouponError("");
+  };
+
+  const finalPrice = Math.max(0, rawPrice - (appliedCoupon?.discount_amount || 0));
 
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   const router = useRouter();
-  const { user, isAuthenticated, enrollFreeCourse } = useAuth();
 
   const handleCheckout = async () => {
     if (!isAuthenticated) {
@@ -607,10 +664,7 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const token = localStorage.getItem("caliber_jwt") || "";
 
-      const payload: any = { courseIds: selectedIds };
-      if (exactBundleMatch) {
-        payload.bundleId = exactBundleMatch.id;
-      }
+      const payload: any = { courseIds: selectedIds, couponCode: appliedCoupon?.code || null };
 
       const res = await fetch(`${apiURL}/api/payments/create-order`, {
         method: "POST",
@@ -631,7 +685,7 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
         amount: orderData.amount,
         currency: orderData.currency || "INR",
         name: "CAliber Education",
-        description: exactBundleMatch ? exactBundleMatch.title : "Custom Course Bundle",
+        description: "Custom Course Bundle",
         order_id: orderData.orderId,
         handler: async function (response: any) {
           try {
@@ -646,6 +700,7 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
             });
             if (verifyRes.ok) {
               selectedIds.forEach(id => enrollFreeCourse(id));
+              await refreshPurchases();
               router.push("/dashboard?tab=courses");
             } else {
               alert("Payment verification failed. Please contact support.");
@@ -680,7 +735,7 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
           </h3>
           <span className="text-[10px] uppercase font-bold tracking-widest text-slate dark:text-paper/50">Custom Plan</span>
         </div>
-        <p className="text-xs text-slate dark:text-paper/60 mt-1">Select your level, pick multiple courses, and watch the price drop automatically!</p>
+        <p className="text-xs text-slate dark:text-paper/60 mt-1">Select your level, pick multiple courses, and check out in one payment.</p>
       </div>
 
       <div className="p-5 space-y-5">
@@ -706,7 +761,13 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
           </label>
 
           <div className="max-h-[160px] overflow-y-auto no-scrollbar space-y-1.5 border border-line-gray-light dark:border-line-gray-dark p-2 rounded-xl bg-paper/50 dark:bg-black/10">
-            {availableCourses.length === 0 ? (
+            {loading ? (
+              <div className="space-y-1.5">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="h-11 rounded-lg bg-line-gray-light/60 dark:bg-line-gray-dark/40 animate-pulse" />
+                ))}
+              </div>
+            ) : availableCourses.length === 0 ? (
               <p className="text-center text-xs text-slate/50 py-4 italic">No premium courses available yet for this level.</p>
             ) : availableCourses.map((c: any) => (
               <div
@@ -727,6 +788,48 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
             ))}
           </div>
         </div>
+
+        {selectedIds.length > 0 && (
+          <div className="space-y-2">
+            {appliedCoupon ? (
+              <div className="flex items-center justify-between p-3 bg-signal-emerald/10 border border-signal-emerald/30 rounded-xl">
+                <div className="flex items-center gap-2">
+                  <Tag className="w-4 h-4 text-signal-emerald" />
+                  <div>
+                    <p className="text-xs font-bold text-signal-emerald">{appliedCoupon.code}</p>
+                    <p className="text-[10px] text-signal-emerald/70">{appliedCoupon.message}</p>
+                  </div>
+                </div>
+                <button onClick={handleRemoveCoupon} className="p-1 rounded-lg text-signal-emerald/60 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={couponCode}
+                    onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                    placeholder="Coupon code"
+                    className="flex-1 px-3 py-2 text-xs font-mono uppercase border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/30 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors tracking-wider placeholder:lowercase placeholder:tracking-normal placeholder:font-sans"
+                    onKeyDown={(e) => e.key === "Enter" && handleApplyCoupon()}
+                  />
+                  <button
+                    onClick={handleApplyCoupon}
+                    disabled={couponLoading || !couponCode.trim()}
+                    className="px-4 py-2 text-xs font-bold border border-ink-navy dark:border-paper text-ink-navy dark:text-paper rounded-lg hover:bg-ink-navy/5 dark:hover:bg-paper/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {couponLoading ? "..." : "Apply"}
+                  </button>
+                </div>
+                {couponError && (
+                  <p className="text-[10px] font-semibold text-alert-coral mt-1">{couponError}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="p-5 border-t border-line-gray-light dark:border-line-gray-dark bg-slate-50/50 dark:bg-black/20">
@@ -735,16 +838,11 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
             <p className="text-[10px] font-bold text-slate dark:text-paper/40 uppercase tracking-widest">Total Price</p>
             <div className="flex items-end gap-2">
               <span className="font-heading font-extrabold text-2xl text-ink-navy dark:text-paper">₹{finalPrice.toLocaleString()}</span>
-              {isDiscounted && discountAmount > 0 && (
+              {appliedCoupon && appliedCoupon.discount_amount > 0 && (
                 <span className="text-xs font-bold text-slate/40 line-through pb-1">₹{rawPrice.toLocaleString()}</span>
               )}
             </div>
           </div>
-          {isDiscounted && (
-            <div className="px-2 py-1 bg-alert-coral text-white font-bold text-[9px] uppercase tracking-wider rounded">
-              Bundle Discount Applied
-            </div>
-          )}
         </div>
 
         <button
@@ -752,7 +850,7 @@ function BundleBuilder({ courses, bundles, onBuyIndividual }: { courses: Course[
           onClick={handleCheckout}
           className={`w-full py-3 rounded-xl font-bold text-sm transition-all focus:outline-none flex items-center justify-center gap-2 ${selectedIds.length > 0 && !purchaseLoading ? "bg-signal-emerald text-white hover:opacity-90 active:scale-[0.98] shadow-md shadow-emerald-500/20" : "bg-line-gray-light dark:bg-line-gray-dark text-slate/50 cursor-not-allowed"}`}
         >
-          {purchaseLoading ? "Processing..." : exactBundleMatch ? "Buy Complete Bundle" : selectedIds.length > 1 ? "Buy Selected Plan" : "Buy Course"}
+          {purchaseLoading ? "Processing..." : selectedIds.length > 1 ? "Buy Selected Plan" : "Buy Course"}
           {!purchaseLoading && <ArrowRight className="w-4 h-4" />}
         </button>
         <p className="text-center mt-3 text-[10px] text-slate/60 hover:underline cursor-pointer" onClick={onBuyIndividual}>Prefer browsing individual courses instead?</p>

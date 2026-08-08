@@ -1,4 +1,4 @@
-export type MCQLevel = "FINAL" | "INTERMEDIATE" | "FOUNDATIONS";
+export type MCQLevel = "FINAL" | "INTERMEDIATE" | "FOUNDATION";
 export type PricingDuration = "1_month" | "3_months" | "6_months" | "1_year";
 
 export interface DurationPriceMap {
@@ -178,7 +178,7 @@ export function calculateMCQCartPrice(
           message: `Get all ${group} subjects for just ₹${bPrice}${duration === "1_month" ? "/mo" : ""} (Normally ₹${fullBaseSum})`,
         };
       }
-    } else if (level !== "FOUNDATIONS" && selectedSet.size < levelSubjects.length) {
+    } else if (level !== "FOUNDATION" && selectedSet.size < levelSubjects.length) {
       // User has selected full Group 1 or full Group 2, recommend Both Groups Super Bundle
       const bothBundle = levelBundles.find((b) => b.groupName === "Both Groups");
       if (bothBundle) {
