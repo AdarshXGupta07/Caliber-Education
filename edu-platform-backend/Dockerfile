@@ -16,5 +16,9 @@ COPY . .
 # Expose backend port
 EXPOSE 8000
 
-# Start FastAPI using uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start FastAPI using uvicorn. Render injects its own $PORT (currently 10000)
+# and health-checks that exact port — a hardcoded --port 8000 here made the
+# container listen on the wrong port and the deploy never went live. Shell
+# form (not exec-form JSON) is required so ${PORT:-8000} actually expands;
+# falls back to 8000 for local `docker run` where $PORT isn't set.
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
