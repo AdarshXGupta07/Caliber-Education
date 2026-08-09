@@ -74,3 +74,13 @@ async def health_check():
         "version": "1.0.0",
         "docs": "/docs",
     }
+
+
+# Render's health check is hitting the literal path "/." (not "/") on this
+# deployment — most HTTP clients normalize away a trailing "/." dot-segment
+# before sending the request, but whatever's probing here isn't, so it 404s
+# forever and Render restart-loops the service. Answering "/." directly
+# sidesteps needing to chase down which Render setting controls that path.
+@app.get("/.", include_in_schema=False)
+async def health_check_dot():
+    return await health_check()
