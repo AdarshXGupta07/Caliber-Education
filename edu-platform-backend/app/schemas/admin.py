@@ -28,3 +28,9 @@ class AdminSummaryResponse(BaseModel):
     pendingPayments: int
     totalMcqSets: int
     pendingSubmissions: int
+
+
+class MentorPermissionsUpdateRequest(BaseModel):
+    evaluate_papers: Optional[bool] = None
+    manage_sessions: Optional[bool] = None
+    manage_test_series: Optional[bool] = None

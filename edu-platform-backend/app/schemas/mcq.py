@@ -152,10 +152,22 @@ class QuestionAttemptAnalysis(BaseModel):
 
 
 class TestSubmissionV2Request(BaseModel):
-    answers: List[Optional[int]]  # Array index matching flattened questions
+    answers: Dict[str, Optional[int]]  # question ID -> selected option index (or null if skipped)
     perQuestionTimes: List[float]
     elapsedSeconds: int
-    markedForReview: List[int] = []
+    attemptId: Optional[str] = None  # links this submission to a persisted mcq_attempt_sessions row
+
+
+class AttemptStartRequest(BaseModel):
+    questionOrder: List[str] = []  # client-computed display order (question IDs) for a fresh attempt
+
+
+class AttemptProgressRequest(BaseModel):
+    answers: Dict[str, Optional[int]]
+    perQuestionTimes: List[float]
+    currentIndex: int
+    sectionElapsed: Dict[str, float] = {}
+    elapsedSeconds: int = 0  # display-only, never trusted for scoring/expiry
 
 
 class SubmissionAnalyticsResponse(BaseModel):

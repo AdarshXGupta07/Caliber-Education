@@ -5,8 +5,9 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/context/AuthContext";
+import { useTestGuard } from "@/context/TestGuardContext";
 import { useEffect, useState } from "react";
-import { Sun, Moon, BookOpen, Menu, X, LogOut, LayoutDashboard, Shield, Zap } from "lucide-react";
+import { Sun, Moon, Menu, X, LogOut, LayoutDashboard, Shield, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const navLinks = [
@@ -19,10 +20,22 @@ const navLinks = [
 export function Navbar() {
   const { theme, setTheme } = useTheme();
   const { isAuthenticated, user, logout, purchasedCourseIds } = useAuth();
+  const { isTestActive, guardNavigate, guardAction } = useTestGuard();
   const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+
+  // No-op passthrough on every page except an active quiz attempt — only
+  // then does clicking a nav link intercept navigation with the Leave Test
+  // confirmation instead of navigating immediately.
+  const guardedClick = (href: string) => (e: React.MouseEvent) => {
+    if (!isTestActive) return;
+    e.preventDefault();
+    guardNavigate(href);
+  };
+
+  const guardedLogout = () => guardAction(logout);
 
   useEffect(() => {
     setMounted(true);
@@ -41,7 +54,7 @@ export function Navbar() {
         <div className="flex items-center justify-between h-16">
 
           {/* Logo */}
-          <Link href="/" className="flex items-center gap-3 group">
+          <Link href="/" onClick={guardedClick("/")} className="flex items-center gap-3 group">
             <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full overflow-hidden flex items-center justify-center group-hover:scale-105 transition-transform flex-shrink-0 relative bg-white/10">
               <Image
                 src={isAuthenticated && purchasedCourseIds?.length > 0 ? "/PREMIUM.jpg" : "/NORMAL.jpg"}
@@ -58,7 +71,7 @@ export function Navbar() {
           {/* Desktop Nav */}
           <nav className="hidden md:flex items-center gap-1">
             {navLinks.map((link) => (
-              <Link key={link.href} href={link.href}
+              <Link key={link.href} href={link.href} onClick={guardedClick(link.href)}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isActive(link.href)
                   ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold"
                   : "text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
@@ -67,7 +80,7 @@ export function Navbar() {
               </Link>
             ))}
             {/* MCQ — primary pill */}
-            <Link href="/mcq"
+            <Link href="/mcq" onClick={guardedClick("/mcq")}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${isActive("/mcq")
                 ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold"
                 : "text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
@@ -77,7 +90,7 @@ export function Navbar() {
             </Link>
 
             {isAuthenticated && (
-              <Link href="/dashboard"
+              <Link href="/dashboard" onClick={guardedClick("/dashboard")}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isActive("/dashboard")
                   ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold"
                   : "text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
@@ -99,15 +112,15 @@ export function Navbar() {
             {isAuthenticated ? (
               <div className="flex items-center gap-2">
                 {user && ["admin", "super_admin", "mentor"].includes(user.role) && (
-                  <Link href="/admin" className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-alert-coral border border-alert-coral/30 rounded-lg hover:bg-alert-coral/10 transition-colors">
-                    <Shield className="w-3.5 h-3.5" /> Admin
+                  <Link href="/admin" onClick={guardedClick("/admin")} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-alert-coral border border-alert-coral/30 rounded-lg hover:bg-alert-coral/10 transition-colors">
+                    <Shield className="w-3.5 h-3.5" /> {user.role === "mentor" ? "Mentor" : "Admin"}
                   </Link>
                 )}
-                <Link href="/profile" title="My Profile"
+                <Link href="/profile" onClick={guardedClick("/profile")} title="My Profile"
                   className="w-9 h-9 rounded-full bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-heading font-bold text-sm flex items-center justify-center hover:opacity-90 active:scale-[0.96] transition-all shrink-0">
                   {user?.email?.[0]?.toUpperCase() || "?"}
                 </Link>
-                <button onClick={logout} className="p-2 rounded-lg text-slate dark:text-paper/70 hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors" aria-label="Logout">
+                <button onClick={guardedLogout} className="p-2 rounded-lg text-slate dark:text-paper/70 hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors" aria-label="Logout">
                   <LogOut className="w-4 h-4" />
                 </button>
               </div>
@@ -144,13 +157,13 @@ export function Navbar() {
             className="md:hidden bg-paper dark:bg-ink-navy border-b border-line-gray-light dark:border-line-gray-dark overflow-hidden">
             <div className="px-4 py-4 space-y-1">
               {navLinks.map((link) => (
-                <Link key={link.href} href={link.href} onClick={() => setMenuOpen(false)}
+                <Link key={link.href} href={link.href} onClick={(e) => { guardedClick(link.href)(e); if (!e.defaultPrevented) setMenuOpen(false); }}
                   className={`block px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive(link.href) ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold" : "text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
                     }`}>
                   {link.label}
                 </Link>
               ))}
-              <Link href="/mcq" onClick={() => setMenuOpen(false)}
+              <Link href="/mcq" onClick={(e) => { guardedClick("/mcq")(e); if (!e.defaultPrevented) setMenuOpen(false); }}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive("/mcq") ? "text-ink-navy dark:text-paper bg-line-gray-light/50 dark:bg-line-gray-dark/50 font-semibold" : "text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50"
                   }`}>
                 <Zap className="w-3.5 h-3.5" /> MCQ
@@ -159,19 +172,19 @@ export function Navbar() {
               <div className="pt-2 border-t border-line-gray-light dark:border-line-gray-dark">
                 {isAuthenticated ? (
                   <div className="space-y-1">
-                    <Link href="/dashboard" onClick={() => setMenuOpen(false)} className="block px-4 py-2.5 text-sm font-semibold text-ink-navy dark:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">Dashboard</Link>
-                    <Link href="/profile" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-ink-navy dark:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">
+                    <Link href="/dashboard" onClick={(e) => { guardedClick("/dashboard")(e); if (!e.defaultPrevented) setMenuOpen(false); }} className="block px-4 py-2.5 text-sm font-semibold text-ink-navy dark:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">Dashboard</Link>
+                    <Link href="/profile" onClick={(e) => { guardedClick("/profile")(e); if (!e.defaultPrevented) setMenuOpen(false); }} className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-ink-navy dark:text-paper hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">
                       <span className="w-5 h-5 rounded-full bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-heading font-bold text-[10px] flex items-center justify-center shrink-0">
                         {user?.email?.[0]?.toUpperCase() || "?"}
                       </span>
                       My Profile
                     </Link>
                     {user && ["admin", "super_admin", "mentor"].includes(user.role) && (
-                      <Link href="/admin" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-alert-coral hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">
-                        <Shield className="w-3.5 h-3.5" /> Admin
+                      <Link href="/admin" onClick={(e) => { guardedClick("/admin")(e); if (!e.defaultPrevented) setMenuOpen(false); }} className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-alert-coral hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">
+                        <Shield className="w-3.5 h-3.5" /> {user.role === "mentor" ? "Mentor" : "Admin"}
                       </Link>
                     )}
-                    <button onClick={() => { logout(); setMenuOpen(false); }} className="block w-full text-left px-4 py-2.5 text-sm font-medium text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">Sign Out</button>
+                    <button onClick={() => { guardedLogout(); setMenuOpen(false); }} className="block w-full text-left px-4 py-2.5 text-sm font-medium text-slate dark:text-paper/70 hover:bg-line-gray-light/50 dark:hover:bg-line-gray-dark/50 rounded-lg">Sign Out</button>
                   </div>
                 ) : (
                   <div className="space-y-1">

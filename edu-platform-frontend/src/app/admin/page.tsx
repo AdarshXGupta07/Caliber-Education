@@ -421,7 +421,22 @@ function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<AdminTab>("payments");
   const [series, setSeries] = useState<MCQSeries[]>([]);
   const [stats, setStats] = useState({ users: 0, courses: 0, pendingPayments: 0 });
-  const { verifications } = useAuth();
+  const { verifications, user } = useAuth();
+  const isMentorOnly = user?.role === "mentor";
+  const [mentorPerms, setMentorPerms] = useState<{ evaluate_papers: boolean; manage_sessions: boolean; manage_test_series: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!isMentorOnly) return;
+    async function loadMyPermissions() {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+        const res = await fetch(`${apiURL}/api/admin/my-permissions`, { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok) setMentorPerms(await res.json());
+      } catch (e) { }
+    }
+    loadMyPermissions();
+  }, [isMentorOnly]);
 
   useEffect(() => {
     async function loadSeries() {
@@ -475,7 +490,7 @@ function AdminDashboard() {
     loadStats();
   }, []);
 
-  const tabs: { id: AdminTab | "mcq_v2"; label: string }[] = [
+  const allTabs: { id: AdminTab | "mcq_v2"; label: string }[] = [
     { id: "payments", label: "Payments" },
     { id: "users", label: "Users" },
     { id: "coupons", label: "Coupons" },
@@ -485,8 +500,31 @@ function AdminDashboard() {
     { id: "sessions" as any, label: "1:1 Sessions" },
     { id: "courses", label: "Courses" },
     { id: "evaluations", label: "Evaluations" },
+    { id: "mentors" as any, label: "Mentors" },
     { id: "messages" as any, label: "Messages" },
   ];
+
+  // A mentor only ever sees the tabs backed by endpoints they're actually
+  // permitted to call — everything else (Payments, Users, Mentors, etc.) is
+  // admin-only server-side regardless, so showing those tabs would just lead
+  // to a dead/empty screen after clicking them.
+  const MENTOR_TAB_PERMISSION: Record<string, keyof NonNullable<typeof mentorPerms>> = {
+    test_series: "manage_test_series",
+    sessions: "manage_sessions",
+    evaluations: "evaluate_papers",
+  };
+  const tabs = isMentorOnly
+    ? allTabs.filter((t) => {
+        const permKey = MENTOR_TAB_PERMISSION[t.id as string];
+        return permKey ? !!mentorPerms?.[permKey] : false;
+      })
+    : allTabs;
+
+  useEffect(() => {
+    if (isMentorOnly && mentorPerms && tabs.length > 0 && !tabs.some((t) => t.id === activeTab)) {
+      setActiveTab(tabs[0].id as AdminTab);
+    }
+  }, [isMentorOnly, mentorPerms, tabs, activeTab]);
 
   return (
     <div className="pt-16 min-h-screen bg-line-gray-light/20 dark:bg-line-gray-dark/10 pb-20">
@@ -497,8 +535,8 @@ function AdminDashboard() {
               <Shield className="w-5 h-5 text-alert-coral" />
             </div>
             <div>
-              <p className="text-xs font-mono text-alert-coral uppercase tracking-widest">Admin View</p>
-              <h1 className="font-heading font-extrabold text-2xl sm:text-3xl text-ink-navy dark:text-paper">Admin Dashboard</h1>
+              <p className="text-xs font-mono text-alert-coral uppercase tracking-widest">{isMentorOnly ? "Mentor View" : "Admin View"}</p>
+              <h1 className="font-heading font-extrabold text-2xl sm:text-3xl text-ink-navy dark:text-paper">{isMentorOnly ? "Mentor Dashboard" : "Admin Dashboard"}</h1>
             </div>
           </div>
         </motion.div>
@@ -529,6 +567,12 @@ function AdminDashboard() {
           ))}
         </div>
 
+        {isMentorOnly && mentorPerms && tabs.length === 0 && (
+          <div className="text-center py-16 text-slate dark:text-paper/50 text-sm">
+            You don&apos;t have any panel permissions yet. Ask an admin to grant you access from the Mentors tab.
+          </div>
+        )}
+
         <AnimatePresence mode="wait">
           {(activeTab as string) === "payments" && <PaymentsTab key="payments" />}
           {(activeTab as string) === "users" && <UsersTab key="users" />}
@@ -541,6 +585,7 @@ function AdminDashboard() {
           {(activeTab as string) === "test_series" && <TestSeriesTab key="test_series" />}
           {(activeTab as string) === "sessions" && <SessionsTab key="sessions" />}
           {(activeTab as string) === "evaluations" && <EvaluationsTab key="evaluations" />}
+          {(activeTab as string) === "mentors" && <MentorsTab key="mentors" />}
           {(activeTab as string) === "messages" && <MessagesTab key="messages" />}
         </AnimatePresence>
       </div>
@@ -1816,6 +1861,124 @@ interface CouponItem {
   applicable_course_ids: string[];
   is_active: boolean;
   created_at: string;
+}
+
+interface MentorPermissions {
+  evaluate_papers: boolean;
+  manage_sessions: boolean;
+  manage_test_series: boolean;
+}
+
+interface MentorRow {
+  id: string;
+  name?: string;
+  specialty?: string;
+  profile_id?: string;
+  profiles?: { email?: string } | null;
+  permissions: MentorPermissions;
+}
+
+const MENTOR_PERMISSION_LABELS: { key: keyof MentorPermissions; label: string; help: string }[] = [
+  { key: "evaluate_papers", label: "Evaluate Papers", help: "Review test-series submissions, upload checked copies, award marks" },
+  { key: "manage_sessions", label: "Manage 1:1 Sessions", help: "Schedule and mark their own assigned sessions complete" },
+  { key: "manage_test_series", label: "Manage Test Series", help: "Author/edit test-series subjects, bundles, and papers" },
+];
+
+function MentorsTab() {
+  const [mentors, setMentors] = useState<MentorRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/mentors`, {
+        headers: { "Authorization": `Bearer ${token}` },
+      });
+      if (res.ok) setMentors(await res.json());
+    } catch (e) {
+      console.error("Failed loading mentors", e);
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function togglePermission(mentorId: string, key: keyof MentorPermissions, value: boolean) {
+    const saveKey = `${mentorId}:${key}`;
+    setSavingKey(saveKey);
+    // Optimistic update — reverted below if the request fails.
+    setMentors((prev) => prev.map((m) => (m.id === mentorId ? { ...m, permissions: { ...m.permissions, [key]: value } } : m)));
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/mentors/${mentorId}/permissions`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ [key]: value }),
+      });
+      if (!res.ok) throw new Error("Request failed");
+    } catch {
+      setMentors((prev) => prev.map((m) => (m.id === mentorId ? { ...m, permissions: { ...m.permissions, [key]: !value } } : m)));
+      alert("Couldn't update this permission. Please try again.");
+    }
+    setSavingKey(null);
+  }
+
+  return (
+    <motion.div key="mentors" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Mentor Permissions</h2>
+          <p className="text-xs text-slate dark:text-paper/50 mt-0.5">Control what each mentor is allowed to do. Enforced server-side, not just hidden from the UI.</p>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-12 text-slate dark:text-paper/50 text-sm">Loading mentors...</div>
+      ) : mentors.length === 0 ? (
+        <div className="text-center py-12 text-slate dark:text-paper/50 text-sm bg-white dark:bg-line-gray-dark/20 border border-line-gray-light dark:border-line-gray-dark rounded-2xl">
+          No mentors yet. Promote a user to the mentor role from the Users tab first.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {mentors.map((m, i) => (
+            <motion.div key={m.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
+              className="rounded-2xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 p-5 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-signal-emerald/20 flex items-center justify-center text-signal-emerald text-xs font-bold shrink-0">
+                  {(m.name || m.profiles?.email || "?")[0].toUpperCase()}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-ink-navy dark:text-paper">{m.name || "Unnamed mentor"}</p>
+                  <p className="text-xs text-slate dark:text-paper/50">{m.profiles?.email || "—"}</p>
+                </div>
+              </div>
+              <div className="grid sm:grid-cols-3 gap-3 pt-3 border-t border-line-gray-light dark:border-line-gray-dark">
+                {MENTOR_PERMISSION_LABELS.map(({ key, label, help }) => (
+                  <label key={key} className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!m.permissions[key]}
+                      disabled={savingKey === `${m.id}:${key}`}
+                      onChange={(e) => togglePermission(m.id, key, e.target.checked)}
+                      className="accent-signal-emerald w-4 h-4 mt-0.5 flex-shrink-0"
+                    />
+                    <div>
+                      <p className="text-xs font-semibold text-ink-navy dark:text-paper">{label}</p>
+                      <p className="text-[10px] text-slate dark:text-paper/50 mt-0.5">{help}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </motion.div>
+  );
 }
 
 interface CouponDraft {

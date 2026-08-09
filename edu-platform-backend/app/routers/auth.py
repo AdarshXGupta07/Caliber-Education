@@ -430,3 +430,17 @@ async def reset_password(body: ResetPasswordRequest):
         print(f"[AUTH] Password reset failed: {e}")
         raise HTTPException(status_code=400, detail="Invalid or expired reset link. Please request a new one.")
     return {"success": True, "message": "Password updated successfully"}
+
+
+@router.post("/logout")
+async def logout(current_user: dict = Depends(get_current_user), db: Client = Depends(get_db)):
+    """Invalidates the caller's current JWT server-side by rotating
+    profiles.active_session_id to a fresh value — the single-active-session
+    check in get_current_user() then rejects this token on its next use,
+    since its embedded session_id claim can never match again. Previously
+    there was no backend logout at all: the frontend only cleared
+    localStorage, so a "logged out" JWT stayed valid (matched
+    active_session_id) until it naturally expired or another login
+    overwrote the session elsewhere."""
+    db.table("profiles").update({"active_session_id": str(uuid.uuid4())}).eq("id", current_user["id"]).execute()
+    return {"success": True}

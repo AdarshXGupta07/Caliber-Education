@@ -14,7 +14,7 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isMounted: boolean;
-  login: (email: string, password?: string, turnstileToken?: string) => Promise<void>;
+  login: (email: string, password?: string, turnstileToken?: string) => Promise<User>;
   setSession: (token: string, user: User) => void;
   logout: () => void;
   markProfileComplete: () => void;
@@ -118,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.setItem("caliber_jwt", data.token);
       }
       setUser(data.user);
+      return data.user;
     } catch (err: any) {
       // No mock-user fallback: a failed login must surface as a failed
       // login, not silently sign the caller in (this previously let anyone
@@ -135,6 +136,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    // Best-effort — invalidates the JWT server-side (rotates
+    // profiles.active_session_id) so it can't be reused after logout, but a
+    // network failure here must never block the local sign-out below.
+    const token = localStorage.getItem("caliber_jwt");
+    if (token) {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      fetch(`${apiURL}/api/auth/logout`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => { /* local sign-out still proceeds below */ });
+    }
     setUser(null);
     localStorage.removeItem("caliber_user");
     localStorage.removeItem("caliber_jwt");

@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { ReactNode } from "react";
-import { BookOpen } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 
 interface AuthShellProps {
   children: ReactNode;
@@ -11,13 +12,27 @@ interface AuthShellProps {
 }
 
 export function AuthShell({ children, progressStep, progressTotal }: AuthShellProps) {
+  // Same premium/normal logo logic as Navbar.tsx — these pages are reached
+  // almost exclusively pre-auth, where this already resolves to NORMAL.jpg
+  // (the previous static BookOpen icon here was disconnected from that
+  // logic entirely). Still correctly shows PREMIUM.jpg for the edge case of
+  // an already-authenticated premium user landing on e.g. /reset-password.
+  const { isAuthenticated, purchasedCourseIds } = useAuth();
+
   return (
     <div className="pt-16 min-h-screen flex items-center justify-center bg-line-gray-light/30 dark:bg-line-gray-dark/10 px-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <Link href="/" className="inline-flex items-center gap-2">
-            <div className="w-8 h-8 bg-signal-emerald rounded-lg flex items-center justify-center">
-              <BookOpen className="w-4 h-4 text-white" />
+            <div className="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center relative bg-white/10">
+              <Image
+                src={isAuthenticated && purchasedCourseIds?.length > 0 ? "/PREMIUM.jpg" : "/NORMAL.jpg"}
+                alt="Caliber Education Logo"
+                fill
+                sizes="32px"
+                unoptimized
+                className="object-cover"
+              />
             </div>
             <span className="font-heading font-bold text-xl text-ink-navy dark:text-paper">CAliber</span>
           </Link>

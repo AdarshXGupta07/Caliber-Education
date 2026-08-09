@@ -13,11 +13,55 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.dependencies import require_admin, require_mentor, require_super_admin
 from app.routers.payments import grant_test_series_subjects
-from app.schemas.admin import ManualEnrollRequest
+from app.schemas.admin import ManualEnrollRequest, MentorPermissionsUpdateRequest
 from app.schemas.courses import CourseUpsertRequest
 from app.schemas.mcq import BulkImportRequest
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
+
+
+# ─── Mentor Permission System ──────────────────────────────────────────────────
+# Centralized, scalable permission model: one mentor_permissions row per
+# mentor, holding a single `permissions` jsonb blob rather than one DB column
+# per capability — adding a future permission needs zero migration, just a
+# new key. Every check here fails closed: no mentors row, no permissions
+# row, or a missing/false key all deny.
+
+async def _get_own_mentor_ids(current_user: dict, db: Client) -> set:
+    """Resolves the calling mentor's own mentors-table row id(s), matched via
+    profile_id — the same lookup admin_list_sessions already used inline to
+    scope a mentor's own bookings, shared here so it isn't duplicated."""
+    rows = db.table("mentors").select("id").eq("profile_id", current_user["id"]).execute()
+    return {m["id"] for m in (rows.data or [])}
+
+
+async def _mentor_has_permission(current_user: dict, permission_key: str, db: Client) -> bool:
+    """Admins/super_admins always pass. A mentor needs an explicit True for
+    this permission_key in their own mentor_permissions row."""
+    if current_user.get("role") in {"admin", "super_admin"}:
+        return True
+    if current_user.get("role") != "mentor":
+        return False
+    mentor_ids = await _get_own_mentor_ids(current_user, db)
+    if not mentor_ids:
+        return False
+    perm_res = db.table("mentor_permissions").select("permissions").in_("mentor_id", list(mentor_ids)).execute()
+    for row in (perm_res.data or []):
+        if bool((row.get("permissions") or {}).get(permission_key, False)):
+            return True
+    return False
+
+
+@router.get("/my-permissions")
+async def get_my_permissions(staff: dict = Depends(require_mentor), db: Client = Depends(get_db)):
+    """Self-serve permission check so the frontend can decide which admin-panel
+    tabs to show, without needing the admin-only mentor list endpoint."""
+    return {
+        "role": staff.get("role"),
+        "evaluate_papers": await _mentor_has_permission(staff, "evaluate_papers", db),
+        "manage_sessions": await _mentor_has_permission(staff, "manage_sessions", db),
+        "manage_test_series": await _mentor_has_permission(staff, "manage_test_series", db),
+    }
 
 
 # ─── Dashboard Summary ────────────────────────────────────────────────────────
@@ -510,16 +554,20 @@ async def admin_delete_bundle(
 # ─── Test Series admin CRUD ──────────────────────────────────────────────────
 
 @router.get("/test-series/subjects")
-async def admin_list_ts_subjects(admin: dict = Depends(require_admin), db: Client = Depends(get_db)):
+async def admin_list_ts_subjects(staff: dict = Depends(require_mentor), db: Client = Depends(get_db)):
+    if not await _mentor_has_permission(staff, "manage_test_series", db):
+        raise HTTPException(status_code=403, detail="You don't have permission to manage test series")
     return db.table("test_series_subjects").select("*").order("sort_order").execute().data or []
 
 
 @router.patch("/test-series/subjects/{subject_id}")
 async def admin_update_ts_subject(
     subject_id: str, body: dict,
-    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+    staff: dict = Depends(require_mentor), db: Client = Depends(get_db),
 ):
     """Set price / toggle active. Catalog itself is seeded from the product sheet."""
+    if not await _mentor_has_permission(staff, "manage_test_series", db):
+        raise HTTPException(status_code=403, detail="You don't have permission to manage test series")
     allowed = {k: v for k, v in body.items() if k in {"price", "is_active", "name", "description", "sort_order"}}
     if not allowed:
         raise HTTPException(status_code=400, detail="Nothing to update")
@@ -528,15 +576,19 @@ async def admin_update_ts_subject(
 
 
 @router.get("/test-series/bundles")
-async def admin_list_ts_bundles(admin: dict = Depends(require_admin), db: Client = Depends(get_db)):
+async def admin_list_ts_bundles(staff: dict = Depends(require_mentor), db: Client = Depends(get_db)):
+    if not await _mentor_has_permission(staff, "manage_test_series", db):
+        raise HTTPException(status_code=403, detail="You don't have permission to manage test series")
     return db.table("test_series_bundles").select("*").execute().data or []
 
 
 @router.patch("/test-series/bundles/{bundle_id}")
 async def admin_update_ts_bundle(
     bundle_id: str, body: dict,
-    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+    staff: dict = Depends(require_mentor), db: Client = Depends(get_db),
 ):
+    if not await _mentor_has_permission(staff, "manage_test_series", db):
+        raise HTTPException(status_code=403, detail="You don't have permission to manage test series")
     allowed = {k: v for k, v in body.items() if k in {"price", "is_active", "title", "subject_ids"}}
     if not allowed:
         raise HTTPException(status_code=400, detail="Nothing to update")
@@ -547,8 +599,10 @@ async def admin_update_ts_bundle(
 @router.get("/test-series/papers")
 async def admin_list_ts_papers(
     subject_id: Optional[str] = None,
-    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+    staff: dict = Depends(require_mentor), db: Client = Depends(get_db),
 ):
+    if not await _mentor_has_permission(staff, "manage_test_series", db):
+        raise HTTPException(status_code=403, detail="You don't have permission to manage test series")
     q = db.table("tests").select("*")
     if subject_id:
         q = q.eq("subject_id", subject_id)
@@ -564,12 +618,14 @@ async def admin_upload_ts_paper(
     title: str = Form(...),
     description: str = Form(""),
     file: UploadFile = File(...),
-    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+    staff: dict = Depends(require_mentor), db: Client = Depends(get_db),
 ):
     """Upload a question paper PDF straight into Supabase Storage and create
     the `tests` row pointing at it — mirrors the MCQ Hierarchy's
     Level -> Subject -> content authoring flow. Published immediately so
     students who own the subject can see it right away."""
+    if not await _mentor_has_permission(staff, "manage_test_series", db):
+        raise HTTPException(status_code=403, detail="You don't have permission to manage test series")
     if not title.strip():
         raise HTTPException(status_code=400, detail="Title is required")
     subj = db.table("test_series_subjects").select("id").eq("id", subject_id).execute()
@@ -601,7 +657,7 @@ async def admin_upload_ts_paper(
         "subject_id": subject_id,
         "status": "published",
         "sort_order": 0,
-        "created_by": admin["id"],
+        "created_by": staff["id"],
     }
     res = db.table("tests").insert(row).execute()
     return {"success": True, "id": res.data[0]["id"] if res.data else None, "url": url}
@@ -610,8 +666,10 @@ async def admin_upload_ts_paper(
 @router.patch("/test-series/papers/{paper_id}")
 async def admin_update_ts_paper(
     paper_id: str, body: dict,
-    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+    staff: dict = Depends(require_mentor), db: Client = Depends(get_db),
 ):
+    if not await _mentor_has_permission(staff, "manage_test_series", db):
+        raise HTTPException(status_code=403, detail="You don't have permission to manage test series")
     allowed = {k: v for k, v in body.items() if k in {"title", "description", "question_file_url", "status", "sort_order", "subject_id"}}
     if not allowed:
         raise HTTPException(status_code=400, detail="Nothing to update")
@@ -622,8 +680,10 @@ async def admin_update_ts_paper(
 @router.delete("/test-series/papers/{paper_id}")
 async def admin_delete_ts_paper(
     paper_id: str,
-    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+    staff: dict = Depends(require_mentor), db: Client = Depends(get_db),
 ):
+    if not await _mentor_has_permission(staff, "manage_test_series", db):
+        raise HTTPException(status_code=403, detail="You don't have permission to manage test series")
     db.table("tests").delete().eq("id", paper_id).execute()
     return {"success": True}
 
@@ -635,6 +695,9 @@ async def admin_list_sessions(
     staff: dict = Depends(require_mentor), db: Client = Depends(get_db),
 ):
     """All 1:1 bookings. Mentors see only their own once assigned; admins see all."""
+    if staff.get("role") == "mentor" and not await _mentor_has_permission(staff, "manage_sessions", db):
+        raise HTTPException(status_code=403, detail="You don't have permission to manage 1:1 sessions")
+
     q = db.table("session_bookings").select(
         "*, profiles!session_bookings_student_id_fkey(email, full_name, phone_number), mentors(name, email), courses(title)"
     ).neq("status", "cancelled").order("created_at", desc=True)
@@ -693,12 +756,29 @@ class ScheduleSessionRequest(BaseModel):
     note: Optional[str] = ""
 
 
+async def _assert_mentor_owns_session(staff: dict, session_id: str, db: Client) -> None:
+    """Admins/super_admins bypass. A mentor may only act on a session_bookings
+    row already assigned to their own mentors-table id — previously any
+    mentor could schedule/complete any other mentor's session."""
+    if staff.get("role") != "mentor":
+        return
+    session = db.table("session_bookings").select("mentor_id").eq("id", session_id).execute()
+    if not session.data:
+        raise HTTPException(status_code=404, detail="Session not found")
+    my_ids = await _get_own_mentor_ids(staff, db)
+    if session.data[0].get("mentor_id") not in my_ids:
+        raise HTTPException(status_code=403, detail="You are not assigned to this session")
+
+
 @router.patch("/sessions/{session_id}/schedule")
 async def mentor_schedule_session(
     session_id: str, body: ScheduleSessionRequest,
     staff: dict = Depends(require_mentor), db: Client = Depends(get_db),
 ):
     """Mentor sets the agreed slot + pastes their own Google Meet link."""
+    if not await _mentor_has_permission(staff, "manage_sessions", db):
+        raise HTTPException(status_code=403, detail="You don't have permission to manage 1:1 sessions")
+    await _assert_mentor_owns_session(staff, session_id, db)
     if not body.meetLink.strip():
         raise HTTPException(status_code=400, detail="A meeting link is required")
     db.table("session_bookings").update({
@@ -715,6 +795,9 @@ async def mentor_complete_session(
     session_id: str,
     staff: dict = Depends(require_mentor), db: Client = Depends(get_db),
 ):
+    if not await _mentor_has_permission(staff, "manage_sessions", db):
+        raise HTTPException(status_code=403, detail="You don't have permission to manage 1:1 sessions")
+    await _assert_mentor_owns_session(staff, session_id, db)
     db.table("session_bookings").update({"status": "completed"}).eq("id", session_id).execute()
     return {"success": True}
 
@@ -1008,18 +1091,25 @@ async def admin_get_set(
     if not mcq_set.data:
         raise HTTPException(status_code=404, detail="MCQ set not found")
 
-    sections_res = db.table("exam_sections").select("*").eq("paper_id", set_id).execute()
+    sections_res = db.table("exam_sections").select("*").eq("paper_id", set_id).order("order_index").execute()
     sections = sections_res.data or []
 
     enriched_sections = []
     for section in sections:
-        questions_res = db.table("questions").select("*").eq("section_id", section["id"]).execute()
+        questions_res = (
+            db.table("questions")
+            .select("*")
+            .eq("section_id", section["id"])
+            .order("order_index")
+            .execute()
+        )
         mapped_questions = []
         for q in (questions_res.data or []):
             mapped_questions.append({
                 "id": q["id"],
                 "type": q.get("type", "normal"),
                 "case_narrative": q.get("case_narrative", ""),
+                "case_group_id": q.get("case_group_id"),
                 "difficulty": q.get("difficulty", "medium"),
                 "marks": float(q.get("marks") or 1.0),
                 "negative_marks": float(q.get("negative_marks") or 0.0),
@@ -1145,11 +1235,36 @@ async def admin_upsert_set(
         db.table("exam_sections").insert({
             "id": sec_id,
             "paper_id": set_id,
-            "title": sec.get("title", f"Section {chr(65 + sec_idx)}")
+            "title": sec.get("title", f"Section {chr(65 + sec_idx)}"),
+            "order_index": sec_idx,
         }).execute()
-        
+
         # Insert questions
         questions_payload = sec.get("questions", [])
+
+        # Pre-scan for contiguous case-study runs (authored order) so every
+        # sub-question in a case block shares one case_group_id and the same
+        # resolved narrative text, instead of only question #1 having it.
+        run_id_by_idx: Dict[int, str] = {}
+        run_narrative_by_idx: Dict[int, str] = {}
+        run_start = None
+        for i in range(len(questions_payload) + 1):
+            is_case = i < len(questions_payload) and questions_payload[i].get("type") == "case"
+            if is_case and run_start is None:
+                run_start = i
+            elif not is_case and run_start is not None:
+                run_group_id = str(uuid.uuid4())
+                run_narrative = ""
+                for j in range(run_start, i):
+                    candidate = (questions_payload[j].get("case_narrative") or questions_payload[j].get("caseText") or "").strip()
+                    if candidate:
+                        run_narrative = candidate
+                        break
+                for j in range(run_start, i):
+                    run_id_by_idx[j] = run_group_id
+                    run_narrative_by_idx[j] = run_narrative
+                run_start = None
+
         for q_idx, q in enumerate(questions_payload):
             # Always generate a fresh UUID for questions too
             q_id = str(uuid.uuid4())
@@ -1157,7 +1272,8 @@ async def admin_upsert_set(
                 "id": str(q_id),
                 "section_id": sec_id,
                 "type": q.get("type", "normal"),
-                "case_narrative": q.get("case_narrative") or q.get("caseText") or "",
+                "case_narrative": run_narrative_by_idx.get(q_idx, q.get("case_narrative") or q.get("caseText") or ""),
+                "case_group_id": run_id_by_idx.get(q_idx),
                 "difficulty": q.get("difficulty", "medium"),
                 "marks": float(q.get("marks") or 1.0),
                 "negative_marks": float(q.get("negative_marks") or q.get("negativeMarks") or 0.0),
@@ -1333,13 +1449,21 @@ async def admin_delete_set(
 @router.get("/submissions/pending")
 async def list_pending_submissions(
     status: str = "pending",
-    admin: dict = Depends(require_admin),
+    staff: dict = Depends(require_mentor),
     db: Client = Depends(get_db),
 ):
     """Default (no `status` param) is unchanged — still just pending
     submissions, for backward compatibility. Pass `status=reviewed` to see
     already-evaluated records (with their marks/remarks/checked file), or
-    `status=all` for both."""
+    `status=all` for both.
+
+    There is no per-submission mentor-assignment concept in this schema —
+    a permitted mentor sees the same full pending queue an admin already
+    does, once explicitly granted evaluate_papers. That's intentional, not
+    a new gap: previously admin was the only role that could even list
+    this queue, though review_submission itself was already mentor-open."""
+    if not await _mentor_has_permission(staff, "evaluate_papers", db):
+        raise HTTPException(status_code=403, detail="You don't have permission to evaluate papers")
     query = (
         db.table("test_submissions")
         .select("*, profiles(email), tests(title), test_evaluations(marks, remarks, checked_file_url, evaluated_at)")
@@ -1431,6 +1555,8 @@ async def review_submission(
     single canonical review endpoint — it used to be duplicated with a
     JSON-only variant that silently shadowed this one and never actually
     emailed the student despite claiming to."""
+    if not await _mentor_has_permission(mentor_user, "evaluate_papers", db):
+        raise HTTPException(status_code=403, detail="You don't have permission to evaluate papers")
     settings = get_settings()
 
     # Verify submission exists
@@ -1626,9 +1752,43 @@ async def admin_delete_section(
 
 # ─── Admin: Mentors CRUD ─────────────────────────────────────────────────────
 
+DEFAULT_MENTOR_PERMISSIONS = {"evaluate_papers": False, "manage_sessions": False, "manage_test_series": False}
+
+
 @router.get("/mentors")
 async def admin_list_mentors(admin: dict = Depends(require_admin), db: Client = Depends(get_db)):
-    return db.table("mentors").select("*, profiles(email)").execute().data or []
+    rows = db.table("mentors").select("*, profiles(email)").execute().data or []
+    perms_res = db.table("mentor_permissions").select("*").execute()
+    perms_by_mentor = {p["mentor_id"]: (p.get("permissions") or {}) for p in (perms_res.data or [])}
+    for r in rows:
+        r["permissions"] = {**DEFAULT_MENTOR_PERMISSIONS, **perms_by_mentor.get(r["id"], {})}
+    return rows
+
+
+@router.patch("/mentors/{mentor_id}/permissions")
+async def admin_update_mentor_permissions(
+    mentor_id: str,
+    body: MentorPermissionsUpdateRequest,
+    admin: dict = Depends(require_admin),
+    db: Client = Depends(get_db),
+):
+    """Grants/revokes what a specific mentor can do — enforced server-side by
+    _mentor_has_permission everywhere it's checked, not just hidden in the UI."""
+    mentor = db.table("mentors").select("id").eq("id", mentor_id).execute()
+    if not mentor.data:
+        raise HTTPException(status_code=404, detail="Mentor not found")
+
+    existing = db.table("mentor_permissions").select("*").eq("mentor_id", mentor_id).execute()
+    current = {**DEFAULT_MENTOR_PERMISSIONS, **((existing.data[0].get("permissions") or {}) if existing.data else {})}
+    updates = body.model_dump(exclude_unset=True)
+    merged = {**current, **updates}
+
+    db.table("mentor_permissions").upsert({
+        "mentor_id": mentor_id,
+        "permissions": merged,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }, on_conflict="mentor_id").execute()
+    return {"success": True, "permissions": merged}
 
 
 @router.post("/mentors", status_code=201)

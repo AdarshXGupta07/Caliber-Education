@@ -15,6 +15,8 @@ export interface Question {
   marks: number;
   negative_marks: number;
   difficulty: "easy" | "medium" | "hard";
+  case_narrative?: string;
+  case_group_id?: string;
   case_scenario_id?: string;
 }
 
@@ -535,7 +537,12 @@ function QuestionsStudio({ data, setData, inp }: any) {
       correct_option: 0,
       marks: 2,
       negative_marks: 0,
-      difficulty: "medium"
+      difficulty: "medium",
+      // Sub-questions don't carry their own editable narrative (only the case
+      // block's first/head question shows that textarea — see isCaseHead
+      // below), but every question in the run is denormalized with the full
+      // narrative text server-side on save, so this key must always exist.
+      case_narrative: ""
     });
     setData({ ...data, sections: newSecs });
   }
@@ -594,7 +601,18 @@ function QuestionsStudio({ data, setData, inp }: any) {
 
               {sec.questions && sec.questions.length > 0 && (
                 <div className="space-y-6">
-                  {sec.questions.map((q: any, qIdx: number) => (
+                  {sec.questions.map((q: any, qIdx: number) => {
+                    // A case block's narrative is edited on exactly one
+                    // question: the first one in its contiguous run. Every
+                    // other question in the same run is a sub-question that
+                    // shares the same narrative (denormalized server-side on
+                    // save) but has no narrative editor of its own — gated by
+                    // array position, not by which questions happen to carry
+                    // a case_narrative value, so this stays correct both for
+                    // brand-new blocks and for blocks reloaded from the DB
+                    // (where every row in the run now carries the narrative).
+                    const isCaseHead = q.type === 'case' && (qIdx === 0 || sec.questions[qIdx - 1]?.type !== 'case');
+                    return (
                     <div key={q.id} className="p-4 bg-white dark:bg-line-gray-dark/50 border border-line-gray-light dark:border-line-gray-dark rounded-xl space-y-4 relative group">
 
                       <button onClick={() => deleteQuestion(idx, qIdx)} className="absolute top-3 right-3 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-red-50 dark:hover:bg-red-500/20 rounded">
@@ -602,12 +620,12 @@ function QuestionsStudio({ data, setData, inp }: any) {
                       </button>
 
                       <div className="flex items-center gap-2 mb-2">
-                        <span className={`px-2 py-0.5 text-[10px] font-black uppercase tracking-widest rounded ${q.type === 'case' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-slate/20 text-slate'}`}>{q.type === 'case' ? (q.case_narrative !== undefined ? 'CASE NARRATIVE + Q1' : 'CASE SUB-QUESTION') : 'NORMAL Q'}</span>
+                        <span className={`px-2 py-0.5 text-[10px] font-black uppercase tracking-widest rounded ${q.type === 'case' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-slate/20 text-slate'}`}>{q.type === 'case' ? (isCaseHead ? 'CASE NARRATIVE + Q1' : 'CASE SUB-QUESTION') : 'NORMAL Q'}</span>
                         <span className="text-xs font-bold text-slate">Marks: <input type="number" step="0.5" className="w-12 bg-transparent border-b outline-none text-center" value={q.marks} onChange={e => updateQuestion(idx, qIdx, 'marks', Number(e.target.value))} /></span>
                         <span className="text-xs font-bold text-slate">Neg: <input type="number" step="0.01" className="w-12 bg-transparent border-b outline-none text-center" value={q.negative_marks} onChange={e => updateQuestion(idx, qIdx, 'negative_marks', Number(e.target.value))} /></span>
                       </div>
 
-                      {q.type === 'case' && q.case_narrative !== undefined && (
+                      {isCaseHead && (
                         <div className="mb-4">
                           <label className="text-[10px] uppercase font-bold text-yellow-600 dark:text-yellow-400 mb-1 block">Case Narrative Passage</label>
                           <textarea className={inp} rows={3} placeholder="Provide the long case study reading passage here..." value={q.case_narrative || ""} onChange={e => updateQuestion(idx, qIdx, 'case_narrative', e.target.value)} />
@@ -637,7 +655,8 @@ function QuestionsStudio({ data, setData, inp }: any) {
                         <input className={inp} placeholder="Why is this correct?" value={q.explanation || ""} onChange={e => updateQuestion(idx, qIdx, 'explanation', e.target.value)} />
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

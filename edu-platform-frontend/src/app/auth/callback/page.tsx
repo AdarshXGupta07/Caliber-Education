@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle, Loader } from "lucide-react";
+import { getPostLoginRedirect } from "@/lib/authRedirect";
 
 export default function AuthCallbackPage() {
     const router = useRouter();
@@ -40,7 +41,7 @@ export default function AuthCallbackPage() {
                     if (data.user) {
                         localStorage.setItem("caliber_user", JSON.stringify(data.user));
                     }
-                    window.location.href = "/dashboard";
+                    window.location.href = getPostLoginRedirect(data.user?.role);
                 } else {
                     router.push("/login");
                 }

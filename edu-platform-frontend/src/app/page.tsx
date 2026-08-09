@@ -7,6 +7,14 @@ import Image from "next/image";
 import { HeroMCQCard } from "@/components/HeroMCQCard";
 import { useState } from "react";
 import { Turnstile } from "@/components/Turnstile";
+import { WhatsAppIcon, TelegramIcon, InstagramIcon } from "@/components/SocialIcons";
+import { useAuth } from "@/context/AuthContext";
+
+const SOCIAL_LINKS = {
+  whatsapp: "https://chat.whatsapp.com/IbzA4aKxYFwDw7zMUcZLNG",
+  telegram: "https://t.me/calibermentorship",
+  instagram: "https://www.instagram.com/calibermentorship/",
+};
 
 const steps = [
   { num: "01", icon: <BookOpen className="w-5 h-5" />, title: "Enroll", desc: "Choose a CA course that matches your exam level. Pay once, access forever." },
@@ -23,7 +31,7 @@ const founders = [
     image: "/MENTOR3.png",
   },
   {
-    name: "Aditya Kanal",
+    name: "CA Aditya Kanal",
     role: "CA Law, Audit & Taxation Specialist",
     tagline: "Chartered Accountant. Decodes complex corporate laws and auditing standards through daily memory-retrieval practice.",
     initials: "AK",
@@ -33,6 +41,7 @@ const founders = [
 
 export default function HomePage() {
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
+  const { isAuthenticated, purchasedCourseIds } = useAuth();
 
   return (
     <div className="pt-16">
@@ -192,6 +201,60 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ─── COMMUNITY ─── */}
+      <section className="relative py-28 bg-paper dark:bg-ink-navy overflow-hidden border-b border-line-gray-light dark:border-line-gray-dark">
+        <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.04] pointer-events-none text-ink-navy dark:text-paper">
+          <div className="absolute inset-0" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0)", backgroundSize: "36px 36px" }} />
+        </div>
+        <div className="relative max-w-5xl mx-auto px-6 sm:px-8">
+          <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="flex flex-col items-center text-center gap-3 mb-14">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center relative bg-line-gray-light/50 dark:bg-white/10">
+                <Image
+                  src={isAuthenticated && purchasedCourseIds?.length > 0 ? "/PREMIUM.jpg" : "/NORMAL.jpg"}
+                  alt="Caliber Education Logo"
+                  fill
+                  sizes="36px"
+                  unoptimized
+                  className="object-cover"
+                />
+              </div>
+              <span className="font-heading font-bold text-xl text-ink-navy dark:text-paper">CAliber</span>
+            </div>
+            <p className="text-sm text-slate dark:text-paper/60 max-w-md">Practice like the exam. Built by CAs who cracked it.</p>
+            <h2 className="font-heading font-bold text-2xl sm:text-3xl text-ink-navy dark:text-paper mt-2">Not on the platform yet? Come say hi first.</h2>
+          </motion.div>
+
+          <div className="grid sm:grid-cols-3 gap-5 max-w-3xl mx-auto">
+            {[
+              { href: SOCIAL_LINKS.whatsapp, icon: <WhatsAppIcon className="w-7 h-7" />, label: "WhatsApp Group", desc: "Doubt-clearing with real mentors", ring: "hover:border-[#25D366]/50" },
+              { href: SOCIAL_LINKS.telegram, icon: <TelegramIcon className="w-7 h-7" />, label: "Telegram Channel", desc: "Daily updates & resources", ring: "hover:border-[#26A5E4]/50" },
+              { href: SOCIAL_LINKS.instagram, icon: <InstagramIcon className="w-7 h-7" />, label: "Instagram", desc: "Behind the scenes & tips", ring: "hover:border-[#C13584]/50" },
+            ].map((s, i) => (
+              <motion.a
+                key={s.label}
+                href={s.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                initial={{ opacity: 0, y: 16 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: i * 0.06 }}
+                className={`group flex flex-col items-center text-center gap-3 p-6 rounded-xl border border-line-gray-light dark:border-white/10 bg-white dark:bg-white/5 shadow-sm dark:shadow-none hover:bg-line-gray-light/40 dark:hover:bg-white/[0.08] ${s.ring} transition-all duration-200`}
+              >
+                <div className="w-14 h-14 rounded-full bg-white border border-line-gray-light dark:border-transparent flex items-center justify-center group-hover:scale-105 transition-transform">
+                  {s.icon}
+                </div>
+                <div>
+                  <p className="font-heading font-semibold text-sm text-ink-navy dark:text-paper">{s.label}</p>
+                  <p className="text-xs text-slate dark:text-paper/50 mt-0.5">{s.desc}</p>
+                </div>
+              </motion.a>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ─── FOOTER ─── */}
       <Footer />
 
@@ -225,6 +288,7 @@ function Footer() {
   const [formState, setFormState] = useState({ name: "", email: "", message: "" });
   const [submitted, setSubmitted] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState("");
+  const { isAuthenticated, purchasedCourseIds } = useAuth();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -255,13 +319,31 @@ function Footer() {
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-12">
           <div className="lg:col-span-1 space-y-4">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-ink-navy dark:bg-paper rounded flex items-center justify-center">
-                <BookOpen className="w-4 h-4 text-paper dark:text-ink-navy" />
+              <div className="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center relative bg-white/10">
+                <Image
+                  src={isAuthenticated && purchasedCourseIds?.length > 0 ? "/PREMIUM.jpg" : "/NORMAL.jpg"}
+                  alt="Caliber Education Logo"
+                  fill
+                  sizes="32px"
+                  unoptimized
+                  className="object-cover"
+                />
               </div>
               <span className="font-heading font-bold text-lg">CAliber</span>
             </div>
             <p className="text-xs text-slate dark:text-paper/60 leading-relaxed">Practice like the exam. Built by CAs who cracked it.</p>
             <p className="text-[10px] text-slate/40 dark:text-paper/40">Founded by Somya Deep & Aditya Kanal</p>
+            <div className="flex items-center gap-3 pt-1">
+              <a href={SOCIAL_LINKS.whatsapp} target="_blank" rel="noopener noreferrer" aria-label="WhatsApp" className="opacity-70 hover:opacity-100 hover:scale-110 transition-all">
+                <WhatsAppIcon className="w-4 h-4" />
+              </a>
+              <a href={SOCIAL_LINKS.telegram} target="_blank" rel="noopener noreferrer" aria-label="Telegram" className="opacity-70 hover:opacity-100 hover:scale-110 transition-all">
+                <TelegramIcon className="w-4 h-4" />
+              </a>
+              <a href={SOCIAL_LINKS.instagram} target="_blank" rel="noopener noreferrer" aria-label="Instagram" className="opacity-70 hover:opacity-100 hover:scale-110 transition-all">
+                <InstagramIcon className="w-4 h-4" />
+              </a>
+            </div>
           </div>
 
           <div>
@@ -321,7 +403,19 @@ function Footer() {
           </div>
         </div>
         <div className="mt-16 pt-8 border-t border-line-gray-light dark:border-line-gray-dark flex flex-col sm:flex-row items-center justify-between gap-4 text-[10px] text-slate/40 dark:text-paper/40">
-          <span>© 2026 CAliber Education. All rights reserved.</span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-4 h-4 rounded-full overflow-hidden flex items-center justify-center relative flex-shrink-0 bg-white/10">
+              <Image
+                src={isAuthenticated && purchasedCourseIds?.length > 0 ? "/PREMIUM.jpg" : "/NORMAL.jpg"}
+                alt="Caliber Education Logo"
+                fill
+                sizes="16px"
+                unoptimized
+                className="object-cover"
+              />
+            </span>
+            © 2026 CAliber Education. All rights reserved.
+          </span>
           <span>Made with ♥ for CA droppers & repeaters</span>
         </div>
       </div>

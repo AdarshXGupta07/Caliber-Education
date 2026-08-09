@@ -5,10 +5,11 @@ import { useRouter } from "next/navigation";
 import { ArrowRight } from "lucide-react";
 import { AuthShell } from "@/components/AuthShell";
 import { useAuth } from "@/context/AuthContext";
+import { getPostLoginRedirect } from "@/lib/authRedirect";
 
 export default function CompleteProfilePage() {
   const router = useRouter();
-  const { markProfileComplete } = useAuth();
+  const { user, markProfileComplete } = useAuth();
   const [form, setForm] = useState({
     full_name: "", phone_number: "", address: "", stage: "CA Final", attempt_status: "First Attempt",
   });
@@ -29,7 +30,7 @@ export default function CompleteProfilePage() {
       });
       if (!res.ok) throw new Error("Couldn't save your details. Please try again.");
       markProfileComplete();
-      router.push("/dashboard");
+      router.push(getPostLoginRedirect(user?.role));
     } catch (err: any) {
       setError(err.message || "Something went wrong. Please try again.");
     } finally {

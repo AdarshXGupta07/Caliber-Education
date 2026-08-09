@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from supabase import Client
 from typing import Optional, List, Dict, Any
@@ -12,6 +12,8 @@ from app.schemas.mcq import (
     CalculateMCQPriceResponse,
     TestSubmissionV2Request,
     SubmissionAnalyticsResponse,
+    AttemptStartRequest,
+    AttemptProgressRequest,
 )
 
 router = APIRouter(tags=["MCQ & Quizzes"])
@@ -405,6 +407,20 @@ async def _has_mcq_paper_access(current_user: dict, paper: dict, db: Client) -> 
     return False
 
 
+def _sorted_by_order_index(rows: list) -> list:
+    """Defense-in-depth: explicitly sort by order_index in Python even though
+    the query already requests .order("order_index"), so ordering is never
+    silently dependent on the DB/PostgREST's implicit row order."""
+    return sorted(rows, key=lambda r: r.get("order_index") if r.get("order_index") is not None else 0)
+
+
+def _parse_dt(value: str) -> datetime:
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 @router.get("/api/quizzes/{set_id}")
 async def get_quiz(set_id: str, current_user: dict = Depends(get_current_user), db: Client = Depends(get_db)):
     """Returns quiz sections/questions for attempting. Never includes the answer
@@ -419,8 +435,8 @@ async def get_quiz(set_id: str, current_user: dict = Depends(get_current_user), 
             raise HTTPException(status_code=403, detail="Purchase this subject to access this test")
 
     # Fetch sections
-    sections_res = db.table("exam_sections").select("*").eq("paper_id", set_id).execute()
-    sections = sections_res.data or []
+    sections_res = db.table("exam_sections").select("*").eq("paper_id", set_id).order("order_index").execute()
+    sections = _sorted_by_order_index(sections_res.data or [])
 
     enriched_sections = []
     for section in sections:
@@ -428,14 +444,16 @@ async def get_quiz(set_id: str, current_user: dict = Depends(get_current_user), 
             db.table("questions")
             .select("*")
             .eq("section_id", section["id"])
+            .order("order_index")
             .execute()
         )
         mapped_questions = []
-        for q in (questions_res.data or []):
+        for q in _sorted_by_order_index(questions_res.data or []):
             mapped_questions.append({
                 "id": q["id"],
                 "type": q.get("type", "normal"),
                 "case_narrative": q.get("case_narrative", ""),
+                "case_group_id": q.get("case_group_id"),
                 "chapterTag": q.get("chapter_tag"),
                 "difficulty": q.get("difficulty", "medium"),
                 "marks": float(q.get("marks") or 1.0),
@@ -482,6 +500,132 @@ async def get_quiz(set_id: str, current_user: dict = Depends(get_current_user), 
     }
 
 
+def _attempt_response(row: dict, resumed: bool) -> dict:
+    started_at = _parse_dt(row["started_at"])
+    duration_minutes = int(row["duration_minutes"])
+    deadline = started_at + timedelta(minutes=duration_minutes)
+    return {
+        "attemptId": row["id"],
+        "status": "resumed" if resumed else "started",
+        "questionOrder": row.get("question_order") or [],
+        "answers": row.get("answers") or {},
+        "perQuestionTimes": row.get("per_question_times") or [],
+        "currentIndex": row.get("current_index") or 0,
+        "sectionElapsed": row.get("section_elapsed") or {},
+        "startedAt": row["started_at"],
+        "durationMinutes": duration_minutes,
+        "deadlineAt": deadline.isoformat(),
+    }
+
+
+@router.post("/api/quizzes/{set_id}/attempt/start")
+async def start_attempt(
+    set_id: str,
+    body: AttemptStartRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Client = Depends(get_db),
+):
+    """Creates a new in-progress attempt, or resumes an existing one — at most
+    one in-progress attempt per (user, paper) can exist (enforced by a unique
+    partial index in the DB). Question order is computed client-side (the
+    shuffle algorithm lives in quizLogic.ts and is intentionally not
+    duplicated in Python) and persisted verbatim on first start; every
+    subsequent resume replays that persisted order, ignoring whatever the
+    client just recomputed, so a refreshed session never shows a different
+    shuffle than the one the student started with."""
+    user_id = current_user["id"]
+
+    mcq_set = db.table("mcq_papers").select("*").eq("id", set_id).single().execute()
+    if not mcq_set.data:
+        raise HTTPException(status_code=404, detail="Quiz set not found")
+    if mcq_set.data.get("is_locked"):
+        if not await _has_mcq_paper_access(current_user, mcq_set.data, db):
+            raise HTTPException(status_code=403, detail="Purchase this subject to access this test")
+
+    def _find_in_progress():
+        return (
+            db.table("mcq_attempt_sessions")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("set_id", set_id)
+            .eq("status", "in_progress")
+            .execute()
+        )
+
+    existing = _find_in_progress()
+    if existing.data:
+        return _attempt_response(existing.data[0], resumed=True)
+
+    if not body.questionOrder:
+        raise HTTPException(status_code=400, detail="questionOrder is required to start an attempt")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    new_row = {
+        "id": f"att-{uuid.uuid4().hex[:16]}",
+        "user_id": user_id,
+        "set_id": set_id,
+        "status": "in_progress",
+        "question_order": body.questionOrder,
+        "answers": {},
+        "per_question_times": [0.0] * len(body.questionOrder),
+        "current_index": 0,
+        "section_elapsed": {},
+        "started_at": now_iso,
+        "duration_minutes": int(mcq_set.data.get("duration_minutes") or 60),
+        "last_saved_at": now_iso,
+    }
+    try:
+        db.table("mcq_attempt_sessions").insert(new_row).execute()
+    except Exception:
+        # Unique-index race: a concurrent request for this user+paper won
+        # first. Return that one as a resume instead of erroring.
+        existing = _find_in_progress()
+        if existing.data:
+            return _attempt_response(existing.data[0], resumed=True)
+        raise HTTPException(status_code=500, detail="Could not start attempt")
+
+    return _attempt_response(new_row, resumed=False)
+
+
+@router.patch("/api/quizzes/{set_id}/attempt/{attempt_id}/progress")
+async def save_attempt_progress(
+    set_id: str,
+    attempt_id: str,
+    body: AttemptProgressRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Client = Depends(get_db),
+):
+    """Autosave: persists in-progress answers/navigation state so a refresh or
+    accidental navigation never loses a student's attempt. Rejects writes once
+    the server-computed deadline has passed — the frontend auto-finalizes
+    (calls submit-v2) when it sees status:"expired" back, so a client can't
+    keep answering past the real deadline just by not calling this endpoint."""
+    attempt = db.table("mcq_attempt_sessions").select("*").eq("id", attempt_id).execute()
+    if not attempt.data:
+        raise HTTPException(status_code=404, detail="Attempt not found")
+    row = attempt.data[0]
+
+    if row["user_id"] != current_user["id"] or row["set_id"] != set_id:
+        raise HTTPException(status_code=403, detail="This attempt doesn't belong to you")
+
+    if row["status"] != "in_progress":
+        return {"success": False, "status": row["status"]}
+
+    deadline = _parse_dt(row["started_at"]) + timedelta(minutes=int(row["duration_minutes"]))
+    if datetime.now(timezone.utc) > deadline:
+        return {"success": False, "status": "expired"}
+
+    db.table("mcq_attempt_sessions").update({
+        "answers": body.answers,
+        "per_question_times": body.perQuestionTimes,
+        "current_index": body.currentIndex,
+        "section_elapsed": body.sectionElapsed,
+        "last_saved_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", attempt_id).execute()
+
+    return {"success": True}
+
+
 @router.post("/api/quizzes/{set_id}/submit-v2")
 async def submit_quiz_v2(
     set_id: str,
@@ -497,23 +641,38 @@ async def submit_quiz_v2(
     if not mcq_set.data:
         raise HTTPException(status_code=404, detail="Quiz set not found")
 
-    sections_res = db.table("exam_sections").select("*").eq("paper_id", set_id).execute()
-    sections = sections_res.data or []
+    # Same entitlement check get_quiz already applies at retrieval time — a
+    # student must not be able to call submit-v2 directly on a locked/
+    # unpurchased paper and receive the full answer key in the response.
+    if mcq_set.data.get("is_locked"):
+        if not await _has_mcq_paper_access(current_user, mcq_set.data, db):
+            raise HTTPException(status_code=403, detail="Purchase this subject to access this test")
 
-    # Flatten all questions across sections
+    sections_res = db.table("exam_sections").select("*").eq("paper_id", set_id).order("order_index").execute()
+    sections = _sorted_by_order_index(sections_res.data or [])
+
+    # Flatten all questions across sections in canonical order_index order.
+    # This order is authoritative for section/topic aggregation and for the
+    # questionAnalysis array in the response — the client's own (possibly
+    # shuffled) display order never affects grading, since answers are looked
+    # up by question ID below, not by position.
     all_questions = []
-    section_map = {}
     for sec in sections:
-        section_map[sec["id"]] = sec["title"]
-        q_res = db.table("questions").select("*").eq("section_id", sec["id"]).execute()
-        for q in (q_res.data or []):
+        q_res = (
+            db.table("questions")
+            .select("*")
+            .eq("section_id", sec["id"])
+            .order("order_index")
+            .execute()
+        )
+        for q in _sorted_by_order_index(q_res.data or []):
             all_questions.append({
                 "id": q["id"],
                 "section_id": sec["id"],
                 "section_title": sec["title"],
                 "type": q.get("type", "normal"),
-                "case_text": q.get("case_text", ""),
-                "case_id": q.get("case_id"),
+                "case_narrative": q.get("case_narrative", ""),
+                "case_group_id": q.get("case_group_id"),
                 "chapter_tag": q.get("chapter_tag") or mcq_set.data.get("chapter_name") or "General",
                 "difficulty": q.get("difficulty", "medium"),
                 "marks": float(q.get("marks") or 1.0),
@@ -525,21 +684,88 @@ async def submit_quiz_v2(
             })
 
     total_possible_marks = sum(q["marks"] for q in all_questions) if all_questions else float(mcq_set.data.get("total_marks") or 30.0)
-    
+
     total_score = 0.0
     correct_count = 0
     incorrect_count = 0
     skipped_count = 0
-    
+
     section_breakdown = {}
     topic_breakdown = {}
     question_analysis = []
 
-    user_answers = body.answers
-    per_q_times = body.perQuestionTimes
+    # Question-ID-keyed answers (question_id -> selected option index or null)
+    # — the server-verifiable payload shape. Previously this was a positional
+    # array graded against a separately-fetched, independently-ordered
+    # question list, which silently mis-scored every answer whenever the
+    # paper had shuffle enabled (the client's shuffled order never matched
+    # this endpoint's own reconstruction).
+    already_submitted = False
+    if body.attemptId:
+        attempt = db.table("mcq_attempt_sessions").select("*").eq("id", body.attemptId).execute()
+        if not attempt.data:
+            raise HTTPException(status_code=404, detail="Attempt not found")
+        attempt_row = attempt.data[0]
+        if attempt_row["user_id"] != user_id or attempt_row["set_id"] != set_id:
+            raise HTTPException(status_code=403, detail="This attempt doesn't belong to you")
+
+        already_submitted = attempt_row["status"] == "submitted"
+        deadline = _parse_dt(attempt_row["started_at"]) + timedelta(minutes=int(attempt_row["duration_minutes"]))
+        is_late = datetime.now(timezone.utc) > deadline
+
+        if not already_submitted:
+            # Atomic claim (compare-and-swap): the WHERE ...eq("status","in_progress")
+            # only matches — and only returns rows in `.data` — if this call is
+            # the one that wins the race. On a winning, on-time claim, persist
+            # the actually-submitted answers onto the attempt row itself (not
+            # just used locally for grading) — otherwise a later replay of
+            # this same attemptId would grade whatever the last autosave
+            # happened to be, which can be stale/incomplete, instead of what
+            # was really submitted here.
+            claim_payload = {"status": "submitted", "submitted_at": datetime.now(timezone.utc).isoformat()}
+            if not is_late:
+                claim_payload["answers"] = body.answers
+                claim_payload["per_question_times"] = body.perQuestionTimes
+            claim = (
+                db.table("mcq_attempt_sessions")
+                .update(claim_payload)
+                .eq("id", body.attemptId)
+                .eq("status", "in_progress")
+                .execute()
+            )
+            if not claim.data:
+                # Lost the race — a concurrent call already claimed it a
+                # moment ago. Fall through to the same handling as a genuine
+                # resubmission below instead of erroring, so a real
+                # double-click/retry still gets back a valid result.
+                already_submitted = True
+            else:
+                attempt_row = claim.data[0]  # reflects what was just persisted
+
+        # Once already submitted (a genuine resubmission, or a race we just
+        # lost) or once past deadline, grade the persisted snapshot instead
+        # of whatever the request body says. Scoring is a pure function of
+        # (questions, answers), so replaying against the same stored answers
+        # reproduces the exact same result deterministically — no need to
+        # read back a separately stored row. This also closes the "keep
+        # answering past the deadline" loophole for the late case.
+        if already_submitted or is_late:
+            user_answers = attempt_row["answers"]
+            per_q_times = attempt_row["per_question_times"]
+        else:
+            user_answers = body.answers
+            per_q_times = body.perQuestionTimes
+        effective_elapsed_seconds = int(min(
+            (datetime.now(timezone.utc) - _parse_dt(attempt_row["started_at"])).total_seconds(),
+            int(attempt_row["duration_minutes"]) * 60,
+        ))
+    else:
+        user_answers = body.answers
+        per_q_times = body.perQuestionTimes
+        effective_elapsed_seconds = body.elapsedSeconds
 
     for idx, q in enumerate(all_questions):
-        user_ans = user_answers[idx] if idx < len(user_answers) else None
+        user_ans = user_answers.get(q["id"])
         time_spent = per_q_times[idx] if idx < len(per_q_times) else 0.0
         sec_title = q["section_title"]
         topic = q["chapter_tag"]
@@ -561,7 +787,7 @@ async def submit_quiz_v2(
             skipped_count += 1
             section_breakdown[sec_title]["skipped"] += 1
             topic_breakdown[topic]["skipped"] += 1
-        elif user_ans == q.get("correct_option", 0):
+        elif user_ans == q["correct_option_index"]:
             status = "correct"
             earned = q["marks"]
             correct_count += 1
@@ -585,10 +811,11 @@ async def submit_quiz_v2(
             "sectionTitle": sec_title,
             "chapterTag": topic,
             "type": q["type"],
-            "caseText": "",
+            "caseNarrative": q["case_narrative"],
+            "caseGroupId": q["case_group_id"],
             "status": status,
             "userSelected": user_ans,
-            "correctOptionIndex": q.get("correct_option", 0),
+            "correctOptionIndex": q["correct_option_index"],
             "marks": q["marks"],
             "negativeMarks": q["negative_marks"],
             "marksEarned": earned,
@@ -605,56 +832,48 @@ async def submit_quiz_v2(
     is_passed = percentage >= passing_cutoff
     attempted_count = correct_count + incorrect_count
     accuracy = round((correct_count / max(1, attempted_count)) * 100, 2) if attempted_count > 0 else 0.0
-    avg_time = round(body.elapsedSeconds / max(1, len(all_questions)), 1) if all_questions else 0.0
+    avg_time = round(effective_elapsed_seconds / max(1, len(all_questions)), 1) if all_questions else 0.0
 
     submission_id = f"sub-{uuid.uuid4().hex[:12]}"
 
-    # Save to test_submissions / quiz_attempts
-    try:
-        db.table("test_submissions").insert({
-            "id": submission_id,
-            "user_id": user_id,
-            "set_id": set_id,
-            "score": int(final_score),
-            "total_marks": int(total_possible_marks),
-            "time_taken_seconds": body.elapsedSeconds,
-            "answers": user_answers,
-            "section_scores": section_breakdown,
-            "topic_scores": topic_breakdown,
-            "question_analysis": question_analysis,
-            "status": "evaluated",
-            "submitted_at": datetime.now(timezone.utc).isoformat()
-        }).execute()
-    except Exception:
-        pass
-
-    # Save to legacy quiz_attempts for leaderboard parity
-    try:
-        db.table("quiz_attempts").insert({
-            "user_id": user_id,
-            "set_id": set_id,
-            "score": int(final_score),
-            "total": int(total_possible_marks),
-            "elapsed_seconds": body.elapsedSeconds,
-            "per_question_times": per_q_times,
-        }).execute()
-    except Exception:
-        pass
+    # Persisted once per attempt only — a replayed/raced resubmission
+    # (already_submitted) must not insert a second leaderboard row or
+    # duplicate the result record. Note: this writes to quiz_attempts, not
+    # test_submissions — that table belongs to the unrelated test-series
+    # (PDF paper evaluation) feature and has a completely different schema;
+    # an MCQ result written there would silently fail (wrong columns).
+    if not already_submitted:
+        try:
+            db.table("quiz_attempts").insert({
+                "user_id": user_id,
+                "set_id": set_id,
+                "score": int(final_score),
+                "total": int(total_possible_marks),
+                "elapsed_seconds": effective_elapsed_seconds,
+                "per_question_times": per_q_times,
+                "user_answers": user_answers,
+                "section_scores": section_breakdown,
+                "topic_scores": topic_breakdown,
+                "full_question_analysis": question_analysis,
+                "status": "evaluated",
+            }).execute()
+        except Exception:
+            pass
 
     # Calculate Rank & Percentile
     try:
         better = (
             db.table("quiz_attempts")
             .select("id")
-            .eq("paper_id", set_id)
+            .eq("set_id", set_id)
             .or_(
                 f"score.gt.{final_score},"
-                f"and(score.eq.{final_score},elapsed_seconds.lt.{body.elapsedSeconds})"
+                f"and(score.eq.{final_score},elapsed_seconds.lt.{effective_elapsed_seconds})"
             )
             .execute()
         )
         rank = len(better.data or []) + 1
-        total_res = db.table("quiz_attempts").select("id", count="exact").eq("paper_id", set_id).execute()
+        total_res = db.table("quiz_attempts").select("id", count="exact").eq("set_id", set_id).execute()
         total_comp = max(1, total_res.count or 1)
         percentile = round(((total_comp - rank + 1) / total_comp) * 100, 1)
     except Exception:
@@ -674,7 +893,7 @@ async def submit_quiz_v2(
         "skippedCount": skipped_count,
         "accuracyPercentage": accuracy,
         "averageTimePerQuestion": avg_time,
-        "totalTimeSeconds": body.elapsedSeconds,
+        "totalTimeSeconds": effective_elapsed_seconds,
         "rank": rank,
         "totalCompetitors": total_comp,
         "percentile": percentile,
@@ -708,7 +927,7 @@ async def submit_attempt(
     better = (
         db.table("quiz_attempts")
         .select("id")
-        .eq("paper_id", set_id)
+        .eq("set_id", set_id)
         .or_(
             f"score.gt.{body.score},"
             f"and(score.eq.{body.score},elapsed_seconds.lt.{body.elapsedSeconds})"
@@ -716,7 +935,7 @@ async def submit_attempt(
         .execute()
     )
     rank = len(better.data or []) + 1
-    total_res = db.table("quiz_attempts").select("id", count="exact").eq("paper_id", set_id).execute()
+    total_res = db.table("quiz_attempts").select("id", count="exact").eq("set_id", set_id).execute()
     total_competitors = total_res.count or 1
 
     return {
@@ -737,7 +956,7 @@ async def get_leaderboard(
     attempts = (
         db.table("quiz_attempts")
         .select("user_id, score, elapsed_seconds")
-        .eq("paper_id", set_id)
+        .eq("set_id", set_id)
         .order("score", desc=True)
         .order("elapsed_seconds", desc=False)
         .limit(20)

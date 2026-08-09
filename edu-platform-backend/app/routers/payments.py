@@ -349,6 +349,12 @@ async def _apply_course_grant_or_extend(db: Client, payment_data: dict, user_id:
     course_id = payment_data.get("course_id")
     payment_id = payment_data["id"]
 
+    # Idempotency guard: a replayed/retried verify call for a payment already
+    # marked approved must not re-run the grant logic a second time — this
+    # mirrors the check the webhook handler already applies before dispatching.
+    if payment_data.get("status") == "approved":
+        return {"success": True, "message": "Payment already verified and enrollment already completed."}
+
     db.table("payments").update({
         "status": "approved",
         "razorpay_payment_id": rzp_pay_id,
@@ -641,6 +647,15 @@ async def _apply_mcq_grant(db: Client, order_id: str, user_id: str, rzp_pay: str
         if payment.data and len(payment.data) > 0:
             payment_row = payment.data[0]
             payment_id = payment_row["id"]
+
+            # Idempotency guard: a replayed/retried verify call for a payment
+            # already marked approved must not re-run the grant a second
+            # time (it would stack additional access time onto the
+            # enrollment) — mirrors the check the webhook handler already
+            # applies before dispatching.
+            if payment_row.get("status") == "approved":
+                return {"success": True, "message": "MCQ package already activated."}
+
             db.table("payments").update({
                 "status": "approved",
                 "razorpay_payment_id": rzp_pay,
@@ -879,6 +894,14 @@ async def _apply_test_series_grant(db: Client, order_id: str, user_id: str, rzp_
 
         payment_row = payment.data[0]
         payment_id = payment_row["id"]
+
+        # Idempotency guard: a replayed/retried verify call for a payment
+        # already marked approved must not re-run the grant a second time —
+        # mirrors the check the webhook handler already applies before
+        # dispatching.
+        if payment_row.get("status") == "approved":
+            return {"success": True, "message": "Test series access already activated."}
+
         db.table("payments").update({
             "status": "approved",
             "razorpay_payment_id": rzp_pay,

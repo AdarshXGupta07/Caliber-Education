@@ -13,21 +13,27 @@ import {
   SkipForward, AlertCircle, Sun, Moon
 } from "lucide-react";
 import { useTheme } from "next-themes";
+import { useTestGuard } from "@/context/TestGuardContext";
+import { QuizLoadingState } from "@/components/QuizLoadingState";
+import {
+  flattenPaperQuestions,
+  computeQuestionOrder,
+  reorderFlatQuestionsById,
+  type MCQPaper,
+  type FlatEntry,
+} from "./quizLogic";
 
-// -- Models matching Backend V3 Schema --
-export interface Question {
-  id: string;
-  type: "normal" | "case";
-  text: string;
-  options: string[];
-  // Not present until after submission — the quiz-taking endpoint never
-  // returns the answer key. Populated from the submit-v2 response instead.
-  correctOptionIndex?: number;
-  explanation?: string;
-  marks: number;
-  negativeMarks: number;
-  difficulty: "easy" | "medium" | "hard";
-  case_narrative?: string;
+interface AttemptStartResponse {
+  attemptId: string;
+  status: "started" | "resumed";
+  questionOrder: string[];
+  answers: Record<string, number | null>;
+  perQuestionTimes: number[];
+  currentIndex: number;
+  sectionElapsed: Record<string, number>;
+  startedAt: string;
+  durationMinutes: number;
+  deadlineAt: string;
 }
 
 interface QuestionAnalysisEntry {
@@ -67,113 +73,6 @@ interface LeaderboardEntry {
   isUser: boolean;
 }
 
-export interface CaseScenario {
-  id: string;
-  narrative: string;
-}
-
-export interface ExamSection {
-  id: string;
-  title: string;
-  questions: Question[];
-}
-
-export interface MCQPaper {
-  id: string;
-  title: string;
-  level: string;
-  groupName: string;
-  subjectCode: string;
-  chapterName?: string;
-  testType: string;
-  durationMinutes: number;
-  passingMarks: number;
-  totalMarks: number;
-  status: "draft" | "published" | "archived";
-  shuffleQuestions: boolean;
-  shuffleOptions: boolean;
-  sections: ExamSection[];
-  case_scenarios?: CaseScenario[];
-}
-
-type FlatEntry = {
-  sectionId: string;
-  sectionTitle: string;
-  question: Question;
-};
-
-function flattenPaperQuestions(paper: MCQPaper): FlatEntry[] {
-  const result: FlatEntry[] = [];
-  if (!paper.sections) return result;
-
-  for (const sec of paper.sections) {
-    if (!sec.questions) continue;
-    for (const q of sec.questions) {
-      result.push({
-        sectionId: sec.id,
-        sectionTitle: sec.title,
-        question: q
-      });
-    }
-  }
-  return result;
-}
-
-// Shuffles standalone normal-MCQ entries among themselves. Case-study
-// sub-questions are grouped into contiguous blocks (by shared case_narrative)
-// that keep both their internal order and their original position slot in
-// the sequence — a case's questions never get split up or mixed with others.
-function shuffleFlatQuestions(entries: FlatEntry[]): FlatEntry[] {
-  type Block =
-    | { kind: "case"; entries: FlatEntry[] }
-    | { kind: "normal"; entry: FlatEntry };
-
-  const blocks: Block[] = [];
-  let i = 0;
-  while (i < entries.length) {
-    const e = entries[i];
-    if (e.question.type === "case") {
-      const caseKey = e.question.case_narrative;
-      const group: FlatEntry[] = [e];
-      let j = i + 1;
-      while (
-        j < entries.length &&
-        entries[j].question.type === "case" &&
-        entries[j].question.case_narrative === caseKey
-      ) {
-        group.push(entries[j]);
-        j++;
-      }
-      blocks.push({ kind: "case", entries: group });
-      i = j;
-    } else {
-      blocks.push({ kind: "normal", entry: e });
-      i++;
-    }
-  }
-
-  const normalBlockIndices = blocks
-    .map((b, idx) => (b.kind === "normal" ? idx : -1))
-    .filter((idx) => idx !== -1);
-  const normalEntries = normalBlockIndices.map(
-    (idx) => (blocks[idx] as { kind: "normal"; entry: FlatEntry }).entry
-  );
-  for (let k = normalEntries.length - 1; k > 0; k--) {
-    const j = Math.floor(Math.random() * (k + 1));
-    [normalEntries[k], normalEntries[j]] = [normalEntries[j], normalEntries[k]];
-  }
-  normalBlockIndices.forEach((blockIdx, k) => {
-    blocks[blockIdx] = { kind: "normal", entry: normalEntries[k] };
-  });
-
-  const result: FlatEntry[] = [];
-  for (const b of blocks) {
-    if (b.kind === "case") result.push(...b.entries);
-    else result.push(b.entry);
-  }
-  return result;
-}
-
 type QuizPhase = "in-progress" | "submitting" | "results";
 
 export default function QuizPage({ params }: { params: Promise<{ id: string }> }) {
@@ -183,6 +82,10 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
   const [loading, setLoading] = useState(true);
   const [is404, setIs404] = useState(false);
   const [loadError, setLoadError] = useState("");
+
+  const [attempt, setAttempt] = useState<AttemptStartResponse | null>(null);
+  const [attemptPhase, setAttemptPhase] = useState<"pending" | "resume-prompt" | "ready">("pending");
+  const [attemptError, setAttemptError] = useState("");
 
   useEffect(() => {
     const fetchQuiz = async () => {
@@ -214,6 +117,40 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
     fetchQuiz();
   }, [id, router]);
 
+  // Starts (or resumes) the server-persisted attempt as soon as the paper is
+  // known — before QuizEngine ever mounts, so the interactive UI is always
+  // initialized from server-confirmed state rather than a blank slate that
+  // then has to be reconciled after the fact.
+  useEffect(() => {
+    if (!paper) return;
+    const startAttempt = async () => {
+      try {
+        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+        const token = localStorage.getItem("caliber_jwt") || "";
+        const order = computeQuestionOrder(paper);
+        const res = await fetch(`${apiURL}/api/quizzes/${paper.id}/attempt/start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ questionOrder: order }),
+        });
+        if (!res.ok) {
+          setAttemptError("Couldn't start this attempt. Please try again.");
+          return;
+        }
+        const data: AttemptStartResponse = await res.json();
+        setAttempt(data);
+        const alreadyExpired = new Date(data.deadlineAt).getTime() < Date.now();
+        // An already-expired resumed attempt skips the prompt entirely —
+        // showing "Resume Test" for an attempt that's already over would be
+        // misleading. QuizEngine auto-finalizes it on mount instead.
+        setAttemptPhase(data.status === "resumed" && !alreadyExpired ? "resume-prompt" : "ready");
+      } catch {
+        setAttemptError("Couldn't start this attempt. Please check your connection and try again.");
+      }
+    };
+    startAttempt();
+  }, [paper]);
+
   if (is404) return notFound();
   if (loadError) {
     return (
@@ -226,7 +163,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
       </div>
     );
   }
-  if (loading || !paper) return <div className="pt-24 text-center">Loading quiz engine...</div>;
+  if (loading || !paper) return <QuizLoadingState label="Loading quiz engine..." />;
 
   // Checked here, before QuizEngine (and its hooks) ever mounts — a paper
   // with 0 questions must never reach QuizEngine, since flatQuestions.length
@@ -243,32 +180,113 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
     );
   }
 
-  return <QuizEngine paper={paper} />;
+  if (attemptError) {
+    return (
+      <div className="pt-32 pb-20 text-center max-w-lg mx-auto">
+        <h2 className="text-xl font-bold font-heading mb-4 text-ink-navy dark:text-paper">Couldn&apos;t start this attempt</h2>
+        <p className="text-slate dark:text-paper/60 mb-6">{attemptError}</p>
+        <Link href="/mcq" className="text-sm font-bold text-signal-emerald hover:underline">
+          Go back to MCQ Library
+        </Link>
+      </div>
+    );
+  }
+
+  if (attemptPhase === "pending" || !attempt) {
+    return <QuizLoadingState label="Preparing your attempt..." />;
+  }
+
+  if (attemptPhase === "resume-prompt") {
+    return (
+      <ResumePrompt
+        onResume={() => setAttemptPhase("ready")}
+        onExit={() => router.push("/mcq")}
+      />
+    );
+  }
+
+  return <QuizEngine paper={paper} initialAttempt={attempt} />;
+}
+
+function ResumePrompt({ onResume, onExit }: { onResume: () => void; onExit: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-ink-navy/60 backdrop-blur-sm">
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0, y: 12 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        className="bg-paper dark:bg-ink-navy border border-line-gray-light dark:border-line-gray-dark rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4"
+      >
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-signal-emerald/10 flex items-center justify-center flex-shrink-0">
+            <RotateCcw className="w-5 h-5 text-signal-emerald" />
+          </div>
+          <div>
+            <h3 className="font-heading font-bold text-base text-ink-navy dark:text-paper">Resume Test</h3>
+            <p className="text-xs text-slate dark:text-paper/60 mt-1 leading-relaxed">
+              We found an unfinished test attempt. Your previous progress has been saved.
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={onExit}
+            className="flex-1 py-2.5 text-xs font-semibold border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper rounded-xl hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors"
+          >
+            Exit Test
+          </button>
+          <button
+            onClick={onResume}
+            className="flex-1 py-2.5 text-xs font-bold bg-signal-emerald text-white rounded-xl hover:bg-signal-emerald/90 transition-colors"
+          >
+            Resume Test
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
 }
 
 // ─── Quiz Engine ──────────────────────────────────────────────────────────
 // Precondition: paper has at least one question (enforced by the caller above).
-function QuizEngine({ paper }: { paper: MCQPaper }) {
+function QuizEngine({ paper, initialAttempt }: { paper: MCQPaper; initialAttempt: AttemptStartResponse }) {
   const { theme, setTheme, resolvedTheme } = useTheme();
+  const { setTestActive, guardNavigate } = useTestGuard();
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  // Computed once per quiz load (stable across re-renders like the timer
-  // tick) so question order never changes mid-attempt.
+  // Starts as the attempt the parent already confirmed with the server, but
+  // is itself stateful — "Practice Again" (reset, below) starts a genuinely
+  // new attempt server-side (the old one is already status:"submitted") and
+  // swaps this in, rather than reusing a stale, already-graded attemptId.
+  const [activeAttempt, setActiveAttempt] = useState<AttemptStartResponse>(initialAttempt);
+
+  // Reordered to match the active attempt's server-persisted order, so
+  // question order never changes mid-attempt and a resumed attempt shows
+  // the exact order it started with.
   const flatQuestions = useMemo(() => {
     const base = flattenPaperQuestions(paper);
-    return paper.shuffleQuestions ? shuffleFlatQuestions(base) : base;
-  }, [paper]);
+    return reorderFlatQuestionsById(base, activeAttempt.questionOrder);
+  }, [paper, activeAttempt.questionOrder]);
   const total = flatQuestions.length;
+  const attemptId = activeAttempt.attemptId;
+  const deadlineAtMs = useMemo(() => new Date(activeAttempt.deadlineAt).getTime(), [activeAttempt.deadlineAt]);
 
   const [phase, setPhase] = useState<QuizPhase>("in-progress");
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [currentIndex, setCurrentIndex] = useState(() =>
+    Math.min(Math.max(initialAttempt.currentIndex || 0, 0), total - 1)
+  );
 
-  const [userAnswers, setUserAnswers] = useState<(number | null)[]>(Array(total).fill(null));
-  const [perQuestionTimes, setPerQuestionTimes] = useState<number[]>(Array(total).fill(0));
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [userAnswers, setUserAnswers] = useState<(number | null)[]>(() =>
+    flatQuestions.map((e) => (initialAttempt.answers[e.question.id] ?? null))
+  );
+  const [perQuestionTimes, setPerQuestionTimes] = useState<number[]>(() =>
+    initialAttempt.perQuestionTimes.length === total ? initialAttempt.perQuestionTimes : Array(total).fill(0)
+  );
+  const [elapsedSeconds, setElapsedSeconds] = useState(() =>
+    Math.max(0, Math.floor((Date.now() - new Date(initialAttempt.startedAt).getTime()) / 1000))
+  );
   const [showFinishWarning, setShowFinishWarning] = useState(false);
   const [submissionResult, setSubmissionResult] = useState<SubmissionResult | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
@@ -279,8 +297,16 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
     if (paper.sections) {
       for (const sec of paper.sections) acc[sec.id] = 0;
     }
-    return acc;
+    return { ...acc, ...initialAttempt.sectionElapsed };
   });
+
+  // Guards the quiz-taking flow while an attempt is actually in progress —
+  // stops the moment a submission is in flight, so the results-page
+  // navigation that follows a successful finishQuiz() is never blocked.
+  useEffect(() => {
+    setTestActive(phase === "in-progress");
+    return () => setTestActive(false);
+  }, [phase, setTestActive]);
 
   const questionShownAt = useRef<number[]>(Array(total).fill(0));
 
@@ -319,9 +345,88 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [phase]);
 
+  // Keeps a ref to the latest finishQuiz closure so the long-lived autosave
+  // callback below (stable across renders) can trigger a real submission on
+  // expiry without capturing a stale closure from an earlier render.
+  const finishQuizRef = useRef<() => void>(() => {});
+
+  // Latest-value snapshot for autosave, read at call-time instead of being a
+  // dependency of the debounce/heartbeat effects below — otherwise those
+  // effects would re-fire every second just because the 1s timer tick
+  // updates elapsedSeconds/sectionElapsed, defeating the debounce entirely.
+  const latestSnapshotRef = useRef({ userAnswers, perQuestionTimes, currentIndex, sectionElapsed, elapsedSeconds });
+  useEffect(() => {
+    latestSnapshotRef.current = { userAnswers, perQuestionTimes, currentIndex, sectionElapsed, elapsedSeconds };
+  }, [userAnswers, perQuestionTimes, currentIndex, sectionElapsed, elapsedSeconds]);
+
+  const attemptExpiredRef = useRef(false);
+
+  const saveProgressNow = useCallback(async () => {
+    if (attemptExpiredRef.current) return;
+    const snap = latestSnapshotRef.current;
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt");
+      if (!token) return;
+      const res = await fetch(`${apiURL}/api/quizzes/${paper.id}/attempt/${attemptId}/progress`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          answers: Object.fromEntries(flatQuestions.map((e, i) => [e.question.id, snap.userAnswers[i]])),
+          perQuestionTimes: snap.perQuestionTimes,
+          currentIndex: snap.currentIndex,
+          sectionElapsed: snap.sectionElapsed,
+          elapsedSeconds: snap.elapsedSeconds,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (data && data.success === false && data.status === "expired" && !attemptExpiredRef.current) {
+        attemptExpiredRef.current = true;
+        finishQuizRef.current();
+      }
+    } catch {
+      // Best-effort — a failed autosave doesn't interrupt the attempt; the
+      // final submit-v2 call (with the server-persisted attempt) is still
+      // the real source of truth.
+    }
+  }, [paper.id, attemptId, flatQuestions]);
+
+  // Debounced autosave on every answer/navigation change.
+  useEffect(() => {
+    if (phase !== "in-progress") return;
+    const t = window.setTimeout(() => { saveProgressNow(); }, 800);
+    return () => window.clearTimeout(t);
+  }, [userAnswers, currentIndex, phase, saveProgressNow]);
+
+  // Heartbeat so idle reading time / section-time still gets persisted, and
+  // so an expired deadline is detected within ~20s even without an answer
+  // change to trigger the debounced save above.
+  useEffect(() => {
+    if (phase !== "in-progress") return;
+    const interval = window.setInterval(() => { saveProgressNow(); }, 20000);
+    return () => window.clearInterval(interval);
+  }, [phase, saveProgressNow]);
+
+  // If this attempt was already past its deadline the moment it was
+  // resumed (the student was away longer than the test's duration),
+  // finalize it immediately instead of letting them interact with an
+  // attempt that's already over.
+  useEffect(() => {
+    if (Date.now() > deadlineAtMs) {
+      attemptExpiredRef.current = true;
+      finishQuizRef.current();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const currentEntry = flatQuestions[currentIndex];
   const currentQ = currentEntry.question;
   const currentCase = currentEntry.question.case_narrative;
+  // Stable cluster identity for the narrative panel's remount key — prefers
+  // the real case_group_id so the panel never remounts while navigating
+  // within one case, even in the (pre-migration) edge case where narrative
+  // text is empty or happens to collide between two different case blocks.
+  const currentCaseKey = currentEntry.question.case_group_id || currentCase;
   const selectedOption = userAnswers[currentIndex];
   const answeredCount = userAnswers.filter((a) => a !== null).length;
   const skippedCount = total - answeredCount;
@@ -382,9 +487,19 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
           "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify({
-          answers: userAnswers,
+          // Question-ID-keyed, not positional — the server independently
+          // fetches and canonically orders questions, so a plain index into
+          // this client's (possibly shuffled) flatQuestions would grade the
+          // wrong question whenever shuffleQuestions is enabled.
+          answers: Object.fromEntries(flatQuestions.map((e, i) => [e.question.id, userAnswers[i]])),
           perQuestionTimes: perQuestionTimes,
           elapsedSeconds: elapsedSeconds,
+          // Links this submission to the persisted attempt row — the server
+          // uses it to reject a second submission of the same attempt
+          // (returning the original result instead) and, if this call
+          // arrives after the attempt's real deadline, to grade the last
+          // autosaved answers rather than whatever was just posted.
+          attemptId,
         })
       });
       if (!res.ok) {
@@ -408,8 +523,32 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
       setPhase("in-progress");
     }
   }
+  finishQuizRef.current = finishQuiz;
 
-  const reset = useCallback(() => {
+  const reset = useCallback(async () => {
+    // "Practice Again" must start a genuinely new server-side attempt — the
+    // previous one is already status:"submitted", so reusing its attemptId
+    // would make the next submit-v2 call hit the idempotent-replay branch
+    // and just return the OLD result again instead of grading the new one.
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const order = computeQuestionOrder(paper);
+      const res = await fetch(`${apiURL}/api/quizzes/${paper.id}/attempt/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ questionOrder: order }),
+      });
+      if (res.ok) {
+        const data: AttemptStartResponse = await res.json();
+        setActiveAttempt(data);
+      }
+    } catch {
+      // If this fails, local UI state still resets below so the user isn't
+      // stuck — the next autosave/submit call will simply surface the usual
+      // "check your connection" messaging rather than silently misgrading.
+    }
+    attemptExpiredRef.current = false;
     setPhase("in-progress");
     setCurrentIndex(0);
     setUserAnswers(Array(total).fill(null));
@@ -427,7 +566,7 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
     setLeaderboard([]);
     setSubmitError(null);
     questionShownAt.current = [window.performance.now(), ...Array(total - 1).fill(0)];
-  }, [total, paper.sections]);
+  }, [total, paper]);
 
   if (phase === "results" && submissionResult) {
     return (
@@ -443,7 +582,7 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
   }
 
   if (phase === "submitting") {
-    return <div className="pt-24 text-center">Submitting your attempt...</div>;
+    return <QuizLoadingState label="Submitting your attempt..." />;
   }
 
   return (
@@ -471,9 +610,12 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
 
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <Link href="/mcq" className="flex items-center gap-1.5 text-xs text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark px-4 py-2 rounded-xl shadow-sm">
+              <button
+                onClick={() => guardNavigate("/mcq")}
+                className="flex items-center gap-1.5 text-xs text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark px-4 py-2 rounded-xl shadow-sm"
+              >
                 <ArrowLeft className="w-3.5 h-3.5" /> Exit
-              </Link>
+              </button>
               {mounted && (
                 <button
                   onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
@@ -535,7 +677,7 @@ function QuizEngine({ paper }: { paper: MCQPaper }) {
                     when the case itself changes. */}
                 <AnimatePresence mode="wait">
                   <motion.div
-                    key={`case-${currentCase}`}
+                    key={`case-${currentCaseKey}`}
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
@@ -769,7 +911,12 @@ function ResultsView({
   onReset: () => void;
 }) {
   const total = flatQuestions.length;
-  const analysis = result.questionAnalysis;
+  // Keyed by question ID, not array position — the backend returns
+  // questionAnalysis sorted by its own canonical order_index order, which
+  // does not necessarily match this client's (possibly shuffled) flatQuestions
+  // order, so a positional analysis[i] lookup could show the wrong question's
+  // correct/incorrect status.
+  const analysisById = new Map(result.questionAnalysis.map((a) => [a.questionId, a]));
   const score = result.score;
   const actualTotalMarks = result.totalMarks;
   const accuracy = Math.round(result.accuracyPercentage);
@@ -793,7 +940,7 @@ function ResultsView({
     const indices = flatQuestions
       .map((e, i) => (e.sectionId === section.id ? i : -1))
       .filter((i) => i >= 0);
-    const correct = indices.filter((i) => analysis[i]?.status === "correct").length;
+    const correct = indices.filter((i) => analysisById.get(flatQuestions[i].question.id)?.status === "correct").length;
     return {
       section: section.title.replace(/^Section [A-Z] — /, ""),
       fullTitle: section.title,
@@ -972,9 +1119,9 @@ function ResultsView({
                 index={index}
                 questionText={entry.question.text}
                 options={entry.question.options}
-                userAnswerIndex={analysis[index]?.userSelected ?? null}
-                correctAnswerIndex={analysis[index]?.correctOptionIndex ?? -1}
-                explanation={analysis[index]?.explanation || ""}
+                userAnswerIndex={analysisById.get(entry.question.id)?.userSelected ?? null}
+                correctAnswerIndex={analysisById.get(entry.question.id)?.correctOptionIndex ?? -1}
+                explanation={analysisById.get(entry.question.id)?.explanation || ""}
                 timeTakenSeconds={perQuestionTimes[index]}
               />
             </div>

@@ -4,22 +4,25 @@ import { motion } from "framer-motion";
 import { Target, Heart, Lightbulb, MessageCircle, BookOpen, Award } from "lucide-react";
 import Image from "next/image";
 import { useState } from "react";
+import { LinkedInIcon } from "@/components/SocialIcons";
 
 const founders = [
   {
-    name: "Aditya Kanal",
-    role: "Founder",
+    name: "CA Aditya Kanal",
+    role: "Co-Founder",
     initials: "AK",
     image: "/MENTOR4.png",
+    linkedin: "https://www.linkedin.com/in/aditya-kanal-3081561b4?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
     bio: "Aditya is a first attempt Chartered Accountant and has passed level 1 of the CFA program. He is also an alumni of NMIMS, Mumbai, from where he studied Bsc Finance and passed out with a certificate of merit.\n\nHe works in valuations at a leading global advisory firm, where his day-to-day revolves around financial modelling, business valuation, and the kind of rigorous analytical work that CA students spend years training toward. Aditya also worked in valuations for his articleship, at a Big 4 firm.\n\nAlongside his practice, Aditya is an educator at heart — he built CAliber to bring that same rigour to CA aspirants, pairing real-world professional insight with structured mentorship and a results-driven approach. His goal is simple: help serious students not just clear their exams, but understand the “why” behind the numbers and walk into their careers genuinely prepared.",
     specialties: ["Financial Modelling", "Business Valuation", "Mentorship"],
     quote: "Help serious students not just clear their exams, but understand the “why” behind the numbers.",
   },
   {
     name: "CA Soumyadeep Pramanick",
-    role: "Founder",
+    role: "Co-Founder",
     initials: "SP",
     image: "/MENTOR3.png",
+    linkedin: "https://www.linkedin.com/in/ca-soumyadeep-pramanick?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
     bio: "Co-founder of CAliber Mentorships, CA Soumyadeep Pramanick is a finance professional with experience in Financial Due Diligence (FDD) and Startup Advisory through his articleship at Big5 and Boutique TAS Firm at Mumbai. He has secured exemptions in Direct Tax (DT), Indirect Tax (IDT), and Integrated Business Solutions (IBS) in the Chartered Accountancy course and is currently pursuing CPA Australia. Having mentored 50+ students and built a community of 10,000+ followers across social media, he is passionate about simplifying finance and guiding aspiring professionals through mentorship and industry-focused learning.",
     specialties: ["Financial Due Diligence", "Startup Advisory", "Direct & Indirect Tax"],
     quote: "Passionate about simplifying finance and guiding aspiring professionals.",
@@ -34,14 +37,7 @@ const mentors = [
     image: "/MENTOR1.png", // Provided photo
     bio: "Hey everyone, I'm CA Madhya Jasani, and I'm super excited to help you all with your CA Final journey! I'm based in Mumbai and currently work as an AM for department Funds Practice and Transaction Advisory. I've been through this myself, so I know that passing the CA Final isn't just about how many hours you study—it's about how smart you are with those hours. We'll focus on studying smarter, not just harder. We'll work on realistic revision plans and use active recall techniques to make sure you remember everything for that crucial 1.5-day exam gap. I'll also help you with paper presentation and time management under pressure. If you're stuck on something or need help with your strategy, just reach out whenever you need me—let's make this effort count and get you to the finish line!",
     specialties: ["Transaction Advisory", "Revision Planning", "Time Management"],
-  },
-  {
-    name: "CA Ishaan Wadekar",
-    role: "Mentor",
-    initials: "IW",
-    image: "/MENTOR2.png",
-    bio: "CA Ishaan Wadekar is an All India Rank 37 holder in the CA Final examination, having cleared all three levels of the Chartered Accountancy course on his first attempt. He secured exemptions in all six subjects at the CA Final level, including an outstanding 76 marks in Auditing, the highest among all his subjects. During his articleship at Deloitte, he gained exposure to statutory audits of listed and large private companies across multiple industries. As a mentor, Ishaan is passionate about helping CA students develop effective study strategies, strengthen conceptual understanding, and approach the examination with confidence and clarity, drawing from his own journey of consistent academic excellence.",
-    specialties: ["AIR 37 Holder", "Auditing", "Study Strategies"],
+    linkedin: "https://www.linkedin.com/in/madhya-jasani-5321911b7?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
   },
   {
     name: "CA Ishika Khurana",
@@ -50,7 +46,17 @@ const mentors = [
     image: "/MENTOR5.png", // Uploaded photo
     bio: "Ishika Khurana is a Chartered Accountant and finance professional with articleship experience in Business Valuation, having worked on valuation engagements for both listed and private companies across diverse sectors. A strong academic performer, she secured four exemptions in the CA Final examination, reflecting her dedication and technical proficiency.\n\nThrough structured guidance, practical study strategies, and continuous support, she aims to help students clear their examinations with confidence.",
     specialties: ["Business Valuation", "Study Strategies", "Exemptions"],
-  }
+    linkedin: "https://www.linkedin.com/in/ishika-khurana-its?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
+  },
+  {
+    name: "CA Ishaan Wadekar",
+    role: "Mentor",
+    initials: "IW",
+    image: "/MENTOR2.png",
+    bio: "CA Ishaan Wadekar is an All India Rank 37 holder in the CA Final examination, having cleared all three levels of the Chartered Accountancy course on his first attempt. He secured exemptions in all six subjects at the CA Final level, including an outstanding 76 marks in Auditing, the highest among all his subjects. During his articleship at Deloitte, he gained exposure to statutory audits of listed and large private companies across multiple industries. As a mentor, Ishaan is passionate about helping CA students develop effective study strategies, strengthen conceptual understanding, and approach the examination with confidence and clarity, drawing from his own journey of consistent academic excellence.",
+    specialties: ["AIR 37 Holder", "Auditing", "Study Strategies"],
+    linkedin: "https://www.linkedin.com/in/ca-ishaan-wadekar?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
+  },
 ];
 const values = [
   { icon: <Target className="w-5 h-5" />, title: "Exam-first design", desc: "Every MCQ, every explanation, every timer is built to replicate actual CA exam conditions — not textbook reading." },
@@ -91,7 +97,15 @@ export default function AboutPage() {
                       )}
                     </div>
                     <div className="text-center sm:text-left mt-1 sm:mt-2">
-                      <p className="font-heading font-bold text-lg text-ink-navy dark:text-paper">{f.name}</p>
+                      <div className="flex items-center justify-center sm:justify-start gap-2">
+                        <p className="font-heading font-bold text-lg text-ink-navy dark:text-paper">{f.name}</p>
+                        {f.linkedin && (
+                          <a href={f.linkedin} target="_blank" rel="noopener noreferrer" aria-label={`${f.name} on LinkedIn`}
+                            className="opacity-70 hover:opacity-100 hover:scale-110 transition-all">
+                            <LinkedInIcon className="w-4 h-4" />
+                          </a>
+                        )}
+                      </div>
                       <p className="text-[10px] font-bold text-signal-emerald uppercase mt-1">{f.role}</p>
                     </div>
                   </div>
@@ -130,7 +144,15 @@ export default function AboutPage() {
                       )}
                     </div>
                     <div>
-                      <p className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{m.name}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{m.name}</p>
+                        {m.linkedin && (
+                          <a href={m.linkedin} target="_blank" rel="noopener noreferrer" aria-label={`${m.name} on LinkedIn`}
+                            className="opacity-70 hover:opacity-100 hover:scale-110 transition-all">
+                            <LinkedInIcon className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+                      </div>
                       <p className="text-[10px] font-bold text-slate dark:text-paper/50 uppercase mt-0.5">{m.role}</p>
                     </div>
                   </div>
