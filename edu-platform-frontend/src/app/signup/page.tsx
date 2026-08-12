@@ -8,7 +8,8 @@ import { useAuth } from "@/context/AuthContext";
 import { AuthShell, OTPInput, ResendTimer, PasswordStrength } from "@/components/AuthShell";
 import { Turnstile } from "@/components/Turnstile";
 import { TermsAcceptanceBox } from "@/components/TermsAcceptanceBox";
-import { ArrowRight, CheckCircle, Eye, EyeOff, ChevronLeft, Sparkles } from "lucide-react";
+import { apiFetch, ApiFetchError } from "@/lib/apiFetch";
+import { ArrowRight, CheckCircle, Eye, EyeOff, ChevronLeft, Loader2, Sparkles } from "lucide-react";
 
 type Step = "email" | "otp" | "password" | "profile" | "done";
 const OTP_LENGTH = 6;
@@ -32,6 +33,11 @@ export default function SignupPage() {
   const [turnstileKey, setTurnstileKey] = useState(0);
   const [tempToken, setTempToken] = useState("");
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  // True once a request has been in flight a while — most likely the free-tier
+  // backend was asleep and is waking up (can take up to ~50s), not a real hang.
+  const [slowHint, setSlowHint] = useState(false);
 
   const otpFilled = otp.every((d) => d !== "");
   const stepNum = step === "email" ? 1 : step === "otp" ? 2 : step === "password" ? 3 : step === "profile" ? 4 : 4;
@@ -43,9 +49,12 @@ export default function SignupPage() {
     if (!turnstileToken) { setError("Security verification in progress. Please wait a moment and try again."); return; }
 
     setError("");
+    setIsSubmitting(true);
+    setSlowHint(false);
+    const slowTimer = setTimeout(() => setSlowHint(true), 9000);
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-      const res = await fetch(`${apiURL}/api/auth/register-init`, {
+      const res = await apiFetch(`${apiURL}/api/auth/register-init`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, turnstileToken }),
@@ -63,6 +72,10 @@ export default function SignupPage() {
       setTurnstileToken("");
       setTurnstileKey((k) => k + 1);
       setError(err.message || "Server error. Please check your connection and try again.");
+    } finally {
+      clearTimeout(slowTimer);
+      setIsSubmitting(false);
+      setSlowHint(false);
     }
   }
 
@@ -71,9 +84,12 @@ export default function SignupPage() {
     if (!otpFilled) { setError("Enter all 6 digits."); return; }
 
     setError("");
+    setIsSubmitting(true);
+    setSlowHint(false);
+    const slowTimer = setTimeout(() => setSlowHint(true), 9000);
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-      const res = await fetch(`${apiURL}/api/auth/verify-otp`, {
+      const res = await apiFetch(`${apiURL}/api/auth/verify-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, otp: otp.join("") }),
@@ -87,6 +103,10 @@ export default function SignupPage() {
       setStep("password");
     } catch (err: any) {
       setError(err.message || "Failed to verify OTP.");
+    } finally {
+      clearTimeout(slowTimer);
+      setIsSubmitting(false);
+      setSlowHint(false);
     }
   }
 
@@ -96,9 +116,12 @@ export default function SignupPage() {
       return;
     }
     setError("");
+    setIsSubmitting(true);
+    setSlowHint(false);
+    const slowTimer = setTimeout(() => setSlowHint(true), 9000);
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-      const res = await fetch(`${apiURL}/api/auth/register-init`, {
+      const res = await apiFetch(`${apiURL}/api/auth/register-init`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, turnstileToken }),
@@ -115,6 +138,9 @@ export default function SignupPage() {
       // needs a fresh one.
       setTurnstileToken("");
       setTurnstileKey((k) => k + 1);
+      clearTimeout(slowTimer);
+      setIsSubmitting(false);
+      setSlowHint(false);
     }
   }
 
@@ -123,9 +149,12 @@ export default function SignupPage() {
     if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
     if (password !== confirmPassword) { setError("Passwords do not match."); return; }
     setError("");
+    setIsSubmitting(true);
+    setSlowHint(false);
+    const slowTimer = setTimeout(() => setSlowHint(true), 9000);
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-      const res = await fetch(`${apiURL}/api/auth/register`, {
+      const res = await apiFetch(`${apiURL}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password, tempToken }),
@@ -144,16 +173,23 @@ export default function SignupPage() {
       setStep("profile");
     } catch (err: any) {
       setError(err.message || "Signup failed. Please try again.");
+    } finally {
+      clearTimeout(slowTimer);
+      setIsSubmitting(false);
+      setSlowHint(false);
     }
   }
 
   async function handleProfile(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setIsSubmitting(true);
+    setSlowHint(false);
+    const slowTimer = setTimeout(() => setSlowHint(true), 9000);
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const token = localStorage.getItem("caliber_jwt") || "";
-      const res = await fetch(`${apiURL}/api/auth/profile`, {
+      const res = await apiFetch(`${apiURL}/api/auth/profile`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify(profileForm)
@@ -167,18 +203,33 @@ export default function SignupPage() {
       setTimeout(() => router.push("/dashboard"), 1500);
     } catch (err: any) {
       setError(err.message || "Couldn't save your details. Please try again.");
+    } finally {
+      clearTimeout(slowTimer);
+      setIsSubmitting(false);
+      setSlowHint(false);
     }
   }
 
   const handleGoogleAuth = async () => {
     if (!termsAccepted) { setError("Please read and accept the Terms & Conditions to continue."); return; }
+    setError("");
+    setIsGoogleLoading(true);
+    setSlowHint(false);
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-      const res = await fetch(`${apiURL}/api/auth/google/url`);
+      const res = await apiFetch(`${apiURL}/api/auth/google/url`, { onSlow: () => setSlowHint(true) });
       const data = await res.json();
-      if (data.url) window.location.href = data.url;
-    } catch (err) {
+      if (data.url) {
+        window.location.href = data.url;
+        return; // leaving the page — keep the button showing "loading" until navigation completes
+      }
       setError("Failed to initialize Google connection.");
+      setIsGoogleLoading(false);
+      setSlowHint(false);
+    } catch (err) {
+      setError(err instanceof ApiFetchError ? err.message : "Failed to initialize Google connection.");
+      setIsGoogleLoading(false);
+      setSlowHint(false);
     }
   };
 
@@ -217,6 +268,12 @@ export default function SignupPage() {
               </p>
             </div>
 
+            {slowHint && (
+              <p className="text-center text-[11px] text-slate dark:text-paper/50 bg-line-gray-light/50 dark:bg-line-gray-dark/40 rounded-lg py-2 px-3">
+                Still connecting — this can take up to a minute if our server was asleep.
+              </p>
+            )}
+
             {/* Email step */}
             {step === "email" && (
               <div className="space-y-5">
@@ -227,15 +284,21 @@ export default function SignupPage() {
                     form below still works exactly the same, just visually
                     secondary. Both paths are gated on terms acceptance above. */}
                 <div className="space-y-2">
-                  <button type="button" onClick={handleGoogleAuth} disabled={!termsAccepted}
-                    className="w-full flex items-center justify-center gap-2.5 py-3.5 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm shadow-sm disabled:opacity-40 disabled:cursor-not-allowed">
-                    <svg viewBox="0 0 24 24" style={{ width: 18, height: 18 }}>
-                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-                    </svg>
-                    Sign up with Google
+                  <button type="button" onClick={handleGoogleAuth} disabled={!termsAccepted || isGoogleLoading || isSubmitting}
+                    className="w-full flex items-center justify-center gap-2.5 py-3.5 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm shadow-sm disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100">
+                    {isGoogleLoading ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Connecting…</>
+                    ) : (
+                      <>
+                        <svg viewBox="0 0 24 24" style={{ width: 18, height: 18 }}>
+                          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                        </svg>
+                        Sign up with Google
+                      </>
+                    )}
                   </button>
                   <p className="flex items-center justify-center gap-1.5 text-[11px] text-signal-emerald font-semibold">
                     <Sparkles className="w-3 h-3" /> Recommended — skip the OTP step entirely
@@ -262,8 +325,8 @@ export default function SignupPage() {
                   <Turnstile key={turnstileKey} onVerify={setTurnstileToken} />
 
                   {error && <p className="text-xs text-alert-coral">{error}</p>}
-                  <button type="submit" disabled={!turnstileToken || !termsAccepted} className="w-full flex items-center justify-center gap-2 py-2.5 border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper font-semibold rounded-lg hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 active:scale-[0.98] transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                    Send OTP <ArrowRight className="w-4 h-4" />
+                  <button type="submit" disabled={!turnstileToken || !termsAccepted || isSubmitting || isGoogleLoading} className="w-full flex items-center justify-center gap-2 py-2.5 border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper font-semibold rounded-lg hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 active:scale-[0.98] transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100">
+                    {isSubmitting ? <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</> : <>Send OTP <ArrowRight className="w-4 h-4" /></>}
                   </button>
                 </form>
 
@@ -285,9 +348,9 @@ export default function SignupPage() {
                     already spent on the original register-init call. */}
                 <Turnstile key={turnstileKey} onVerify={setTurnstileToken} />
                 {error && <p className="text-xs text-alert-coral text-center">{error}</p>}
-                <button type="submit" disabled={!otpFilled}
-                  className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed">
-                  Verify <ArrowRight className="w-4 h-4" />
+                <button type="submit" disabled={!otpFilled || isSubmitting}
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100">
+                  {isSubmitting ? <><Loader2 className="w-4 h-4 animate-spin" /> Verifying…</> : <>Verify <ArrowRight className="w-4 h-4" /></>}
                 </button>
                 <ResendTimer onResend={handleResendOTP} />
               </form>
@@ -321,9 +384,9 @@ export default function SignupPage() {
                 </div>
                 {error && <p className="text-xs text-alert-coral">{error}</p>}
 
-                <button type="submit"
-                  className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm">
-                  Continue <ArrowRight className="w-4 h-4" />
+                <button type="submit" disabled={isSubmitting}
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100">
+                  {isSubmitting ? <><Loader2 className="w-4 h-4 animate-spin" /> Continuing…</> : <>Continue <ArrowRight className="w-4 h-4" /></>}
                 </button>
               </form>
             )}
@@ -372,9 +435,9 @@ export default function SignupPage() {
 
                 {error && <p className="text-xs text-alert-coral">{error}</p>}
 
-                <button type="submit"
-                  className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm mt-6">
-                  Complete Setup <ArrowRight className="w-4 h-4" />
+                <button type="submit" disabled={isSubmitting}
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm mt-6 disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100">
+                  {isSubmitting ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : <>Complete Setup <ArrowRight className="w-4 h-4" /></>}
                 </button>
               </form>
             )}

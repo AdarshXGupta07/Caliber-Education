@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { courses as defaultCourses } from "@/lib/mockData";
 import { useAuth } from "@/context/AuthContext";
+import { Toast, type ToastState } from "@/components/Toast";
 
 export default function CourseDetailClient({ id }: { id: string }) {
   const [course, setCourse] = useState<any>(null);
@@ -69,6 +70,7 @@ export default function CourseDetailClient({ id }: { id: string }) {
 
   const [openModule, setOpenModule] = useState<number | null>(0);
   const [purchaseLoading, setPurchaseLoading] = useState(false);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   const [showManualUpi, setShowManualUpi] = useState(false);
   const [utrNumber, setUtrNumber] = useState("");
@@ -233,7 +235,8 @@ export default function CourseDetailClient({ id }: { id: string }) {
             if (course.deliveryType === "whatsapp") {
               router.push(`/courses/${course.id}/success`);
             } else {
-              router.push("/dashboard?tab=courses");
+              setToast({ type: "success", message: "Payment successful! Taking you to your dashboard…" });
+              setTimeout(() => router.push("/dashboard?tab=courses"), 1400);
             }
           } else {
             alert("Test Payment failed. Make sure test mode is allowed in backend.");
@@ -268,14 +271,15 @@ export default function CourseDetailClient({ id }: { id: string }) {
               if (course.deliveryType === "whatsapp") {
                 router.push(`/courses/${course.id}/success`);
               } else {
-                router.push("/dashboard?tab=courses");
+                setToast({ type: "success", message: "Payment successful! Taking you to your dashboard…" });
+                setTimeout(() => router.push("/dashboard?tab=courses"), 1400);
               }
             } else {
-              alert("Payment verification failed. Please contact support.");
+              setToast({ type: "error", message: "Payment verification failed. Please contact support." });
             }
           } catch (err) {
             console.error("Signature verification error", err);
-            alert("Error verifying payment signature");
+            setToast({ type: "error", message: "Error verifying your payment. Please contact support." });
           }
         },
         prefill: {
@@ -292,6 +296,10 @@ export default function CourseDetailClient({ id }: { id: string }) {
       };
 
       const rzp = new (window as any).Razorpay(options);
+      rzp.on("payment.failed", () => {
+        setToast({ type: "error", message: "Payment didn't go through. No amount was charged — please try again." });
+        setPurchaseLoading(false);
+      });
       rzp.open();
     } catch (err: any) {
       console.warn("Payment could not be started:", err.message);
@@ -305,6 +313,7 @@ export default function CourseDetailClient({ id }: { id: string }) {
 
   return (
     <div className="pt-16 pb-20">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       {/* Breadcrumb */}
       <div className="max-w-6xl mx-auto px-6 sm:px-8 pt-8">
         <Link href="/courses" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors mb-6">

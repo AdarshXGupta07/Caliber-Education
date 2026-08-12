@@ -52,14 +52,14 @@ export const metadata: Metadata = {
     description: SITE_DESCRIPTION,
     // Swap for a dedicated 1200x630 og-image.png once you have one designed —
     // this group photo is a reasonable real placeholder in the meantime.
-    images: [{ url: "/CALIBER%20MENTORS.jpeg", width: 1200, height: 630, alt: SITE_NAME }],
+    images: [{ url: "/CALIBER.jpg", width: 1200, height: 630, alt: SITE_NAME }],
     locale: "en_IN",
   },
   twitter: {
     card: "summary_large_image",
     title: `${SITE_NAME} — CA Exam MCQ Practice & Mentorship`,
     description: SITE_DESCRIPTION,
-    images: ["/CALIBER%20MENTORS.jpeg"],
+    images: ["/CALIBER.jpg"],
   },
   robots: {
     index: true,

@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { courses, registeredUsers, pendingVerifications, type PaymentVerification } from "@/lib/mockData";
+import { apiFetch } from "@/lib/apiFetch";
 
 interface User {
   id: string;
@@ -103,7 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password?: string, turnstileToken?: string) => {
     const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
     try {
-      const res = await fetch(`${apiURL}/api/auth/login`, {
+      const res = await apiFetch(`${apiURL}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password, turnstileToken }),

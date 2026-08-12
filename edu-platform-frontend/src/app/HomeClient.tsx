@@ -35,7 +35,7 @@ const founders = [
     role: "CA Law, Audit & Taxation Specialist",
     tagline: "Chartered Accountant. Decodes complex corporate laws and auditing standards through daily memory-retrieval practice.",
     initials: "AK",
-    image: "/MENTOR4.png",
+    image: "/MENTOR6.jpg",
   },
 ];
 
@@ -96,9 +96,9 @@ export default function HomeClient() {
             <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.7, ease: "easeOut", delay: 0.2 }} className="w-full">
               <div
                 className="relative w-full rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl shadow-ink-navy/10 dark:shadow-none border-[4px] sm:border-[8px] border-white dark:border-line-gray-dark/30 hover:scale-[1.02] transition-transform duration-500 cursor-zoom-in"
-                onClick={() => setZoomedImage("/CALIBER%20MENTORS.jpeg")}
+                onClick={() => setZoomedImage("/CALIBER.jpg")}
               >
-                <Image src="/CALIBER%20MENTORS.jpeg" alt="CAliber Mentors" width={1920} height={1080} className="w-full h-auto object-contain" quality={95} priority />
+                <Image src="/CALIBER.jpg" alt="CAliber Mentors" width={1920} height={1080} className="w-full h-auto object-contain" quality={95} priority />
               </div>
             </motion.div>
 

@@ -11,7 +11,7 @@ const founders = [
     name: "CA Aditya Kanal",
     role: "Co-Founder",
     initials: "AK",
-    image: "/MENTOR4.png",
+    image: "/MENTOR6.jpg",
     linkedin: "https://www.linkedin.com/in/aditya-kanal-3081561b4?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
     bio: "Aditya is a first attempt Chartered Accountant and has passed level 1 of the CFA program. He is also an alumni of NMIMS, Mumbai, from where he studied Bsc Finance and passed out with a certificate of merit.\n\nHe works in valuations at a leading global advisory firm, where his day-to-day revolves around financial modelling, business valuation, and the kind of rigorous analytical work that CA students spend years training toward. Aditya also worked in valuations for his articleship, at a Big 4 firm.\n\nAlongside his practice, Aditya is an educator at heart — he built CAliber to bring that same rigour to CA aspirants, pairing real-world professional insight with structured mentorship and a results-driven approach. His goal is simple: help serious students not just clear their exams, but understand the “why” behind the numbers and walk into their careers genuinely prepared.",
     specialties: ["Financial Modelling", "Business Valuation", "Mentorship"],

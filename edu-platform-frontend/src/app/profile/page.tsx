@@ -2,16 +2,15 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, AlertCircle, RotateCcw } from "lucide-react";
 
 export default function ProfilePage() {
     const { user, isAuthenticated, isMounted, purchasedCourseIds } = useAuth();
     const router = useRouter();
 
-    const [profileDetails, setProfileDetails] = useState<any>({});
     const [savingProfile, setSavingProfile] = useState(false);
     const [profileForm, setProfileForm] = useState({
         full_name: "", phone_number: "", address: "", stage: "CA Final", attempt_status: "First Attempt"
@@ -19,48 +18,67 @@ export default function ProfilePage() {
     const [courses, setCourses] = useState<any[]>([]);
 
     const [saveStatus, setSaveStatus] = useState<{ message: string; type: "success" | "error" } | null>(null);
+    // Blank form on a slow connection reads identically to "you have no
+    // data" — track loading/error explicitly instead of leaving it ambiguous.
+    const [isLoading, setIsLoading] = useState(true);
+    const [loadError, setLoadError] = useState("");
 
     useEffect(() => {
         if (isMounted && !isAuthenticated) router.push("/login");
     }, [isMounted, isAuthenticated, router]);
 
-    useEffect(() => {
+    const fetchProfile = useCallback(async () => {
         if (!isAuthenticated) return;
-        const fetchProfile = async () => {
-            try {
-                const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-                const token = localStorage.getItem("caliber_jwt") || "";
+        setIsLoading(true);
+        setLoadError("");
+        try {
+            const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+            const token = localStorage.getItem("caliber_jwt") || "";
 
-                // Fetch Profile
-                const res = await fetch(`${apiURL}/api/auth/me`, { headers: { "Authorization": `Bearer ${token}` } });
-                if (res.ok) {
-                    const data = await res.json();
-                    setProfileDetails(data.user);
-                    setProfileForm({
-                        full_name: data.user.full_name || "",
-                        phone_number: data.user.phone_number || "",
-                        address: data.user.address || "",
-                        stage: data.user.stage || "CA Final",
-                        attempt_status: data.user.attempt_status || "First Attempt"
-                    });
-                }
+            const [res, coursesRes] = await Promise.all([
+                fetch(`${apiURL}/api/auth/me`, { headers: { "Authorization": `Bearer ${token}` } }),
+                fetch(`${apiURL}/api/courses`),
+            ]);
 
-                // Fetch User's Enrolled courses (Past and Present)
-                const coursesRes = await fetch(`${apiURL}/api/courses`);
-                if (coursesRes.ok) {
-                    const allCourses = await coursesRes.json();
-                    const enrolled = allCourses.filter((c: any) => purchasedCourseIds.includes(c.id));
-                    setCourses(enrolled);
-                }
-            } catch (err) {
-                console.warn("Could not load user profile details");
+            if (!res.ok) throw new Error("Couldn't load your profile.");
+            const data = await res.json();
+            setProfileForm({
+                full_name: data.user.full_name || "",
+                phone_number: data.user.phone_number || "",
+                address: data.user.address || "",
+                stage: data.user.stage || "CA Final",
+                attempt_status: data.user.attempt_status || "First Attempt"
+            });
+
+            if (coursesRes.ok) {
+                const allCourses = await coursesRes.json();
+                setCourses(allCourses.filter((c: any) => purchasedCourseIds.includes(c.id)));
+            } else {
+                setCourses([]);
             }
-        };
-        fetchProfile();
+        } catch (err) {
+            setLoadError("Couldn't load your profile. Check your connection and try again.");
+        } finally {
+            setIsLoading(false);
+        }
     }, [isAuthenticated, purchasedCourseIds]);
+
+    useEffect(() => { fetchProfile(); }, [fetchProfile]);
+
+    // Save confirmation/error shouldn't linger on the page forever.
+    useEffect(() => {
+        if (!saveStatus) return;
+        const id = setTimeout(() => setSaveStatus(null), 4000);
+        return () => clearTimeout(id);
+    }, [saveStatus]);
 
     const handleSaveProfile = async (e: React.FormEvent) => {
         e.preventDefault();
+        const digitCount = profileForm.phone_number.replace(/\D/g, "").length;
+        if (digitCount < 7 || digitCount > 15) {
+            setSaveStatus({ message: "Enter a valid phone number.", type: "error" });
+            return;
+        }
         setSavingProfile(true);
         setSaveStatus(null);
         try {
@@ -79,10 +97,16 @@ export default function ProfilePage() {
                 body: JSON.stringify(profileData)
             });
             if (res.ok) {
-                setProfileDetails((prev: any) => ({ ...prev, ...profileForm }));
+                const data = await res.json().catch(() => ({}));
+                // Sync from what the server actually stored (e.g. trimmed
+                // whitespace) rather than trusting our own optimistic values.
+                if (data.profile) {
+                    setProfileForm((prev) => ({ ...prev, ...data.profile }));
+                }
                 setSaveStatus({ message: "Profile updated successfully!", type: "success" });
             } else {
-                setSaveStatus({ message: "Could not update profile.", type: "error" });
+                const err = await res.json().catch(() => ({}));
+                setSaveStatus({ message: err.detail || "Could not update profile.", type: "error" });
             }
         } catch (err) {
             setSaveStatus({ message: "Network error saving profile.", type: "error" });
@@ -112,6 +136,19 @@ export default function ProfilePage() {
                     </div>
                 </motion.div>
 
+                {loadError ? (
+                    <div className="flex flex-col items-center text-center gap-3 py-16 border border-dashed border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/10">
+                        <AlertCircle className="w-8 h-8 text-alert-coral" />
+                        <p className="text-sm text-slate dark:text-paper/60 max-w-xs">{loadError}</p>
+                        <button onClick={fetchProfile} className="flex items-center gap-1.5 text-xs font-bold text-ink-navy dark:text-paper hover:underline">
+                            <RotateCcw className="w-3.5 h-3.5" /> Try again
+                        </button>
+                    </div>
+                ) : isLoading ? (
+                    <div className="flex items-center justify-center py-24">
+                        <div className="w-10 h-10 border-4 border-line-gray-light dark:border-line-gray-dark border-t-signal-emerald rounded-full animate-spin" />
+                    </div>
+                ) : (
                 <div className="grid lg:grid-cols-3 gap-8">
 
                     <div className="lg:col-span-2 space-y-8">
@@ -201,6 +238,7 @@ export default function ProfilePage() {
                     </div>
 
                 </div>
+                )}
             </div>
         </div>
     );

@@ -137,7 +137,8 @@ async def verify_otp(request: Request, body: VerifyOTPRequest, db: Client = Depe
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest, db: Client = Depends(get_db)):
+@limiter.limit("5/minute")
+async def register(request: Request, body: RegisterRequest, db: Client = Depends(get_db)):
     """Step 3: Create account with validated email + password."""
     settings = get_settings()
     body.email = body.email.strip().lower()
@@ -230,7 +231,8 @@ async def login(request: Request, body: LoginRequest, db: Client = Depends(get_d
 
 
 @router.get("/google/url")
-async def get_google_auth_url():
+@limiter.limit("20/minute")
+async def get_google_auth_url(request: Request):
     """Return the Supabase Google OAuth authorize URL."""
     settings = get_settings()
     # E.g., http://localhost:3000/auth/callback
@@ -242,7 +244,8 @@ async def get_google_auth_url():
 
 
 @router.post("/google/exchange", response_model=TokenResponse)
-async def google_exchange(body: GoogleExchangeRequest, db: Client = Depends(get_db)):
+@limiter.limit("10/minute")
+async def google_exchange(request: Request, body: GoogleExchangeRequest, db: Client = Depends(get_db)):
     """Exchange Supabase token for our custom JWT."""
     try:
         # Validate the token directly via Supabase Auth
@@ -375,12 +378,21 @@ async def update_profile(body: ProfileUpdateRequest, current_user: dict = Depend
     """Update user's extended profile details."""
     user_id = current_user["id"]
     update_data = {}
-    if body.full_name is not None: update_data["full_name"] = body.full_name
-    if body.phone_number is not None: update_data["phone_number"] = body.phone_number
-    if body.address is not None: update_data["address"] = body.address
+    if body.full_name is not None: update_data["full_name"] = body.full_name.strip()
+    if body.phone_number is not None:
+        phone = body.phone_number.strip()
+        digits = "".join(c for c in phone if c.isdigit())
+        if len(digits) < 7 or len(digits) > 15:
+            raise HTTPException(status_code=400, detail="Enter a valid phone number.")
+        update_data["phone_number"] = phone
+    if body.address is not None:
+        address = body.address.strip()
+        if len(address) > 500:
+            raise HTTPException(status_code=400, detail="Address is too long.")
+        update_data["address"] = address
     if body.stage is not None: update_data["stage"] = body.stage
     if body.attempt_status is not None: update_data["attempt_status"] = body.attempt_status
-    
+
     if not update_data:
         return {"success": True}
 
@@ -389,8 +401,10 @@ async def update_profile(body: ProfileUpdateRequest, current_user: dict = Depend
     except Exception as e:
         print(f"Profile update error: {e}")
         raise HTTPException(status_code=500, detail="Could not update profile information")
-        
-    return {"success": True, "message": "Profile updated successfully"}
+
+    # Returned so the frontend can sync its form from confirmed server state
+    # (e.g. the trimming above) instead of trusting its own optimistic values.
+    return {"success": True, "message": "Profile updated successfully", "profile": update_data}
 
 
 @router.post("/forgot-password")
@@ -412,7 +426,8 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
 
 
 @router.post("/reset-password")
-async def reset_password(body: ResetPasswordRequest):
+@limiter.limit("5/minute")
+async def reset_password(request: Request, body: ResetPasswordRequest):
     """Step 2 of the forgot-password flow: the recovery link Supabase emailed
     redirects here with an access/refresh token pair identifying exactly
     which user is resetting. A fresh, single-use client establishes that

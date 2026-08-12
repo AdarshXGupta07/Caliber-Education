@@ -327,6 +327,12 @@ export default function MCQClient() {
             }
           });
           
+          rzp.on("payment.failed", () => {
+            console.log("[MCQ] Razorpay payment.failed event");
+            alert("Payment didn't go through. No amount was charged — please try again.");
+            setIsProcessing(false);
+          });
+
           rzp.open();
           setIsProcessing(false); // Allow user to interact while modal is open
           

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
 import { courses as defaultCourses, type Course } from "@/lib/mockData";
+import { Toast, type ToastState } from "@/components/Toast";
 import {
   ArrowRight, Lock, Users, Star, Clock, Zap,
   Search, ChevronUp, ChevronDown, SlidersHorizontal, X, ArrowUp, Tag
@@ -652,6 +653,7 @@ function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[
   const finalPrice = Math.max(0, rawPrice - (appliedCoupon?.discount_amount || 0));
 
   const [purchaseLoading, setPurchaseLoading] = useState(false);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const router = useRouter();
 
   const handleCheckout = async () => {
@@ -701,12 +703,13 @@ function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[
             if (verifyRes.ok) {
               selectedIds.forEach(id => enrollFreeCourse(id));
               await refreshPurchases();
-              router.push("/dashboard?tab=courses");
+              setToast({ type: "success", message: "Payment successful! Taking you to your dashboard…" });
+              setTimeout(() => router.push("/dashboard?tab=courses"), 1400);
             } else {
-              alert("Payment verification failed. Please contact support.");
+              setToast({ type: "error", message: "Payment verification failed. Please contact support." });
             }
           } catch (err) {
-            alert("Error verifying payment signature");
+            setToast({ type: "error", message: "Error verifying your payment. Please contact support." });
           }
         },
         prefill: { email: user?.email || "" },
@@ -715,7 +718,8 @@ function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[
 
       const rzp = new (window as any).Razorpay(options);
       rzp.on("payment.failed", function (response: any) {
-        alert("Payment Failed: " + response.error.description);
+        setToast({ type: "error", message: "Payment didn't go through. No amount was charged — please try again." });
+        setPurchaseLoading(false);
       });
       rzp.open();
 
@@ -728,6 +732,7 @@ function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[
 
   return (
     <div className="bg-white/80 dark:bg-line-gray-dark/40 backdrop-blur-md border border-line-gray-light dark:border-line-gray-dark rounded-2xl shadow-xl overflow-hidden shadow-emerald-500/5">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <div className="p-5 border-b border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/30 dark:bg-line-gray-dark/30">
         <div className="flex items-center justify-between">
           <h3 className="font-heading font-bold text-ink-navy dark:text-paper flex items-center gap-2">

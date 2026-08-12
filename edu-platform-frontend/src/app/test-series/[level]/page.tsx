@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft, CheckCircle2, Lock, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { Toast, type ToastState } from "@/components/Toast";
 
 interface TSSubject {
   id: string; level: string; group_name: string; name: string; code: string;
@@ -33,6 +34,7 @@ export default function TestSeriesLevelPage({ params }: { params: Promise<{ leve
   const [loading, setLoading] = useState(true);
   const [buying, setBuying] = useState(false);
   const [error, setError] = useState("");
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   useEffect(() => {
     const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
@@ -132,13 +134,19 @@ export default function TestSeriesLevelPage({ params }: { params: Promise<{ leve
             }),
           });
           if (vr.ok) {
-            window.location.href = "/dashboard?tab=test-series";
+            setToast({ type: "success", message: "Payment successful! Taking you to your dashboard…" });
+            setTimeout(() => { window.location.href = "/dashboard?tab=test-series"; }, 1400);
           } else {
-            setError("Payment verification failed. Please contact support.");
+            setToast({ type: "error", message: "Payment verification failed. Please contact support." });
+            setBuying(false);
           }
         },
         theme: { color: "#10b981" },
         modal: { ondismiss: () => setBuying(false) },
+      });
+      rzp.on("payment.failed", () => {
+        setToast({ type: "error", message: "Payment didn't go through. No amount was charged — please try again." });
+        setBuying(false);
       });
       rzp.open();
     } catch (e: any) {
@@ -152,6 +160,7 @@ export default function TestSeriesLevelPage({ params }: { params: Promise<{ leve
 
   return (
     <div className="pt-24 pb-32 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <Link href="/test-series" className="inline-flex items-center gap-1.5 text-xs text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper mb-6">
         <ArrowLeft className="w-3.5 h-3.5" /> All levels
       </Link>

@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -636,9 +637,14 @@ async def admin_upload_ts_paper(
     raw = await file.read()
     if len(raw) > MAX_TEST_SERIES_PAPER_BYTES:
         raise HTTPException(status_code=400, detail="File must be under 20MB")
+    # Content-Type is attacker-controlled and easy to spoof — also check the
+    # actual file bytes start with the real PDF magic number.
+    if not raw.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="File doesn't look like a valid PDF")
 
     settings = get_settings()
-    path = f"{subject_id}/{uuid.uuid4().hex[:10]}-{file.filename}"
+    safe_filename = re.sub(r"[^A-Za-z0-9._-]", "_", file.filename or "paper.pdf")
+    path = f"{subject_id}/{uuid.uuid4().hex[:10]}-{safe_filename}"
     try:
         db.storage.from_(settings.supabase_test_series_bucket).upload(
             path, raw, {"content-type": "application/pdf"}
