@@ -1,8 +1,14 @@
-"use client";
-
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { TermsContent } from "@/components/TermsContent";
+
+export const metadata: Metadata = {
+  title: "Terms & Conditions",
+  description: "CAliber Education's Terms & Conditions, including our non-refundable payment policy.",
+  alternates: { canonical: "/terms" },
+  robots: { index: false, follow: true },
+};
 
 export default function TermsPage() {
   return (
