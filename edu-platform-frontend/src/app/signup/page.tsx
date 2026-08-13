@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { AuthShell, OTPInput, ResendTimer, PasswordStrength } from "@/components/AuthShell";
@@ -16,7 +16,15 @@ const OTP_LENGTH = 6;
 
 export default function SignupPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { setSession, markProfileComplete } = useAuth();
+
+  // See login/page.tsx — same ?next=<path> pattern, same open-redirect guard.
+  const nextPath = (() => {
+    const raw = searchParams.get("next");
+    if (raw && raw.startsWith("/") && !raw.startsWith("//")) return raw;
+    return null;
+  })();
 
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
@@ -146,6 +154,7 @@ export default function SignupPage() {
 
   async function handlePassword(e: React.FormEvent) {
     e.preventDefault();
+    if (!termsAccepted) { setError("Please read and accept the Terms & Conditions to continue."); setStep("email"); return; }
     if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
     if (password !== confirmPassword) { setError("Passwords do not match."); return; }
     setError("");
@@ -157,7 +166,7 @@ export default function SignupPage() {
       const res = await apiFetch(`${apiURL}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, tempToken }),
+        body: JSON.stringify({ email, password, tempToken, termsAccepted }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -200,7 +209,7 @@ export default function SignupPage() {
       }
       markProfileComplete();
       setStep("done");
-      setTimeout(() => router.push("/dashboard"), 1500);
+      setTimeout(() => router.push(nextPath || "/dashboard"), 1500);
     } catch (err: any) {
       setError(err.message || "Couldn't save your details. Please try again.");
     } finally {
@@ -332,7 +341,7 @@ export default function SignupPage() {
 
                 <p className="text-xs text-center text-slate dark:text-paper/50 mt-4">
                   Already have an account?{" "}
-                  <Link href="/login" className="text-ink-navy dark:text-paper font-semibold hover:underline">Sign in</Link>
+                  <Link href={nextPath ? `/login?next=${encodeURIComponent(nextPath)}` : "/login"} className="text-ink-navy dark:text-paper font-semibold hover:underline">Sign in</Link>
                 </p>
               </div>
             )}

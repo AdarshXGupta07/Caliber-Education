@@ -159,6 +159,12 @@ async def register(request: Request, body: RegisterRequest, db: Client = Depends
     if len(body.password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
 
+    # The frontend gate on this is client-side only and trivially bypassed by
+    # calling this endpoint directly — this is the real enforcement, at the
+    # point the profiles row (the actual account) gets created below.
+    if not body.termsAccepted:
+        raise HTTPException(status_code=400, detail="You must accept the Terms & Conditions to create an account.")
+
     # The Supabase user already exists at this point — sign_in_with_otp in
     # step 1 created it (should_create_user) and step 2's verify_otp confirmed
     # the address. So this sets the password on that existing user rather than

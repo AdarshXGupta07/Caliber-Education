@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { AuthShell } from "@/components/AuthShell";
@@ -15,7 +15,20 @@ type Step = "form" | "done";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { login } = useAuth();
+
+  // Course/MCQ/quiz/test-series pages send people here with ?next=<path> when
+  // they try to buy or attempt something while logged out — previously this
+  // was never read, so after logging in they always landed on the generic
+  // dashboard instead of back where they were trying to go. Only accept a
+  // genuine same-site relative path (starts with exactly one "/") so this
+  // can't be turned into an open redirect via a crafted link.
+  const nextPath = (() => {
+    const raw = searchParams.get("next");
+    if (raw && raw.startsWith("/") && !raw.startsWith("//")) return raw;
+    return null;
+  })();
 
   const [step, setStep] = useState<Step>("form");
   const [email, setEmail] = useState("");
@@ -46,7 +59,7 @@ export default function LoginPage() {
       // Call authentication login which is now mapped to backend POST payload
       const loggedInUser = await login(email, password, turnstileToken);
       setStep("done");
-      setTimeout(() => router.push(getPostLoginRedirect(loggedInUser.role)), 1400);
+      setTimeout(() => router.push(nextPath || getPostLoginRedirect(loggedInUser.role)), 1400);
     } catch (err: any) {
       // Turnstile tokens are single-use — force a fresh widget so a retry
       // isn't doomed to fail bot-check with the already-spent token.
@@ -174,7 +187,7 @@ export default function LoginPage() {
 
             <p className="text-xs text-center text-slate dark:text-paper/50 mt-4">
               New here?{" "}
-              <Link href="/signup" className="text-ink-navy dark:text-paper font-semibold hover:underline">Create an account</Link>
+              <Link href={nextPath ? `/signup?next=${encodeURIComponent(nextPath)}` : "/signup"} className="text-ink-navy dark:text-paper font-semibold hover:underline">Create an account</Link>
             </p>
           </motion.div>
         )}

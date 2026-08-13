@@ -1,7 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+import { useAuth } from "@/context/AuthContext";
 import {
   Search,
   Zap,
@@ -37,6 +39,8 @@ import {
 } from "@/lib/mcqPricingData";
 
 export default function MCQClient() {
+  const router = useRouter();
+  const { isAuthenticated } = useAuth();
   const [activeLevel, setActiveLevel] = useState<MCQLevel>("FINAL");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedGroupFilter, setSelectedGroupFilter] = useState<string>("ALL");
@@ -223,6 +227,10 @@ export default function MCQClient() {
 
   // Handle Checkout / Razorpay Integration
   const handleCheckout = async () => {
+    if (!isAuthenticated) {
+      router.push("/login?next=/mcq");
+      return;
+    }
     setIsProcessing(true);
     try {
       const token = typeof window !== "undefined" ? localStorage.getItem("caliber_jwt") : null;

@@ -15,6 +15,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     tempToken: str
+    termsAccepted: bool = False
 
 
 class LoginRequest(BaseModel):
