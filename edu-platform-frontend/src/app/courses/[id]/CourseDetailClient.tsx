@@ -345,9 +345,11 @@ export default function CourseDetailClient({ id }: { id: string }) {
                 <span className="flex items-center gap-1.5">
                   <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" /> {course.rating} rating
                 </span>
-                <span className="flex items-center gap-1.5">
-                  <Clock className="w-4 h-4" /> {course.duration}
-                </span>
+                {course.duration && (
+                  <span className="flex items-center gap-1.5">
+                    <Clock className="w-4 h-4" /> {course.duration}
+                  </span>
+                )}
                 <span className="flex items-center gap-1.5">
                   <BookOpen className="w-4 h-4" />
                   {course.curriculum.reduce((acc: number, m: any) => acc + m.topics.length, 0)} topics
@@ -575,7 +577,7 @@ export default function CourseDetailClient({ id }: { id: string }) {
                   <div className="space-y-3 pt-4 border-t border-line-gray-light dark:border-line-gray-dark">
                     {[
                       { icon: <MessageCircle className="w-4 h-4" />, label: "WhatsApp group access" },
-                      { icon: <Clock className="w-4 h-4" />, label: `${course.duration} program` },
+                      ...(course.duration ? [{ icon: <Clock className="w-4 h-4" />, label: `${course.duration} program` }] : []),
                       { icon: <BookOpen className="w-4 h-4" />, label: "Daily practice sets" },
                       { icon: <Users className="w-4 h-4" />, label: "Join a student batch" },
                     ].map((item, i) => (

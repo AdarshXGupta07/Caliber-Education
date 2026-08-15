@@ -72,7 +72,7 @@ export function CourseCard({ course, index = 0 }: CourseCardProps) {
                 <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
                 {course.rating}
               </span>
-              <span>{course.duration}</span>
+              {course.duration && <span>{course.duration}</span>}
             </div>
 
             {/* Price & CTA */}

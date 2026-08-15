@@ -522,10 +522,12 @@ function CourseCard({ course, index }: { course: Course; index: number }) {
                 <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
                 {course.rating}
               </span>
-              <span className="flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5" />
-                {course.duration}
-              </span>
+              {course.duration && (
+                <span className="flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5" />
+                  {course.duration}
+                </span>
+              )}
             </div>
 
             {/* Price & CTA */}
@@ -541,18 +543,18 @@ function CourseCard({ course, index }: { course: Course; index: number }) {
               </div>
 
               {isComingSoon ? (
-                <span className="flex items-center gap-1 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                <span className="flex items-center gap-1 text-xs font-semibold text-amber-600 dark:text-amber-400 whitespace-nowrap flex-shrink-0">
                   <Zap className="w-3 h-3" />
                   Notify me
                   <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
                 </span>
               ) : isPurchased ? (
-                <span className="flex items-center gap-1 text-xs font-semibold text-signal-emerald group-hover:gap-1.5 transition-all">
-                  Go to My Courses Dashboard
+                <span className="flex items-center gap-1 text-xs font-semibold text-signal-emerald group-hover:gap-1.5 transition-all whitespace-nowrap flex-shrink-0">
+                  Go to Dashboard
                   <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
                 </span>
               ) : (
-                <span className="flex items-center gap-1 text-xs font-semibold text-ink-navy dark:text-paper group-hover:gap-1.5 transition-all">
+                <span className="flex items-center gap-1 text-xs font-semibold text-ink-navy dark:text-paper group-hover:gap-1.5 transition-all whitespace-nowrap flex-shrink-0">
                   {typeof course.price === "number" && course.price > 0 && <Lock className="w-3 h-3 text-slate dark:text-paper/40" />}
                   View details
                   <ArrowRight className="w-3.5 h-3.5 text-slate dark:text-paper/50 group-hover:translate-x-0.5 transition-transform" />
