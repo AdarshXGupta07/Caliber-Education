@@ -676,7 +676,7 @@ function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[
       const orderData = await res.json();
 
       if (!orderData.key) {
-        alert("Payment gateway isn't available right now. Please try again shortly or contact support.");
+        setToast({ type: "error", message: "Payment gateway isn't available right now. Please try again shortly or contact support." });
         return;
       }
 
@@ -722,7 +722,7 @@ function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[
       rzp.open();
 
     } catch (e) {
-      alert("Error initiating checkout. Try again.");
+      setToast({ type: "error", message: "Error initiating checkout. Try again." });
     } finally {
       setPurchaseLoading(false);
     }

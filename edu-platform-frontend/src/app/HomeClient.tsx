@@ -9,6 +9,7 @@ import { useState } from "react";
 import { Turnstile } from "@/components/Turnstile";
 import { WhatsAppIcon, TelegramIcon, InstagramIcon } from "@/components/SocialIcons";
 import { useAuth } from "@/context/AuthContext";
+import { Toast, type ToastState } from "@/components/Toast";
 
 const SOCIAL_LINKS = {
   whatsapp: "https://chat.whatsapp.com/IbzA4aKxYFwDw7zMUcZLNG",
@@ -288,12 +289,13 @@ function Footer() {
   const [formState, setFormState] = useState({ name: "", email: "", message: "" });
   const [submitted, setSubmitted] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState("");
+  const [toast, setToast] = useState<ToastState | null>(null);
   const { isAuthenticated, purchasedCourseIds } = useAuth();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!turnstileToken) {
-      alert("Please wait for security verification to complete.");
+      setToast({ type: "error", message: "Please wait for security verification to complete." });
       return;
     }
     try {
@@ -309,12 +311,13 @@ function Footer() {
       }
       setSubmitted(true);
     } catch (err: any) {
-      alert(err.message || "Couldn't send your message — please try again in a moment.");
+      setToast({ type: "error", message: err.message || "Couldn't send your message — please try again in a moment." });
     }
   }
 
   return (
     <footer className="bg-white dark:bg-ink-navy text-ink-navy dark:text-paper border-t border-line-gray-light dark:border-line-gray-dark">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <div className="max-w-6xl mx-auto px-6 sm:px-8 py-20">
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-12">
           <div className="lg:col-span-1 space-y-4">

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
+import { Toast, type ToastState } from "@/components/Toast";
 import {
   BookOpen,
   Lock,
@@ -48,6 +49,7 @@ export default function DashboardPage() {
   const [copiedLink, setCopiedLink] = useState(false);
   const [realWhatsappLink, setRealWhatsappLink] = useState<string | null>(null);
   const [whatsappLinkError, setWhatsappLinkError] = useState("");
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [loadingWhatsappLink, setLoadingWhatsappLink] = useState(false);
 
   useEffect(() => {
@@ -273,10 +275,10 @@ export default function DashboardPage() {
         setSessions(prev => prev.filter(s => s.id !== sessionId));
       } else {
         const d = await res.json().catch(() => ({}));
-        window.alert(d.detail || "Couldn't cancel this session. Please try again.");
+        setToast({ type: "error", message: d.detail || "Couldn't cancel this session. Please try again." });
       }
     } catch (err) {
-      window.alert("Couldn't cancel this session. Please check your connection and try again.");
+      setToast({ type: "error", message: "Couldn't cancel this session. Please check your connection and try again." });
     }
   };
 
@@ -332,10 +334,10 @@ export default function DashboardPage() {
         setProfileDetails((prev: any) => ({ ...prev, ...profileForm }));
         setShowProfileModal(false);
       } else {
-        alert("Could not update profile because database schema was not updated yet. Please contact support.");
+        setToast({ type: "error", message: "Could not update profile because database schema was not updated yet. Please contact support." });
       }
     } catch (err) {
-      alert("Error saving profile");
+      setToast({ type: "error", message: "Error saving profile" });
     } finally {
       setSavingProfile(false);
     }
@@ -343,6 +345,7 @@ export default function DashboardPage() {
 
   return (
     <div className="pt-16 pb-20 min-h-screen bg-paper dark:bg-ink-navy/10">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <div className="max-w-6xl mx-auto px-6 sm:px-8 py-10 space-y-8">
 
         {/* Greeting Banner */}

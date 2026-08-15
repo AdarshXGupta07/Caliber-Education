@@ -7,6 +7,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Calendar, Clock, Video, CheckCircle2, ChevronRight, User, MessageSquare, Loader2 } from "lucide-react";
 import { courses } from "@/lib/mockData";
 import { useAuth } from "@/context/AuthContext";
+import { Toast, type ToastState } from "@/components/Toast";
 
 interface Mentor {
     id: string;
@@ -28,6 +29,7 @@ export default function BookSessionPage({ params }: { params: Promise<{ id: stri
 
     const [submitting, setSubmitting] = useState(false);
     const [confirmed, setConfirmed] = useState(false);
+    const [toast, setToast] = useState<ToastState | null>(null);
 
     // Find mentor — try API, fall back to mockData
     useEffect(() => {
@@ -80,7 +82,7 @@ export default function BookSessionPage({ params }: { params: Promise<{ id: stri
                 setConfirmed(true);
             } else {
                 const err = await res.json();
-                alert(err.detail || "Failed to submit request. Please try again.");
+                setToast({ type: "error", message: err.detail || "Failed to submit request. Please try again." });
             }
         } catch {
             // Offline fallback
@@ -140,6 +142,7 @@ export default function BookSessionPage({ params }: { params: Promise<{ id: stri
 
     return (
         <div className="pt-24 pb-20 min-h-screen bg-paper dark:bg-ink-navy/10">
+            <Toast toast={toast} onDismiss={() => setToast(null)} />
             <div className="max-w-2xl mx-auto px-6 sm:px-8 space-y-6">
 
                 <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors">

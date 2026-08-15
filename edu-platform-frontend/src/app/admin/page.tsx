@@ -5,6 +5,7 @@ import MCQStudio from "./components/MCQStudio";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
+import { Toast, type ToastState } from "@/components/Toast";
 import {
   pendingVerifications, mcqSets, courses as initialCourses,
   registeredUsers, mcqSeries,
@@ -150,6 +151,7 @@ function EvaluationsTab() {
   const [reviewError, setReviewError] = useState("");
   const [statusFilter, setStatusFilter] = useState<"pending" | "reviewed">("pending");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   const api = process.env.NEXT_PUBLIC_API_URL || "";
   const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem("caliber_jwt") || ""}` });
@@ -180,10 +182,10 @@ function EvaluationsTab() {
       if (res.ok) {
         setPending((prev) => prev.filter((p) => p.id !== id));
       } else {
-        alert("Failed to delete. Please try again.");
+        setToast({ type: "error", message: "Failed to delete. Please try again." });
       }
     } catch {
-      alert("Failed to delete. Please try again.");
+      setToast({ type: "error", message: "Failed to delete. Please try again." });
     } finally {
       setDeletingId(null);
     }
@@ -226,6 +228,7 @@ function EvaluationsTab() {
 
   return (
     <div className="space-y-6">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex justify-between items-center flex-wrap gap-3">
         <div>
           <h2 className="font-heading font-extrabold text-lg text-ink-navy dark:text-paper">Paper Evaluations</h2>
@@ -610,6 +613,7 @@ function PaymentsTab() {
   const [verifications, setVerifications] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "approved" | "rejected" | "refunded">("all");
   const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   useEffect(() => {
     async function loadPayments() {
@@ -642,10 +646,10 @@ function PaymentsTab() {
       if (res.ok) {
         setVerifications(prev => prev.map(v => (v.id === id ? { ...v, status: "approved" } : v)));
       } else {
-        alert("Failed to approve payment");
+        setToast({ type: "error", message: "Failed to approve payment" });
       }
     } catch (e) {
-      alert("Error approving payment");
+      setToast({ type: "error", message: "Error approving payment" });
     }
   };
 
@@ -660,10 +664,10 @@ function PaymentsTab() {
       if (res.ok) {
         setVerifications(prev => prev.map(v => (v.id === id ? { ...v, status: "rejected" } : v)));
       } else {
-        alert("Failed to reject payment");
+        setToast({ type: "error", message: "Failed to reject payment" });
       }
     } catch (e) {
-      alert("Error rejecting payment");
+      setToast({ type: "error", message: "Error rejecting payment" });
     }
   };
 
@@ -671,6 +675,7 @@ function PaymentsTab() {
 
   return (
     <motion.div key="payments" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Transaction History</h2>
         <div className="flex gap-1.5 flex-wrap">
@@ -744,6 +749,7 @@ function PaymentsTab() {
 function UsersTab() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [localUsers, setLocalUsers] = useState<any[]>([]);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   useEffect(() => {
     async function loadUsers() {
@@ -871,12 +877,13 @@ function UsersTab() {
       link.click();
       document.body.removeChild(link);
     } catch (err) {
-      alert("Failed to export CSV. Try again later.");
+      setToast({ type: "error", message: "Failed to export CSV. Try again later." });
     }
   };
 
   return (
     <motion.div key="users" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex items-center justify-between">
         <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Registered Users</h2>
         <button onClick={handleExportCSV} className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-signal-emerald text-white rounded-xl hover:bg-signal-emerald/90 transition-colors">
@@ -962,6 +969,7 @@ function MCQSetsTab({ series }: { series: MCQSeries[] }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SetDraft | null>(null);
   const [expandedSeries, setExpandedSeries] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   useEffect(() => {
     async function loadSets() {
@@ -1013,7 +1021,7 @@ function MCQSetsTab({ series }: { series: MCQSeries[] }) {
       else setSets(prev => prev.map(s => s.id === editingId ? draft : s));
       closeEditor();
     } catch {
-      alert("Error saving set to database.");
+      setToast({ type: "error", message: "Error saving set to database." });
     }
   }
 
@@ -1028,9 +1036,9 @@ function MCQSetsTab({ series }: { series: MCQSeries[] }) {
       });
       if (res.ok) {
         setSets(prev => prev.filter(s => s.id !== id));
-      } else alert("Delete failed");
+      } else setToast({ type: "error", message: "Delete failed" });
     } catch {
-      alert("Error contacting server");
+      setToast({ type: "error", message: "Error contacting server" });
     }
   }
 
@@ -1088,6 +1096,7 @@ function MCQSetsTab({ series }: { series: MCQSeries[] }) {
     const totalQs = draft.sections.reduce((sum, s) => sum + s.questions.length, 0);
     return (
       <motion.div key="set-builder" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-6">
+        <Toast toast={toast} onDismiss={() => setToast(null)} />
         <div className="flex items-center justify-between">
           <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">{editingId === "__new__" ? "New Set" : "Edit Set"}</h2>
           <button onClick={closeEditor} className="p-2 rounded-lg hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors"><X className="w-4 h-4 text-slate dark:text-paper/60" /></button>
@@ -1182,6 +1191,7 @@ function MCQSetsTab({ series }: { series: MCQSeries[] }) {
   // ΓöÇΓöÇ Table grouped by Series ΓöÇΓöÇ
   return (
     <motion.div key="sets-list" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex items-center justify-between">
         <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">MCQ Sets</h2>
         <button onClick={openNew} className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-signal-emerald text-white rounded-xl hover:bg-signal-emerald/90 transition-colors"><Plus className="w-3.5 h-3.5" /> New Set</button>
@@ -1247,6 +1257,7 @@ function MCQSetsTab({ series }: { series: MCQSeries[] }) {
 function SeriesTab({ items, setItems }: { items: MCQSeries[]; setItems: React.Dispatch<React.SetStateAction<MCQSeries[]>> }) {
   const confirm = useConfirm();
   const [draft, setDraft] = useState<MCQSeries | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const startNew = () => setDraft({ id: crypto.randomUUID(), title: "", subject: "", description: "", price: 0, isLocked: false });
   const save = async () => {
     if (!draft) return;
@@ -1266,7 +1277,7 @@ function SeriesTab({ items, setItems }: { items: MCQSeries[]; setItems: React.Di
       );
       setDraft(null);
     } catch {
-      alert("Error saving series to database");
+      setToast({ type: "error", message: "Error saving series to database" });
     }
   };
 
@@ -1281,13 +1292,14 @@ function SeriesTab({ items, setItems }: { items: MCQSeries[]; setItems: React.Di
       });
       if (res.ok) {
         setItems(current => current.filter(s => s.id !== id));
-      } else alert("Delete failed");
+      } else setToast({ type: "error", message: "Delete failed" });
     } catch {
-      alert("Error contacting server");
+      setToast({ type: "error", message: "Error contacting server" });
     }
   };
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex items-center justify-between">
         <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">MCQ Series</h2>
         <button onClick={startNew} className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-signal-emerald text-white rounded-xl"><Plus className="w-3.5 h-3.5" /> New Series</button>
@@ -1588,6 +1600,7 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
   const [courseList, setCourseList] = useState<CourseDraft[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<CourseDraft | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -1659,7 +1672,7 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
 
       closeEditor();
     } catch (e) {
-      alert("Error saving course to database. Make sure backend is running.");
+      setToast({ type: "error", message: "Error saving course to database. Make sure backend is running." });
     }
   }
 
@@ -1675,10 +1688,10 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
       if (res.ok) {
         setCourseList(prev => prev.filter(c => c.id !== id));
       } else {
-        alert("Delete failed on server");
+        setToast({ type: "error", message: "Delete failed on server" });
       }
     } catch (e) {
-      alert("Error contacting server");
+      setToast({ type: "error", message: "Error contacting server" });
     }
   }
 
@@ -1698,6 +1711,7 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
   if (editingId !== null && draft) {
     return (
       <motion.div key="course-builder" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-6">
+        <Toast toast={toast} onDismiss={() => setToast(null)} />
         <div className="flex items-center justify-between">
           <div>
             <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">{editingId === "__new__" ? "New Course" : "Edit Course"}</h2>
@@ -1815,6 +1829,7 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
 
   return (
     <motion.div key="courses-list" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex items-center justify-between">
         <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Courses</h2>
         <button onClick={openNew} className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold bg-signal-emerald text-white rounded-xl hover:bg-signal-emerald/90 transition-colors"><Plus className="w-3.5 h-3.5" /> Add Course</button>
@@ -1888,6 +1903,7 @@ function MentorsTab() {
   const [mentors, setMentors] = useState<MentorRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   async function load() {
     setLoading(true);
@@ -1922,13 +1938,14 @@ function MentorsTab() {
       if (!res.ok) throw new Error("Request failed");
     } catch {
       setMentors((prev) => prev.map((m) => (m.id === mentorId ? { ...m, permissions: { ...m.permissions, [key]: !value } } : m)));
-      alert("Couldn't update this permission. Please try again.");
+      setToast({ type: "error", message: "Couldn't update this permission. Please try again." });
     }
     setSavingKey(null);
   }
 
   return (
     <motion.div key="mentors" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Mentor Permissions</h2>
@@ -2007,6 +2024,7 @@ function CouponsTab() {
     affiliate_id: "", max_uses: "", max_uses_per_user: 1,
     valid_from: "", valid_until: "", applicable_course_ids: [], is_active: true,
   });
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
   const token = typeof window !== "undefined" ? localStorage.getItem("caliber_jwt") || "" : "";
@@ -2088,9 +2106,9 @@ function CouponsTab() {
         resetDraft();
       } else {
         const err = await res.json();
-        alert(err.detail || "Failed to save coupon.");
+        setToast({ type: "error", message: err.detail || "Failed to save coupon." });
       }
-    } catch { alert("Error contacting server."); }
+    } catch { setToast({ type: "error", message: "Error contacting server." }); }
   };
 
   const handleDelete = async (id: string) => {
@@ -2098,7 +2116,7 @@ function CouponsTab() {
     try {
       const res = await fetch(`${apiURL}/api/admin/coupons/${id}`, { method: "DELETE", headers });
       if (res.ok) setCoupons(prev => prev.filter(c => c.id !== id));
-    } catch { alert("Error deleting coupon."); }
+    } catch { setToast({ type: "error", message: "Error deleting coupon." }); }
   };
 
   const toggleCourseInDraft = (courseId: string) => {
@@ -2112,6 +2130,7 @@ function CouponsTab() {
 
   return (
     <motion.div key="coupons" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Coupon Codes</h2>
@@ -2284,6 +2303,7 @@ function AffiliatesTab() {
     name: "", email: "", phone: "", commission_type: "percent" as "percent" | "flat",
     commission_value: 10, payout_details: "",
   });
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
   const token = typeof window !== "undefined" ? localStorage.getItem("caliber_jwt") || "" : "";
@@ -2334,9 +2354,9 @@ function AffiliatesTab() {
         resetDraft();
       } else {
         const err = await res.json();
-        alert(err.detail || "Failed to save affiliate.");
+        setToast({ type: "error", message: err.detail || "Failed to save affiliate." });
       }
-    } catch { alert("Error contacting server."); }
+    } catch { setToast({ type: "error", message: "Error contacting server." }); }
   };
 
   const handleDelete = async (id: string) => {
@@ -2344,7 +2364,7 @@ function AffiliatesTab() {
     try {
       const res = await fetch(`${apiURL}/api/admin/affiliates/${id}`, { method: "DELETE", headers });
       if (res.ok) setAffiliates(prev => prev.filter(a => a.id !== id));
-    } catch { alert("Error deleting affiliate."); }
+    } catch { setToast({ type: "error", message: "Error deleting affiliate." }); }
   };
 
   const handleExportPerformance = () => {
@@ -2368,6 +2388,7 @@ function AffiliatesTab() {
 
   return (
     <motion.div key="affiliates" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Affiliates</h2>

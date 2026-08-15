@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Edit2, Trash2, ArrowLeft, Save, Upload, AlertCircle, FileText, Settings2, GripVertical, CheckCircle, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Toast, type ToastState } from "@/components/Toast";
 
 // -- Models matching Backend V3 Schema --
 export interface Question {
@@ -70,6 +71,7 @@ export default function MCQStudio({ series }: { series: any[] }) {
   const [papers, setPapers] = useState<MCQPaper[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingPaper, setEditingPaper] = useState<MCQPaper | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   useEffect(() => {
     fetchPapers();
@@ -117,10 +119,10 @@ export default function MCQStudio({ series }: { series: any[] }) {
       if (res.ok) {
         setPapers(prev => prev.filter(p => p.id !== paperId));
       } else {
-        alert("Delete failed. Try again.");
+        setToast({ type: "error", message: "Delete failed. Try again." });
       }
     } catch {
-      alert("Error deleting paper.");
+      setToast({ type: "error", message: "Error deleting paper." });
     }
   }
 
@@ -149,6 +151,7 @@ export default function MCQStudio({ series }: { series: any[] }) {
 
   return (
     <div className="space-y-6">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-ink-navy dark:text-paper">MCQ Papers (CA Hierarchy)</h2>
@@ -232,6 +235,7 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<"settings" | "cases" | "questions">("settings");
   const [liveSubjects, setLiveSubjects] = useState<LiveSubject[]>([]);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   const inp = "w-full px-3 py-2 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-xl focus:outline-none focus:border-signal-emerald transition-colors";
 
@@ -261,19 +265,19 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
   }, [paper.id]);
 
   async function handleSave() {
-    if (!data.title.trim()) { alert("Give this paper a title before saving."); return; }
-    if (!data.subjectCode) { alert("Select a subject before saving — the paper can't be saved without one."); return; }
+    if (!data.title.trim()) { setToast({ type: "error", message: "Give this paper a title before saving." }); return; }
+    if (!data.subjectCode) { setToast({ type: "error", message: "Select a subject before saving — the paper can't be saved without one." }); return; }
 
     let questionNumber = 0;
     for (const sec of data.sections || []) {
       for (const q of sec.questions || []) {
         questionNumber++;
         if (!q.content || !q.content.trim()) {
-          alert(`Question ${questionNumber} (in section "${sec.title}") is missing its question text. Fill it in before saving.`);
+          setToast({ type: "error", message: `Question ${questionNumber} (in section "${sec.title}") is missing its question text. Fill it in before saving.` });
           return;
         }
         if (!q.options || q.options.length === 0 || q.options.some((opt: string) => !opt || !opt.trim())) {
-          alert(`Question ${questionNumber} (in section "${sec.title}") has a blank answer option. Fill in every option before saving.`);
+          setToast({ type: "error", message: `Question ${questionNumber} (in section "${sec.title}") has a blank answer option. Fill in every option before saving.` });
           return;
         }
       }
@@ -292,14 +296,14 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
         body: JSON.stringify(data)
       });
       if (res.ok) {
-        alert("Saved successfully!");
-        onBack();
+        setToast({ type: "success", message: "Saved successfully!" });
+        setTimeout(onBack, 900);
       } else {
         const err = await res.json().catch(() => ({}));
-        alert(err.detail || "Failed to save. Please check every field and try again.");
+        setToast({ type: "error", message: err.detail || "Failed to save. Please check every field and try again." });
       }
     } catch (e) {
-      alert("Error saving paper. Please check your connection and try again.");
+      setToast({ type: "error", message: "Error saving paper. Please check your connection and try again." });
     }
     setSaving(false);
   }
@@ -312,6 +316,7 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
 
   return (
     <div className="space-y-6">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <div className="flex items-center justify-between pb-4 border-b border-line-gray-light dark:border-line-gray-dark">
         <div className="flex items-center gap-4">
           <button onClick={onBack} className="p-2 bg-line-gray-light dark:bg-line-gray-dark rounded-full hover:bg-slate/20 transition-colors">
@@ -447,13 +452,13 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
       )}
 
       {activeTab === "questions" && (
-        <QuestionsStudio data={data} setData={setData} inp={inp} />
+        <QuestionsStudio data={data} setData={setData} inp={inp} setToast={setToast} />
       )}
     </div>
   );
 }
 
-function QuestionsStudio({ data, setData, inp }: any) {
+function QuestionsStudio({ data, setData, inp, setToast }: any) {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -484,12 +489,12 @@ function QuestionsStudio({ data, setData, inp }: any) {
             }))
           }));
           setData({ ...data, sections: [...(data.sections || []), ...newSections] });
-          alert("Successfully uploaded!");
+          setToast({ type: "success", message: "Successfully uploaded!" });
         } else {
-          alert("Invalid JSON format.");
+          setToast({ type: "error", message: "Invalid JSON format." });
         }
       } catch (err) {
-        alert("Failed to parse JSON file.");
+        setToast({ type: "error", message: "Failed to parse JSON file." });
       }
     };
     reader.readAsText(file);

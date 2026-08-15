@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
+import { Toast, type ToastState } from "@/components/Toast";
 import {
   Search,
   Zap,
@@ -84,6 +85,7 @@ export default function MCQClient() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [activePaymentMethod, setActivePaymentMethod] = useState<"razorpay" | "manual">("razorpay");
   const [purchaseSuccess, setPurchaseSuccess] = useState(false);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [purchasedInfo, setPurchasedInfo] = useState<{ title: string; amount: number } | null>(null);
 
   // Fetch backend packages on mount with graceful fallback to seeded matrix
@@ -313,7 +315,7 @@ export default function MCQClient() {
                 }, 2000);
               } else {
                 const errData = await verifyRes.json().catch(() => ({}));
-                alert(`Payment verification failed: ${errData.detail || "Please try again"}`);
+                setToast({ type: "error", message: `Payment verification failed: ${errData.detail || "Please try again"}` });
                 setIsProcessing(false);
               }
             },
@@ -337,7 +339,7 @@ export default function MCQClient() {
           
           rzp.on("payment.failed", () => {
             console.log("[MCQ] Razorpay payment.failed event");
-            alert("Payment didn't go through. No amount was charged — please try again.");
+            setToast({ type: "error", message: "Payment didn't go through. No amount was charged — please try again." });
             setIsProcessing(false);
           });
 
@@ -376,20 +378,20 @@ export default function MCQClient() {
           } else {
             const errorData = await confirmRes.json().catch(() => ({}));
             console.error("[MCQ] Test payment failed:", confirmRes.status, errorData);
-            alert(`Test payment confirmation failed: ${errorData.detail || "Please check backend logs"}`);
+            setToast({ type: "error", message: `Test payment confirmation failed: ${errorData.detail || "Please check backend logs"}` });
             setIsProcessing(false);
           }
         }
       } else {
         // orderRes not ok — show real error
         const errData = await orderRes.json().catch(() => ({}));
-        alert(`Payment setup failed: ${errData.detail || "Please try again."}`);
+        setToast({ type: "error", message: `Payment setup failed: ${errData.detail || "Please try again."}` });
         setIsProcessing(false);
         return;
       }
     } catch (error) {
       console.error("Payment error", error);
-      alert("Something went wrong. Please try again.");
+      setToast({ type: "error", message: "Something went wrong. Please try again." });
     } finally {
       setIsProcessing(false);
     }
@@ -421,6 +423,7 @@ export default function MCQClient() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 selection:bg-emerald-500 selection:text-black">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       {/* ─── Top High-Value Bundle Recommendation Header ─── */}
       <section className="relative pt-24 pb-8 overflow-hidden">
         {/* Ambient Gradient Glows */}

@@ -129,7 +129,7 @@ export default function CourseDetailClient({ id }: { id: string }) {
   const handleUpiSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!utrNumber || utrNumber.length < 10) {
-      alert("Please enter a valid 12-digit UTR/Ref Number");
+      setToast({ type: "error", message: "Please enter a valid 12-digit UTR/Ref Number" });
       return;
     }
     setUtrLoading(true);
@@ -148,14 +148,14 @@ export default function CourseDetailClient({ id }: { id: string }) {
 
       if (res.ok) {
         submitUTR(course?.id || "", utrNumber);
-        alert("Payment under verification. You will automatically get access once verified by admins!");
-        router.push("/dashboard");
+        setToast({ type: "success", message: "Payment under verification. You will automatically get access once verified by admins!" });
+        setTimeout(() => router.push("/dashboard"), 1400);
       } else {
         const errData = await res.json();
-        alert(errData.detail || "Failed to submit UTR. Make sure it isn't duplicated.");
+        setToast({ type: "error", message: errData.detail || "Failed to submit UTR. Make sure it isn't duplicated." });
       }
     } catch (err) {
-      alert("Error contacting the server. Try again.");
+      setToast({ type: "error", message: "Error contacting the server. Try again." });
     } finally {
       setUtrLoading(false);
     }
@@ -239,7 +239,7 @@ export default function CourseDetailClient({ id }: { id: string }) {
               setTimeout(() => router.push("/dashboard?tab=courses"), 1400);
             }
           } else {
-            alert("Test Payment failed. Make sure test mode is allowed in backend.");
+            setToast({ type: "error", message: "Test Payment failed. Make sure test mode is allowed in backend." });
           }
         } catch (e) { }
         return;
@@ -303,7 +303,7 @@ export default function CourseDetailClient({ id }: { id: string }) {
       rzp.open();
     } catch (err: any) {
       console.warn("Payment could not be started:", err.message);
-      alert("We couldn't start the payment right now. Please try again in a moment, or contact support if this keeps happening.");
+      setToast({ type: "error", message: "We couldn't start the payment right now. Please try again in a moment, or contact support if this keeps happening." });
     } finally {
       setPurchaseLoading(false);
     }
