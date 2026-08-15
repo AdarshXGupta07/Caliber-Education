@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { courses as defaultCourses, type Course } from "@/lib/mockData";
 import { Toast, type ToastState } from "@/components/Toast";
 import {
-  ArrowRight, Lock, Users, Star, Clock, Zap,
+  ArrowRight, Lock, Star, Clock, Zap,
   Search, ChevronUp, ChevronDown, SlidersHorizontal, X, ArrowUp, Tag
 } from "lucide-react";
 
@@ -518,10 +518,6 @@ function CourseCard({ course, index }: { course: Course; index: number }) {
 
             {/* Stats */}
             <div className="flex items-center gap-4 text-xs text-slate dark:text-paper/50">
-              <span className="flex items-center gap-1">
-                <Users className="w-3.5 h-3.5" />
-                {course.enrolledCount.toLocaleString()}
-              </span>
               <span className="flex items-center gap-1">
                 <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
                 {course.rating}

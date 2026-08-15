@@ -447,18 +447,18 @@ export default function DashboardPage() {
                         <div className="space-y-1.5">
                           <span className="text-[9px] font-bold uppercase tracking-wider text-signal-emerald">Active Access</span>
                           <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{c.title}</h3>
-                          <p className="text-[10px] text-slate dark:text-paper/50">{c.level} · {c.duration}</p>
+                          <p className="text-[10px] text-slate dark:text-paper/50">{c.level}{c.duration ? ` · ${c.duration}` : ""}</p>
                         </div>
                         <div className="flex items-center gap-2 pt-2 border-t border-line-gray-light/30 dark:border-line-gray-dark/30">
                           <button
                             onClick={() => setAccessCourseId(c.id)}
-                            className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs transition-all flex items-center justify-center gap-1 active:scale-[0.98]"
+                            className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs transition-all flex items-center justify-center gap-1 active:scale-[0.98] whitespace-nowrap"
                           >
-                            <MessageCircle className="w-3.5 h-3.5" /> WhatsApp Access
+                            <MessageCircle className="w-3.5 h-3.5 flex-shrink-0" /> WhatsApp Access
                           </button>
                           <Link
                             href={`/courses/${c.id}`}
-                            className="px-3 py-1.5 border border-line-gray-light dark:border-line-gray-dark text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper rounded-lg text-xs font-semibold transition-all text-center"
+                            className="flex-shrink-0 px-3 py-1.5 border border-line-gray-light dark:border-line-gray-dark text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper rounded-lg text-xs font-semibold transition-all text-center whitespace-nowrap"
                           >
                             View
                           </Link>

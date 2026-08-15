@@ -78,7 +78,7 @@ export default function MCQStudio({ series }: { series: any[] }) {
   async function fetchPapers() {
     setLoading(true);
     try {
-      const apiURL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const token = localStorage.getItem("caliber_jwt") || "";
       const res = await fetch(`${apiURL}/api/admin/mcq-sets`, {
         headers: { "Authorization": `Bearer ${token}` }
@@ -108,7 +108,7 @@ export default function MCQStudio({ series }: { series: any[] }) {
   async function handleDelete(paperId: string, paperTitle: string) {
     if (!window.confirm(`Delete "${paperTitle}" permanently? This cannot be undone.`)) return;
     try {
-      const apiURL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const token = localStorage.getItem("caliber_jwt") || "";
       const res = await fetch(`${apiURL}/api/admin/mcq-sets/${paperId}`, {
         method: "DELETE",
@@ -236,7 +236,7 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
   const inp = "w-full px-3 py-2 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-xl focus:outline-none focus:border-signal-emerald transition-colors";
 
   useEffect(() => {
-    const apiURL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
     fetch(`${apiURL}/api/mcq/packages`)
       .then((r) => (r.ok ? r.json() : { allSubjects: [] }))
       .then((d) => setLiveSubjects((d.allSubjects || []).map((s: any) => ({
@@ -247,7 +247,7 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
 
   useEffect(() => {
     if (!paper.id) return; // new paper — no fetch needed
-    const apiURL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
     const token = localStorage.getItem("caliber_jwt") || "";
     fetch(`${apiURL}/api/admin/mcq-sets/${paper.id}`, {
       headers: { "Authorization": `Bearer ${token}` }
@@ -281,7 +281,7 @@ function PaperEditor({ paper, onBack }: { paper: MCQPaper, onBack: () => void })
 
     setSaving(true);
     try {
-      const apiURL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const token = localStorage.getItem("caliber_jwt") || "";
       const res = await fetch(`${apiURL}/api/admin/mcq-sets`, {
         method: "POST",

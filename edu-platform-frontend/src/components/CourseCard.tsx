@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowRight, Users, Star, Lock } from "lucide-react";
+import { ArrowRight, Star, Lock } from "lucide-react";
 import type { Course } from "@/lib/mockData";
 
 interface CourseCardProps {
@@ -68,10 +68,6 @@ export function CourseCard({ course, index = 0 }: CourseCardProps) {
 
             {/* Stats */}
             <div className="flex items-center gap-4 text-xs text-slate dark:text-paper/50">
-              <span className="flex items-center gap-1">
-                <Users className="w-3.5 h-3.5" />
-                {course.enrolledCount.toLocaleString()} students
-              </span>
               <span className="flex items-center gap-1">
                 <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
                 {course.rating}
