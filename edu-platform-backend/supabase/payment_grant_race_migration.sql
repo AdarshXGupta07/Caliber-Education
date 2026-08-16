@@ -33,6 +33,66 @@ FROM public.test_series_enrollments
 GROUP BY user_id, subject_id
 HAVING count(*) > 1;
 
+-- ─── Step 1b — inspect the actual duplicate rows (read-only) ────────────────
+-- Run this to see exactly which rows exist per duplicate group before
+-- deciding anything. keep_rank = 1 marks the row Step 1c would keep — it
+-- picks the latest access_until (NULL = lifetime access, treated as best),
+-- tie-broken by the newest created_at. This is not a guess: it's the same
+-- rule _apply_mcq_grant already uses when it finds duplicates today
+-- (payments.py: `best_row = max(existing_enroll.data, key=access_until)`),
+-- so consolidating on it doesn't change what the app already treats as
+-- each customer's authoritative access, and it never picks the shorter of
+-- two overlapping access windows.
+
+SELECT *,
+  row_number() OVER (
+    PARTITION BY user_id, subject_code
+    ORDER BY access_until DESC NULLS FIRST, created_at DESC
+  ) AS keep_rank
+FROM public.mcq_enrollments
+WHERE (user_id, subject_code) IN (
+  SELECT user_id, subject_code FROM public.mcq_enrollments
+  GROUP BY user_id, subject_code HAVING count(*) > 1
+)
+ORDER BY user_id, subject_code, keep_rank;
+
+SELECT *,
+  row_number() OVER (
+    PARTITION BY user_id, subject_id
+    ORDER BY access_until DESC NULLS FIRST, created_at DESC
+  ) AS keep_rank
+FROM public.test_series_enrollments
+WHERE (user_id, subject_id) IN (
+  SELECT user_id, subject_id FROM public.test_series_enrollments
+  GROUP BY user_id, subject_id HAVING count(*) > 1
+)
+ORDER BY user_id, subject_id, keep_rank;
+
+-- ─── Step 1c — delete the redundant rows (DESTRUCTIVE — review 1b first) ────
+-- Deletes every row except keep_rank = 1 from each duplicate group above.
+-- Left commented out on purpose. Re-run Step 1b after, to confirm it now
+-- returns nothing, before moving on to Step 2.
+
+-- DELETE FROM public.mcq_enrollments WHERE id IN (
+--   SELECT id FROM (
+--     SELECT id, row_number() OVER (
+--       PARTITION BY user_id, subject_code
+--       ORDER BY access_until DESC NULLS FIRST, created_at DESC
+--     ) AS keep_rank
+--     FROM public.mcq_enrollments
+--   ) ranked WHERE keep_rank > 1
+-- );
+
+-- DELETE FROM public.test_series_enrollments WHERE id IN (
+--   SELECT id FROM (
+--     SELECT id, row_number() OVER (
+--       PARTITION BY user_id, subject_id
+--       ORDER BY access_until DESC NULLS FIRST, created_at DESC
+--     ) AS keep_rank
+--     FROM public.test_series_enrollments
+--   ) ranked WHERE keep_rank > 1
+-- );
+
 -- ─── Step 2 — once Step 1 returns zero rows for both, add the constraints ───
 -- Safe to re-run (IF NOT EXISTS-guarded). These make a duplicate insert fail
 -- at the database level instead of silently succeeding — the application
