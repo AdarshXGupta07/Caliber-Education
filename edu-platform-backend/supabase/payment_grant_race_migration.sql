@@ -17,6 +17,35 @@
 -- first; only proceed to Step 2 once it returns zero rows.
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- ─── Step 0 — investigate the payments behind the duplicates (read-only) ────
+-- Run this BEFORE deciding anything. If the duplicate rows for a given
+-- user+subject have different payment_id values, that customer was likely
+-- charged more than once for the same access (each purchase created a new
+-- row instead of extending the existing one), which is a separate question
+-- from the enrollment cleanup below: whether a refund/credit is owed. That's
+-- a business decision — check status/amount here, then decide in Razorpay's
+-- own dashboard, not in this script.
+
+SELECT e.user_id, e.subject_code, e.access_until, e.payment_id,
+       p.amount, p.status, p.razorpay_payment_id, p.utr_number, p.created_at AS payment_created_at
+FROM public.mcq_enrollments e
+LEFT JOIN public.payments p ON p.id = e.payment_id
+WHERE (e.user_id, e.subject_code) IN (
+  SELECT user_id, subject_code FROM public.mcq_enrollments
+  GROUP BY user_id, subject_code HAVING count(*) > 1
+)
+ORDER BY e.user_id, e.subject_code, p.created_at;
+
+SELECT e.user_id, e.subject_id, e.access_until, e.payment_id,
+       p.amount, p.status, p.razorpay_payment_id, p.utr_number, p.created_at AS payment_created_at
+FROM public.test_series_enrollments e
+LEFT JOIN public.payments p ON p.id = e.payment_id
+WHERE (e.user_id, e.subject_id) IN (
+  SELECT user_id, subject_id FROM public.test_series_enrollments
+  GROUP BY user_id, subject_id HAVING count(*) > 1
+)
+ORDER BY e.user_id, e.subject_id, p.created_at;
+
 -- ─── Step 1 — diagnostic: find existing duplicates (read-only) ──────────────
 -- If either of these returns rows, resolve them manually first (decide which
 -- row per user+subject should be kept — typically the one with the latest
