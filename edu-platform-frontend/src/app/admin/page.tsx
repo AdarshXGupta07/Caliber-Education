@@ -13,7 +13,7 @@ import {
 } from "@/lib/mockData";
 import {
   Shield, ShieldOff, CheckCircle, XCircle, Upload, Plus, BookOpen,
-  Users, Clock, CheckCheck, AlertTriangle, Trash2, ChevronDown,
+  Users, Clock, AlertTriangle, Trash2, ChevronDown,
   ChevronRight, Edit2, X, GripVertical, RefreshCw, Download, Tag, UserCheck
 } from "lucide-react";
 
@@ -423,7 +423,7 @@ function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<AdminTab>("payments");
   const [series, setSeries] = useState<MCQSeries[]>([]);
   const [stats, setStats] = useState({ users: 0, courses: 0, pendingPayments: 0 });
-  const { verifications, user } = useAuth();
+  const { user } = useAuth();
   const isMentorOnly = user?.role === "mentor";
   const [mentorPerms, setMentorPerms] = useState<{ evaluate_papers: boolean; manage_sessions: boolean; manage_test_series: boolean } | null>(null);
 
@@ -634,42 +634,6 @@ function PaymentsTab() {
     loadPayments();
   }, []);
 
-  const approveVerification = async (id: string) => {
-    try {
-      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-      const token = localStorage.getItem("caliber_jwt") || "";
-      const res = await fetch(`${apiURL}/api/admin/payments/${id}/approve`, {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      if (res.ok) {
-        setVerifications(prev => prev.map(v => (v.id === id ? { ...v, status: "approved" } : v)));
-      } else {
-        setToast({ type: "error", message: "Failed to approve payment" });
-      }
-    } catch (e) {
-      setToast({ type: "error", message: "Error approving payment" });
-    }
-  };
-
-  const rejectVerification = async (id: string) => {
-    try {
-      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-      const token = localStorage.getItem("caliber_jwt") || "";
-      const res = await fetch(`${apiURL}/api/admin/payments/${id}/reject`, {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      if (res.ok) {
-        setVerifications(prev => prev.map(v => (v.id === id ? { ...v, status: "rejected" } : v)));
-      } else {
-        setToast({ type: "error", message: "Failed to reject payment" });
-      }
-    } catch (e) {
-      setToast({ type: "error", message: "Error rejecting payment" });
-    }
-  };
-
   const filtered = statusFilter === "all" ? verifications : verifications.filter(v => v.status === statusFilter);
 
   return (
@@ -692,7 +656,7 @@ function PaymentsTab() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-line-gray-light/50 dark:bg-line-gray-dark/50 text-left text-xs text-slate dark:text-paper/50 uppercase tracking-wider">
-              {["Student Email", "Course / Set", "Amount", "UTR", "Date", "Status", "Actions"].map(h => <th key={h} className="px-5 py-3 font-semibold">{h}</th>)}
+              {["Student Email", "Course / Set", "Amount", "UTR", "Date", "Status"].map(h => <th key={h} className="px-5 py-3 font-semibold">{h}</th>)}
             </tr>
           </thead>
           <tbody className="divide-y divide-line-gray-light dark:divide-line-gray-dark bg-white dark:bg-line-gray-dark/20">
@@ -705,14 +669,6 @@ function PaymentsTab() {
                 <td className="px-5 py-3.5 font-mono text-xs text-slate dark:text-paper/60">{v.utrNumber}</td>
                 <td className="px-5 py-3.5 text-slate dark:text-paper/60">{v.date}</td>
                 <td className="px-5 py-3.5"><StatusBadge status={v.status} /></td>
-                <td className="px-5 py-3.5">
-                  {v.status === "pending" && (
-                    <div className="flex gap-2">
-                      <button onClick={() => approveVerification(v.id)} className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-signal-emerald border border-signal-emerald/30 rounded-lg hover:bg-signal-emerald/10 transition-colors"><CheckCheck className="w-3 h-3" /> Approve</button>
-                      <button onClick={() => rejectVerification(v.id)} className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-alert-coral border border-alert-coral/30 rounded-lg hover:bg-alert-coral/10 transition-colors"><XCircle className="w-3 h-3" /> Reject</button>
-                    </div>
-                  )}
-                </td>
               </motion.tr>
             ))}
           </tbody>
@@ -731,12 +687,6 @@ function PaymentsTab() {
               <span className="font-mono font-bold text-ink-navy dark:text-paper">₹{v.amount.toLocaleString()}</span>
               <span>{v.utrNumber}</span><span>{v.date}</span>
             </div>
-            {v.status === "pending" && (
-              <div className="flex gap-2">
-                <button onClick={() => approveVerification(v.id)} className="flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-bold text-signal-emerald border border-signal-emerald/30 rounded-lg hover:bg-signal-emerald/10 transition-colors"><CheckCheck className="w-3 h-3" /> Approve</button>
-                <button onClick={() => rejectVerification(v.id)} className="flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-bold text-alert-coral border border-alert-coral/30 rounded-lg hover:bg-alert-coral/10 transition-colors"><XCircle className="w-3 h-3" /> Reject</button>
-              </div>
-            )}
           </motion.div>
         ))}
       </div>

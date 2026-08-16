@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -10,6 +12,18 @@ from app.routers import auth, courses, payments, mcq, sessions, tests, contact, 
 from app.routers.coupons import router as coupons_router, admin_router as coupons_admin_router
 
 settings = get_settings()
+
+# Non-fatal go-live guardrails: a misconfigured production deploy should be
+# loud in the logs, not silently take real signups with test-mode payment
+# settings. Deliberately doesn't raise — a startup crash from this check
+# would be worse than a misconfigured-but-running server.
+if settings.app_env == "production":
+    if settings.razorpay_key_id.startswith("rzp_test_"):
+        print("[STARTUP WARNING] APP_ENV=production but RAZORPAY_KEY_ID is a TEST key (rzp_test_...). Real payments will fail until this is switched to a rzp_live_ key.")
+    if os.getenv("ALLOW_TEST_PAYMENTS", "false").lower() == "true":
+        print("[STARTUP WARNING] APP_ENV=production but ALLOW_TEST_PAYMENTS=true — the mock-confirm test-payment bypass is live. Set ALLOW_TEST_PAYMENTS=false for production.")
+    if not os.getenv("RAZORPAY_WEBHOOK_SECRET"):
+        print("[STARTUP WARNING] RAZORPAY_WEBHOOK_SECRET is not set — the /api/payments/webhook endpoint will reject all webhook deliveries (503) until this is configured in both Razorpay's dashboard and this server's env.")
 
 # Public API docs make sense during development but are a free recon aid in
 # production — every route, request/response schema, and parameter name

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from supabase import Client
 from typing import Optional
 
+from app.core.cache import cached
 from app.core.database import get_db
 from app.dependencies import get_current_user
 
@@ -36,13 +37,18 @@ async def list_courses(
     status: Optional[str] = Query(None),
     db: Client = Depends(get_db),
 ):
-    query = db.table("courses").select("*").order('price', desc=True)
-    if level:
-        query = query.eq("level", level)
-    if status:
-        query = query.eq("status", status)
-    result = query.execute()
-    return [map_course(c) for c in (result.data or [])]
+    # Cached for 60s, keyed by filters — public storefront catalog that
+    # only changes on an admin edit, previously re-queried on every visit.
+    def fetch():
+        query = db.table("courses").select("*").order('price', desc=True)
+        if level:
+            query = query.eq("level", level)
+        if status:
+            query = query.eq("status", status)
+        result = query.execute()
+        return [map_course(c) for c in (result.data or [])]
+
+    return cached(f"courses_list:{level}:{status}", 60, fetch)
 
 PUBLIC_BUNDLE_FIELDS = {"id", "title", "description", "level", "course_ids", "price", "created_at"}
 

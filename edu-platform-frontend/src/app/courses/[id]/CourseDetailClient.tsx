@@ -56,11 +56,8 @@ export default function CourseDetailClient({ id }: { id: string }) {
   const {
     user,
     isAuthenticated,
-    verifications,
     purchasedCourseIds,
     refreshPurchases,
-    enrollFreeCourse,
-    submitUTR
   } = useAuth();
 
   useEffect(() => {
@@ -70,10 +67,7 @@ export default function CourseDetailClient({ id }: { id: string }) {
   const [openModule, setOpenModule] = useState<number | null>(0);
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
-
-  const [showManualUpi, setShowManualUpi] = useState(false);
-  const [utrNumber, setUtrNumber] = useState("");
-  const [utrLoading, setUtrLoading] = useState(false);
+  const [enrollingFree, setEnrollingFree] = useState(false);
 
   // ─── Coupon state ──────────────────────────────────────────────────────
   const [couponCode, setCouponCode] = useState("");
@@ -125,38 +119,27 @@ export default function CourseDetailClient({ id }: { id: string }) {
     setCouponError("");
   };
 
-  const handleUpiSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!utrNumber || utrNumber.length < 10) {
-      setToast({ type: "error", message: "Please enter a valid 12-digit UTR/Ref Number" });
-      return;
-    }
-    setUtrLoading(true);
+  const handleEnrollFree = async () => {
+    if (!course?.id || enrollingFree) return;
+    setEnrollingFree(true);
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const token = localStorage.getItem("caliber_jwt") || "";
-
-      const res = await fetch(`${apiURL}/api/payments/verify-utr`, {
+      const res = await fetch(`${apiURL}/api/courses/${course.id}/enroll-free`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ courseId: course?.id, utrNumber, couponCode: appliedCoupon?.code || null }),
+        headers: { Authorization: `Bearer ${token}` },
       });
-
       if (res.ok) {
-        submitUTR(course?.id || "", utrNumber);
-        setToast({ type: "success", message: "Payment under verification. You will automatically get access once verified by admins!" });
-        setTimeout(() => router.push("/dashboard"), 1400);
+        await refreshPurchases();
+        router.push("/dashboard");
       } else {
-        const errData = await res.json();
-        setToast({ type: "error", message: errData.detail || "Failed to submit UTR. Make sure it isn't duplicated." });
+        const errData = await res.json().catch(() => ({}));
+        setToast({ type: "error", message: errData.detail || "Couldn't enrol you in this course. Please try again." });
       }
-    } catch (err) {
+    } catch {
       setToast({ type: "error", message: "Error contacting the server. Try again." });
     } finally {
-      setUtrLoading(false);
+      setEnrollingFree(false);
     }
   };
 
@@ -174,14 +157,6 @@ export default function CourseDetailClient({ id }: { id: string }) {
 
   const isPurchased = purchasedCourseIds.includes(course.id);
   const isComingSoon = course.status === "coming_soon";
-  const pendingVerification = user?.email
-    ? verifications.find(
-      (v) => v.studentEmail.toLowerCase() === user.email.toLowerCase() &&
-        v.courseTitle === course.title &&
-        v.status === "pending"
-    )
-    : undefined;
-  const isPending = !!pendingVerification;
 
   const levelColor =
     course.level === "Foundation"
@@ -494,7 +469,7 @@ export default function CourseDetailClient({ id }: { id: string }) {
                   </div>
 
                   {/* ─── Coupon Code Input ─── */}
-                  {typeof course.price === "number" && course.price > 0 && !isComingSoon && !isPurchased && !isPending && (
+                  {typeof course.price === "number" && course.price > 0 && !isComingSoon && !isPurchased && (
                     <div className="space-y-2">
                       {appliedCoupon ? (
                         <div className="flex items-center justify-between p-3 bg-signal-emerald/10 border border-signal-emerald/30 rounded-xl">
@@ -546,15 +521,10 @@ export default function CourseDetailClient({ id }: { id: string }) {
                         This course is being prepared. Check back soon — or follow us on WhatsApp for the launch date.
                       </p>
                     </div>
-                  ) : isPending ? (
-                    <button disabled
-                      className="w-full py-3 bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/40 font-semibold rounded-lg flex items-center justify-center gap-2 text-sm cursor-not-allowed">
-                      <Clock className="w-4 h-4 animate-pulse" /> Verification Pending
-                    </button>
                   ) : course.price === 0 ? (
-                    <button onClick={() => { enrollFreeCourse(course.id); router.push("/dashboard"); }}
-                      className="w-full py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm">
-                      <Zap className="w-4 h-4" /> Enrol for Free
+                    <button onClick={handleEnrollFree} disabled={enrollingFree}
+                      className="w-full py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-60 disabled:cursor-not-allowed">
+                      <Zap className="w-4 h-4" /> {enrollingFree ? "Enrolling…" : "Enrol for Free"}
                     </button>
                   ) : isPurchasedBool ? (
                     <div className="space-y-3">

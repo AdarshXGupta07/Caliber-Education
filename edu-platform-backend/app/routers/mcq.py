@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from supabase import Client
 from typing import Optional, List, Dict, Any
 
+from app.core.cache import cached
 from app.core.database import get_db
 from app.core.limiter import limiter
 from app.dependencies import get_current_user
@@ -50,20 +51,27 @@ DEFAULT_MCQ_BUNDLES = [
 
 
 def _get_active_subjects_and_bundles(db: Client):
-    """Fetches subjects and bundles from DB if table exists, otherwise returns defaults."""
-    try:
-        sub_res = db.table("mcq_subjects").select("*").eq("is_active", True).order("sort_order").execute()
-        subjects = sub_res.data if sub_res.data else DEFAULT_MCQ_SUBJECTS
-    except Exception:
-        subjects = DEFAULT_MCQ_SUBJECTS
+    """Fetches subjects and bundles from DB if table exists, otherwise returns defaults.
 
-    try:
-        bun_res = db.table("mcq_bundles").select("*").eq("is_active", True).execute()
-        bundles = bun_res.data if bun_res.data else DEFAULT_MCQ_BUNDLES
-    except Exception:
-        bundles = DEFAULT_MCQ_BUNDLES
+    Cached for 60s — this pricing/catalog data only changes on an admin edit,
+    but was being re-fetched from the DB on every pricing calc / order create
+    / catalog load."""
+    def fetch():
+        try:
+            sub_res = db.table("mcq_subjects").select("*").eq("is_active", True).order("sort_order").execute()
+            subjects = sub_res.data if sub_res.data else DEFAULT_MCQ_SUBJECTS
+        except Exception:
+            subjects = DEFAULT_MCQ_SUBJECTS
 
-    return subjects, bundles
+        try:
+            bun_res = db.table("mcq_bundles").select("*").eq("is_active", True).execute()
+            bundles = bun_res.data if bun_res.data else DEFAULT_MCQ_BUNDLES
+        except Exception:
+            bundles = DEFAULT_MCQ_BUNDLES
+
+        return subjects, bundles
+
+    return cached("mcq_subjects_and_bundles", 60, fetch)
 
 
 def calculate_mcq_cart(level: str, subject_ids: list[str], duration: str, db: Client):
@@ -345,15 +353,29 @@ async def get_mcq_catalog(
         sets_res = query.order("created_at", desc=True).execute()
         sets_data = sets_res.data or []
 
+        # Batched instead of 2 extra round trips (exam_sections + questions
+        # count) per set — same fix as mcq/[seriesId]'s get_series.
+        paper_ids = [s["id"] for s in sets_data]
+        sections_by_paper: Dict[str, list] = {pid: [] for pid in paper_ids}
+        q_count_by_paper: Dict[str, int] = {pid: 0 for pid in paper_ids}
+        if paper_ids:
+            all_sections = db.table("exam_sections").select("id, paper_id").in_("paper_id", paper_ids).execute()
+            section_to_paper = {}
+            for sec in (all_sections.data or []):
+                sections_by_paper.setdefault(sec["paper_id"], []).append(sec)
+                section_to_paper[sec["id"]] = sec["paper_id"]
+            section_ids = list(section_to_paper.keys())
+            if section_ids:
+                all_questions = db.table("questions").select("id, section_id").in_("section_id", section_ids).execute()
+                for q in (all_questions.data or []):
+                    pid = section_to_paper.get(q["section_id"])
+                    if pid:
+                        q_count_by_paper[pid] = q_count_by_paper.get(pid, 0) + 1
+
         enriched = []
         for s in sets_data:
-            sec_res = db.table("exam_sections").select("id, title").eq("paper_id", s["id"]).execute()
-            sections = sec_res.data or []
-            sec_ids = [sec["id"] for sec in sections]
-            q_count = 0
-            if sec_ids:
-                q_res = db.table("questions").select("id", count="exact").in_("section_id", sec_ids).execute()
-                q_count = q_res.count or 0
+            sections = sections_by_paper.get(s["id"], [])
+            q_count = q_count_by_paper.get(s["id"], 0)
 
             enriched.append({
                 "id": s["id"],
@@ -984,17 +1006,23 @@ async def get_leaderboard(
         .execute()
     )
 
+    attempt_rows = attempts.data or []
+
+    # Batched instead of one profiles lookup per attempt.
+    user_ids = list({a["user_id"] for a in attempt_rows})
+    names_by_user: Dict[str, str] = {}
+    if user_ids:
+        profiles = db.table("profiles").select("id, full_name").in_("id", user_ids).execute()
+        for p in (profiles.data or []):
+            names_by_user[p["id"]] = p.get("full_name") or "Student"
+
     board = []
-    for a in (attempts.data or []):
-        try:
-            # Uses the student's own chosen display name, not their email —
-            # deriving a "name" from the email's local-part (the old
-            # behavior) leaked a real, private email address to every other
-            # student attempting the same quiz.
-            profile = db.table("profiles").select("full_name").eq("id", a["user_id"]).single().execute()
-            name = (profile.data.get("full_name") if profile.data else None) or "Student"
-        except Exception:
-            name = "Student"
+    for a in attempt_rows:
+        # Uses the student's own chosen display name, not their email —
+        # deriving a "name" from the email's local-part (the old
+        # behavior) leaked a real, private email address to every other
+        # student attempting the same quiz.
+        name = names_by_user.get(a["user_id"], "Student")
 
         board.append({
             "name": name,

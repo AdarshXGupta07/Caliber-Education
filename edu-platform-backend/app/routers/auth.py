@@ -1,3 +1,4 @@
+import asyncio
 import random
 import string
 import uuid
@@ -300,18 +301,42 @@ async def me(current_user: dict = Depends(get_current_user), db: Client = Depend
     """Return current user profile with enrolled courses and recent quiz attempts."""
     user_id = current_user["id"]
 
-    enrollments = db.table("enrollments").select("course_id, purchased_at, access_until").eq("user_id", user_id).execute()
+    def fetch_enrollments():
+        return db.table("enrollments").select("course_id, purchased_at, access_until").eq("user_id", user_id).execute()
+
+    def fetch_attempts():
+        return (
+            db.table("quiz_attempts")
+            .select("set_id, score, total, created_at")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(10)
+            .execute()
+        )
+
+    def fetch_profile():
+        try:
+            return db.table("profiles").select("full_name, phone_number, address, stage, attempt_status").eq("id", user_id).single().execute()
+        except Exception:
+            return None
+
+    def fetch_mcq_enrollments():
+        return db.table("mcq_enrollments").select("subject_code, access_until").eq("user_id", user_id).execute()
+
+    # These 4 queries are independent of each other — run them concurrently
+    # via threads instead of stacking 4 sequential Supabase round trips
+    # (supabase-py's client is sync/blocking, hence asyncio.to_thread rather
+    # than a native async client call).
+    enrollments, attempts, profile, mcq_enrollments = await asyncio.gather(
+        asyncio.to_thread(fetch_enrollments),
+        asyncio.to_thread(fetch_attempts),
+        asyncio.to_thread(fetch_profile),
+        asyncio.to_thread(fetch_mcq_enrollments),
+    )
+
     enrolled_ids = [e["course_id"] for e in (enrollments.data or [])]
     enrolled_data = enrollments.data or []
 
-    attempts = (
-        db.table("quiz_attempts")
-        .select("set_id, score, total, created_at")
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .limit(10)
-        .execute()
-    )
     attempts_data = attempts.data or []
     attempt_set_ids = list({a["set_id"] for a in attempts_data if a.get("set_id")})
     paper_titles = {}
@@ -324,20 +349,11 @@ async def me(current_user: dict = Depends(get_current_user), db: Client = Depend
     for a in attempts_data:
         a["paperTitle"] = paper_titles.get(a.get("set_id"), "MCQ Paper")
 
-    # Fetch extended profile info, safely falling back if missing
-    profile_data = {}
-    try:
-        profile = db.table("profiles").select("full_name, phone_number, address, stage, attempt_status").eq("id", user_id).single().execute()
-        if profile.data:
-            profile_data = profile.data
-    except Exception:
-        pass
+    profile_data = profile.data if (profile is not None and profile.data) else {}
 
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
-    
-    mcq_enrollments = db.table("mcq_enrollments").select("subject_code, access_until").eq("user_id", user_id).execute()
-    
+
     # Deduplicate — keep only the latest active enrollment per subject_code
     best_expiry = {}  # subject_code -> latest access_until datetime
     for e in (mcq_enrollments.data or []):

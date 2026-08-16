@@ -37,12 +37,6 @@ class CreateTestSeriesOrderRequest(BaseModel):
     couponCode: Optional[str] = None
 
 
-class SubmitUTRRequest(BaseModel):
-    courseId: str
-    utrNumber: str
-    couponCode: Optional[str] = None
-
-
 def _get_razorpay_client():
     settings = get_settings()
     if not settings.razorpay_key_id or not settings.razorpay_key_secret:
@@ -1088,70 +1082,3 @@ async def razorpay_webhook(request: Request, db: Client = Depends(get_db)):
         await _apply_course_grant_or_extend(db, payment_row, payment_row["user_id"], email, rzp_payment_id, "webhook_verified", settings)
 
     return {"success": True}
-
-
-# ─── Manual UTR Payment Path ──────────────────────────────────────────────────
-
-@router.post("/verify-utr", status_code=201)
-@limiter.limit("10/minute")
-async def submit_utr(
-    request: Request,
-    body: SubmitUTRRequest,
-    current_user: dict = Depends(get_current_user),
-    db: Client = Depends(get_db),
-):
-    """
-    Student submits a UTR number after completing a manual bank/UPI transfer.
-    Admin then approves or rejects via /api/admin/payments.
-    """
-    user_id = current_user["id"]
-
-    course = db.table("courses").select("id, title, price").eq("id", body.courseId).single().execute()
-    if not course.data:
-        raise HTTPException(status_code=404, detail="Course not found")
-
-    price = float(course.data.get("price") or 0)
-    original_price = price
-
-    # Resolve coupon server-side
-    coupon, discount_amount, affiliate_id, commission_amount = _resolve_coupon(
-        db, body.couponCode, body.courseId, user_id, price
-    )
-    final_price = max(0, price - discount_amount)
-
-    # Check duplicate UTR
-    existing = db.table("payments").select("id").eq("utr_number", body.utrNumber).execute()
-    if existing.data:
-        raise HTTPException(
-            status_code=400,
-            detail="This UTR number has already been submitted. Contact support if this is an error.",
-        )
-
-    result = db.table("payments").insert({
-        "user_id": user_id,
-        "course_id": body.courseId,
-        "amount": final_price,
-        "original_amount": original_price,
-        "discount_amount": discount_amount,
-        "coupon_id": coupon["id"] if coupon else None,
-        "affiliate_id": affiliate_id,
-        "commission_amount": commission_amount,
-        "status": "pending",
-        "utr_number": body.utrNumber,
-    }).execute()
-
-    return {
-        "success": True,
-        "verification": {
-            "id": result.data[0]["id"] if result.data else "unknown",
-            "studentEmail": current_user["email"],
-            "courseTitle": course.data["title"],
-            "amount": final_price,
-            "originalAmount": original_price,
-            "discountAmount": discount_amount,
-            "couponCode": coupon["code"] if coupon else None,
-            "date": datetime.now(timezone.utc).date().isoformat(),
-            "status": "pending",
-            "utrNumber": body.utrNumber,
-        },
-    }

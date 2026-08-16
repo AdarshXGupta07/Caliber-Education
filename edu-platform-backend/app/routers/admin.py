@@ -153,65 +153,6 @@ async def list_payments(
         
     return verifications
 
-@router.post("/payments/{payment_id}/approve")
-@router.patch("/payments/{payment_id}/approve")
-async def approve_payment(
-    payment_id: str,
-    admin: dict = Depends(require_admin),
-    db: Client = Depends(get_db),
-):
-    """Single canonical approve path (was previously duplicated as a POST and
-    a PATCH route with diverging logic — the PATCH version didn't understand
-    MCQ/bundle payments and would silently fail to grant them). Delegates to
-    the same grant helpers the real Razorpay verify flow and webhook use, so
-    there's exactly one place that knows how to grant a course vs an MCQ
-    subject, and coupon usage is recorded consistently either way."""
-    from app.routers.payments import _apply_course_grant_or_extend, _apply_mcq_grant, _apply_test_series_grant
-    from app.core.config import get_settings
-
-    payment_res = db.table("payments").select("*").eq("id", payment_id).single().execute()
-    if not payment_res.data:
-        raise HTTPException(status_code=404, detail="Payment not found")
-
-    payment = payment_res.data
-    if payment["status"] == "approved":
-        return {"success": True, "message": "Already approved"}
-
-    user_id = payment["user_id"]
-    utr_number = payment.get("utr_number") or ""
-    is_mcq = not payment.get("course_id") and utr_number.startswith("mcq-")
-    is_test_series = not payment.get("course_id") and utr_number.startswith("testseries-")
-
-    if is_mcq:
-        result = await _apply_mcq_grant(db, payment["razorpay_order_id"], user_id, "admin_approved", "admin_approved")
-    elif is_test_series:
-        result = await _apply_test_series_grant(db, payment["razorpay_order_id"], user_id, "admin_approved", "admin_approved")
-    else:
-        user_res = db.table("profiles").select("email").eq("id", user_id).single().execute()
-        email = user_res.data.get("email") if user_res.data else None
-        result = await _apply_course_grant_or_extend(db, payment, user_id, email, "admin_approved", "admin_approved", get_settings())
-
-    if not result.get("success"):
-        raise HTTPException(status_code=404, detail=result.get("message", "Could not grant access for this payment."))
-
-    return {"success": True}
-
-@router.post("/payments/{payment_id}/reject")
-@router.patch("/payments/{payment_id}/reject")
-async def reject_payment(
-    payment_id: str,
-    body: dict = None,
-    admin: dict = Depends(require_admin),
-    db: Client = Depends(get_db),
-):
-    """Body: { "reason": "..." } (optional) — reason is returned to the caller
-    to show the student; add a dedicated `rejection_reason` column if you want
-    it persisted rather than just relayed at approval time."""
-    rejection_note = (body or {}).get("reason", "")
-    db.table("payments").update({"status": "rejected"}).eq("id", payment_id).execute()
-    return {"success": True, "reason": rejection_note}
-
-
 # ─── Users ────────────────────────────────────────────────────────────────────
 
 @router.get("/users")
@@ -232,7 +173,9 @@ async def list_users(
         courses = db.table("courses").select("id, title").execute().data or []
         course_map = {c["id"]: c["title"] for c in courses}
 
-        attempts = db.table("quiz_attempts").select("*").execute().data or []
+        # Narrow select — this table also carries a full_question_analysis
+        # JSON blob per row that's never used here, only in per-attempt review.
+        attempts = db.table("quiz_attempts").select("user_id, set_id, score, total, created_at").execute().data or []
         papers = db.table("mcq_papers").select("id, title").execute().data or []
         paper_map = {p["id"]: p["title"] for p in papers}
 
@@ -1120,16 +1063,30 @@ async def admin_list_sets(
         sets_res = query.order("created_at", desc=True).execute()
         sets_data = sets_res.data or []
 
+        # Batched instead of 2 extra round trips (exam_sections + questions
+        # count) per set — same fix as mcq/[seriesId]'s get_series.
+        paper_ids = [s["id"] for s in sets_data]
+        sections_by_paper: Dict[str, list] = {pid: [] for pid in paper_ids}
+        q_count_by_paper: Dict[str, int] = {pid: 0 for pid in paper_ids}
+        if paper_ids:
+            all_sections = db.table("exam_sections").select("id, paper_id").in_("paper_id", paper_ids).execute()
+            section_to_paper = {}
+            for sec in (all_sections.data or []):
+                sections_by_paper.setdefault(sec["paper_id"], []).append(sec)
+                section_to_paper[sec["id"]] = sec["paper_id"]
+            section_ids = list(section_to_paper.keys())
+            if section_ids:
+                all_questions = db.table("questions").select("id, section_id").in_("section_id", section_ids).execute()
+                for q in (all_questions.data or []):
+                    pid = section_to_paper.get(q["section_id"])
+                    if pid:
+                        q_count_by_paper[pid] = q_count_by_paper.get(pid, 0) + 1
+
         # Enriched output
         enriched = []
         for s in sets_data:
-            sec_res = db.table("exam_sections").select("id, title").eq("paper_id", s["id"]).execute()
-            sections = sec_res.data or []
-            sec_ids = [sec["id"] for sec in sections]
-            q_count = 0
-            if sec_ids:
-                q_res = db.table("questions").select("id", count="exact").in_("section_id", sec_ids).execute()
-                q_count = q_res.count or 0
+            sections = sections_by_paper.get(s["id"], [])
+            q_count = q_count_by_paper.get(s["id"], 0)
 
             enriched.append({
                 "id": s["id"],

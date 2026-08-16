@@ -571,7 +571,7 @@ function CourseCard({ course, index }: { course: Course; index: number }) {
 function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[]; loading: boolean; onBuyIndividual: () => void }) {
   const [level, setLevel] = useState<string>("Intermediate");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const { user, isAuthenticated, enrollFreeCourse, purchasedCourseIds, refreshPurchases } = useAuth();
+  const { user, isAuthenticated, purchasedCourseIds, refreshPurchases } = useAuth();
 
   // Update selections when level changes (clear them so they don't buy mix-level bundles if not intended)
   useEffect(() => {
@@ -699,7 +699,6 @@ function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[
               }),
             });
             if (verifyRes.ok) {
-              selectedIds.forEach(id => enrollFreeCourse(id));
               await refreshPurchases();
               setToast({ type: "success", message: "Payment successful! Taking you to your dashboard…" });
               setTimeout(() => router.push("/dashboard?tab=courses"), 1400);

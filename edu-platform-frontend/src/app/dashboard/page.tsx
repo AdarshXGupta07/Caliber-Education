@@ -40,7 +40,6 @@ export default function DashboardPage() {
     isAuthenticated,
     isMounted,
     purchasedCourseIds,
-    verifications
   } = useAuth();
 
   const router = useRouter();
@@ -304,18 +303,8 @@ export default function DashboardPage() {
 
   const isAdmin = user.role === "admin" || user.role === "super_admin" || user.role === "mentor";
 
-  const userPendingVerifications = verifications.filter(
-    (v) => v.studentEmail.toLowerCase() === user.email.toLowerCase() && v.status === "pending"
-  );
-
-
-
   const userPurchasedCourses = dbCourses.filter((c: any) => purchasedCourseIds.includes(c.id));
-  const userPendingCourses = dbCourses.filter((c: any) =>
-    userPendingVerifications.some((v) => v.courseTitle === c.title)
-  );
-
-  const totalMyCourses = userPurchasedCourses.length + userPendingCourses.length;
+  const totalMyCourses = userPurchasedCourses.length;
 
   const activeAccessCourse = dbCourses.find((c: any) => c.id === accessCourseId);
 
@@ -475,31 +464,6 @@ export default function DashboardPage() {
                         </div>
                       </div>
                     ))}
-
-                    {/* Pending Verification list */}
-                    {userPendingCourses.map((c) => {
-                      const verification = userPendingVerifications.find(v => v.courseTitle === c.title);
-                      return (
-                        <div key={c.id} className="p-5 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20 flex flex-col justify-between gap-4 opacity-80">
-                          <div className="space-y-1.5">
-                            <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-yellow-600 dark:text-yellow-400">
-                              <Clock className="w-3.5 h-3.5 animate-pulse" /> Verification Pending
-                            </div>
-                            <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{c.title}</h3>
-                            <p className="text-[10px] text-slate dark:text-paper/40">UTR: {verification?.utrNumber}</p>
-                          </div>
-                          <div className="pt-2 border-t border-line-gray-light/30 dark:border-line-gray-dark/30 flex items-center justify-between">
-                            <span className="text-[10px] text-slate dark:text-paper/40 font-mono">Submitting on {verification?.date}</span>
-                            <Link
-                              href={`/courses/${c.id}`}
-                              className="px-3 py-1.5 border border-line-gray-light dark:border-line-gray-dark text-slate dark:text-paper/70 hover:text-ink-navy dark:hover:text-paper rounded-lg text-xs font-semibold transition-all"
-                            >
-                              View Details
-                            </Link>
-                          </div>
-                        </div>
-                      );
-                    })}
                   </div>
                 )}
               </div>

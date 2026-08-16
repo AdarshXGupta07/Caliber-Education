@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from supabase import Client
 
+from app.core.cache import cached
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.storage import signed_url_for
@@ -18,18 +19,22 @@ router = APIRouter(prefix="/api/test-series", tags=["Test Series"])
 def _get_catalog(db: Client):
     """Returns empty lists rather than raising if the test-series migration
     hasn't been applied yet — the storefront then shows a 'coming soon' state
-    instead of a broken page."""
-    try:
-        subjects = (db.table("test_series_subjects").select("*").eq("is_active", True).order("sort_order").execute().data or [])
-    except Exception as e:
-        print(f"[TEST SERIES] subjects table unavailable: {e}")
-        subjects = []
-    try:
-        bundles = (db.table("test_series_bundles").select("*").eq("is_active", True).execute().data or [])
-    except Exception as e:
-        print(f"[TEST SERIES] bundles table unavailable: {e}")
-        bundles = []
-    return subjects, bundles
+    instead of a broken page. Cached for 60s — same rationale as MCQ's
+    _get_active_subjects_and_bundles."""
+    def fetch():
+        try:
+            subjects = (db.table("test_series_subjects").select("*").eq("is_active", True).order("sort_order").execute().data or [])
+        except Exception as e:
+            print(f"[TEST SERIES] subjects table unavailable: {e}")
+            subjects = []
+        try:
+            bundles = (db.table("test_series_bundles").select("*").eq("is_active", True).execute().data or [])
+        except Exception as e:
+            print(f"[TEST SERIES] bundles table unavailable: {e}")
+            bundles = []
+        return subjects, bundles
+
+    return cached("test_series_catalog", 60, fetch)
 
 
 @router.get("/catalog")

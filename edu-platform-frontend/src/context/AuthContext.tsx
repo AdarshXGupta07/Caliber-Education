@@ -1,7 +1,6 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { courses, type PaymentVerification } from "@/lib/mockData";
 import { apiFetch } from "@/lib/apiFetch";
 
 interface User {
@@ -19,22 +18,15 @@ interface AuthContextType {
   setSession: (token: string, user: User) => void;
   logout: () => void;
   markProfileComplete: () => void;
-  verifications: PaymentVerification[];
   purchasedCourseIds: string[];
   refreshPurchases: () => Promise<void>;
-  enrollFreeCourse: (courseId: string) => void;
-  submitUTR: (courseId: string, utr: string) => void;
-  approveVerification: (id: string) => void;
-  rejectVerification: (id: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [verifications, setVerifications] = useState<PaymentVerification[]>([]);
-  const [localPurchasedIds, setLocalPurchasedIds] = useState<string[]>([]);
-  const [realPurchasedIds, setRealPurchasedIds] = useState<string[]>([]);
+  const [purchasedCourseIds, setPurchasedCourseIds] = useState<string[]>([]);
   const [mounted, setMounted] = useState(false);
 
   // Load from localStorage on mount
@@ -42,21 +34,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const savedUser = localStorage.getItem("caliber_user");
     if (savedUser) {
       setUser(JSON.parse(savedUser));
-    }
-    const savedVerifications = localStorage.getItem("caliber_verifications");
-    if (savedVerifications) {
-      setVerifications(JSON.parse(savedVerifications));
-    }
-    // Previously defaulted to `pendingVerifications` — 7 fake payment
-    // records with realistic-looking fake names/UTR numbers — on any
-    // browser/session with no saved verifications yet (i.e. every genuinely
-    // new visitor). This local-only queue is a legacy manual-UTR flow that
-    // predates the real backend Razorpay integration; leaving it unseeded
-    // means a new session starts with none, rather than someone else's
-    // fabricated pending payments.
-    const savedLocalPurchased = localStorage.getItem("caliber_local_purchased");
-    if (savedLocalPurchased) {
-      setLocalPurchasedIds(JSON.parse(savedLocalPurchased));
     }
     setMounted(true);
   }, []);
@@ -71,33 +48,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [user, mounted]);
 
-  useEffect(() => {
-    if (!mounted) return;
-    localStorage.setItem("caliber_verifications", JSON.stringify(verifications));
-  }, [verifications, mounted]);
-
-  useEffect(() => {
-    if (!mounted) return;
-    localStorage.setItem("caliber_local_purchased", JSON.stringify(localPurchasedIds));
-  }, [localPurchasedIds, mounted]);
-
-  // Real, backend-verified course enrolments (Razorpay purchases stored in
-  // the `enrollments` table) — this is the source of truth for "which
-  // courses does this user actually own", separate from the local-only free
-  // enrolments and mock verifications below. Re-fetchable on demand via
-  // refreshPurchases() so pages can pull in a just-completed purchase
-  // immediately instead of waiting for the next login/mount.
+  // Real, backend-verified course enrolments (Razorpay purchases + free
+  // enrolments, both stored in the `enrollments` table) — the only source
+  // of truth for "which courses does this user actually own". Re-fetchable
+  // on demand via refreshPurchases() so pages can pull in a just-completed
+  // purchase immediately instead of waiting for the next login/mount.
   const refreshPurchases = async () => {
-    if (!user) { setRealPurchasedIds([]); return; }
+    if (!user) { setPurchasedCourseIds([]); return; }
     const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
     const token = localStorage.getItem("caliber_jwt") || "";
-    if (!token) { setRealPurchasedIds([]); return; }
+    if (!token) { setPurchasedCourseIds([]); return; }
     try {
       const res = await fetch(`${apiURL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
       const data = res.ok ? await res.json() : null;
-      setRealPurchasedIds(data?.purchases || []);
+      setPurchasedCourseIds(data?.purchases || []);
     } catch {
-      setRealPurchasedIds([]);
+      setPurchasedCourseIds([]);
     }
   };
 
@@ -162,70 +128,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser((prev) => (prev ? { ...prev, profileComplete: true } : prev));
   };
 
-  // Compute purchased courses for the current user
-  const purchasedCourseIds = React.useMemo(() => {
-    if (!user) return [];
-
-    // 1. Initial mock purchases (Removed for pure production testing)
-    const initialCourseIds: string[] = [];
-
-    // 2. Approved verifications matching the user
-    const approvedCourseIds = verifications
-      .filter(v => v.studentEmail.toLowerCase() === user.email.toLowerCase() && v.status === "approved")
-      .map(v => {
-        const c = courses.find(course => course.title === v.courseTitle);
-        return c ? c.id : "";
-      })
-      .filter(id => id !== "");
-
-    // 3. Plus local free enrolments
-    const userLocalFree = localPurchasedIds.filter(item => {
-      const [email, courseId] = item.split("::");
-      return email.toLowerCase() === user.email.toLowerCase();
-    }).map(item => item.split("::")[1]);
-
-    return Array.from(new Set([...initialCourseIds, ...approvedCourseIds, ...userLocalFree, ...realPurchasedIds]));
-  }, [user, verifications, localPurchasedIds, realPurchasedIds]);
-
-  const enrollFreeCourse = (courseId: string) => {
-    if (!user) return;
-    setLocalPurchasedIds(prev => {
-      const key = `${user.email}::${courseId}`;
-      if (prev.includes(key)) return prev;
-      return [...prev, key];
-    });
-  };
-
-  const submitUTR = (courseId: string, utr: string) => {
-    if (!user) return;
-    const course = courses.find(c => c.id === courseId);
-    if (!course) return;
-
-    const newVerification: PaymentVerification = {
-      id: `pv-${Date.now()}`,
-      studentEmail: user.email,
-      courseTitle: course.title,
-      amount: typeof course.price === "number" ? course.price : 0,
-      date: new Date().toISOString().split("T")[0],
-      status: "pending",
-      utrNumber: utr
-    };
-
-    setVerifications(prev => [newVerification, ...prev]);
-  };
-
-  const approveVerification = (id: string) => {
-    setVerifications(prev =>
-      prev.map(v => (v.id === id ? { ...v, status: "approved" as const } : v))
-    );
-  };
-
-  const rejectVerification = (id: string) => {
-    setVerifications(prev =>
-      prev.map(v => (v.id === id ? { ...v, status: "rejected" as const } : v))
-    );
-  };
-
   return (
     <AuthContext.Provider
       value={{
@@ -236,13 +138,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession,
         logout,
         markProfileComplete,
-        verifications,
         purchasedCourseIds,
         refreshPurchases,
-        enrollFreeCourse,
-        submitUTR,
-        approveVerification,
-        rejectVerification
       }}
     >
       {children}
