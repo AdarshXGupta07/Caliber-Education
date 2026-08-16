@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Target, Heart, Lightbulb, MessageCircle, BookOpen, Award } from "lucide-react";
+import { Target, Heart, Lightbulb, MessageCircle, BookOpen, Users } from "lucide-react";
 import Image from "next/image";
 import { useState } from "react";
 import { LinkedInIcon } from "@/components/SocialIcons";
@@ -177,7 +177,7 @@ export default function AboutClient() {
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
             <span className="text-xs font-semibold text-slate dark:text-paper/50 uppercase tracking-widest">About Us</span>
             <h1 className="font-heading font-extrabold text-4xl sm:text-5xl text-ink-navy dark:text-paper mt-4 leading-tight tracking-tight">
-              Two CAs who got tired of watching droppers waste time on passive reading.
+              Two Chartered Accountants building the mentorship they wished they'd had.
             </h1>
           </motion.div>
         </div>
@@ -193,7 +193,7 @@ export default function AboutClient() {
 
           <div className="grid sm:grid-cols-3 gap-6 mt-8">
             {[
-              { stat: "90%+", label: "Dropper focus", desc: "Our entire resource pipeline is specifically optimized for repeat attempts." },
+              { stat: "200+", label: "Mentorship hours", desc: "Hours of live 1:1 and group mentorship sessions completed with students." },
               { stat: "3 hours", label: "Per exam paper", desc: "CA exams demand mental stamina and quick retrieval under strict time limits." },
               { stat: "1 platform", label: "Focused on MCQs", desc: "Purpose-built for timed MCQ practice with step-by-step rationales, not just key codes." },
             ].map((item, i) => (
@@ -208,10 +208,10 @@ export default function AboutClient() {
 
           <div className="mt-8 space-y-6 text-slate dark:text-paper/70 text-sm leading-relaxed">
             <p>
-              Somya and Aditya both cleared the rigorous CA examinations before co-founding CAliber. During their preparation and teaching tenures, they witnessed the same recurring issue: droppers who understood concepts perfectly still struggled to clear their examinations because they had not trained for the actual format.
+              That's the gap CAliber closes. Not another set of lectures or another book to get through — a workspace built around timed, active retrieval, where every session behaves like the real exam.
             </p>
             <p>
-              Traditional coaching courses rely heavily on passive lecture hours and massive textbook dumps. But pattern recognition and speed require active timed retrieval. CAliber provides exactly that—a streamlined workspace where every session behaves like a mock exam, complete with immediate explanations to help close knowledge gaps in real-time.
+              Attempt under pressure. See exactly where it broke. Fix it before it costs you another attempt.
             </p>
           </div>
         </div>
@@ -245,7 +245,7 @@ export default function AboutClient() {
           <div className="grid sm:grid-cols-3 gap-8 text-center">
             {[
               { icon: <BookOpen className="w-5 h-5 text-slate dark:text-paper/50" />, stat: "1,200+", label: "MCQs in the library" },
-              { icon: <Award className="w-5 h-5 text-slate dark:text-paper/50" />, stat: "5,400+", label: "CA students trained" },
+              { icon: <Users className="w-5 h-5 text-slate dark:text-paper/50" />, stat: "20+", label: "Team members" },
               { icon: <MessageCircle className="w-5 h-5 text-slate dark:text-paper/50" />, stat: "12", label: "WhatsApp groups active" },
             ].map((item, i) => (
               <motion.div key={i} initial={{ opacity: 0, y: 12 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }} className="flex flex-col items-center gap-2.5 p-6 border border-line-gray-light dark:border-line-gray-dark rounded-xl bg-white dark:bg-line-gray-dark/20">
