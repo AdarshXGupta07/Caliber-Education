@@ -61,7 +61,6 @@ export function Navbar() {
                 alt="Caliber Education Logo"
                 fill
                 sizes="40px"
-                unoptimized
                 className="object-cover"
               />
             </div>

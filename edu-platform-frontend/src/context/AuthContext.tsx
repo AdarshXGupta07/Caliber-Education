@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { courses, registeredUsers, pendingVerifications, type PaymentVerification } from "@/lib/mockData";
+import { courses, type PaymentVerification } from "@/lib/mockData";
 import { apiFetch } from "@/lib/apiFetch";
 
 interface User {
@@ -46,9 +46,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const savedVerifications = localStorage.getItem("caliber_verifications");
     if (savedVerifications) {
       setVerifications(JSON.parse(savedVerifications));
-    } else {
-      setVerifications(pendingVerifications);
     }
+    // Previously defaulted to `pendingVerifications` — 7 fake payment
+    // records with realistic-looking fake names/UTR numbers — on any
+    // browser/session with no saved verifications yet (i.e. every genuinely
+    // new visitor). This local-only queue is a legacy manual-UTR flow that
+    // predates the real backend Razorpay integration; leaving it unseeded
+    // means a new session starts with none, rather than someone else's
+    // fabricated pending payments.
     const savedLocalPurchased = localStorage.getItem("caliber_local_purchased");
     if (savedLocalPurchased) {
       setLocalPurchasedIds(JSON.parse(savedLocalPurchased));

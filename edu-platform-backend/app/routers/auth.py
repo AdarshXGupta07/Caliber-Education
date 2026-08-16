@@ -30,9 +30,6 @@ class GoogleExchangeRequest(BaseModel):
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
-# In-memory OTP store for development (use Redis/DB in production)
-_otp_store: dict[str, dict] = {}
-
 
 async def _verify_turnstile(token: str) -> bool:
     """Validates Cloudflare Turnstile token. Only skipped in local development."""
@@ -158,6 +155,8 @@ async def register(request: Request, body: RegisterRequest, db: Client = Depends
 
     if len(body.password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    if len(body.password) > 128:
+        raise HTTPException(status_code=400, detail="Password must be under 128 characters")
 
     # The frontend gate on this is client-side only and trivially bypassed by
     # calling this endpoint directly — this is the real enforcement, at the
@@ -443,6 +442,8 @@ async def reset_password(request: Request, body: ResetPasswordRequest):
     user."""
     if len(body.newPassword) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    if len(body.newPassword) > 128:
+        raise HTTPException(status_code=400, detail="Password must be under 128 characters")
     client = get_auth_client()
     try:
         client.auth.set_session(body.accessToken, body.refreshToken)

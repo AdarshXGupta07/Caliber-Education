@@ -30,7 +30,6 @@ export function AuthShell({ children, progressStep, progressTotal }: AuthShellPr
                 alt="Caliber Education Logo"
                 fill
                 sizes="32px"
-                unoptimized
                 className="object-cover"
               />
             </div>

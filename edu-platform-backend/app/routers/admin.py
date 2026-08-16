@@ -1,4 +1,5 @@
 import csv
+import hmac
 import io
 import json
 import os
@@ -12,10 +13,10 @@ from pydantic import BaseModel
 
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.storage import signed_url_for, storage_path_from_url
 from app.dependencies import require_admin, require_mentor, require_super_admin
 from app.routers.payments import grant_test_series_subjects
 from app.schemas.admin import ManualEnrollRequest, MentorPermissionsUpdateRequest
-from app.schemas.courses import CourseUpsertRequest
 from app.schemas.mcq import BulkImportRequest
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
@@ -51,6 +52,29 @@ async def _mentor_has_permission(current_user: dict, permission_key: str, db: Cl
         if bool((row.get("permissions") or {}).get(permission_key, False)):
             return True
     return False
+
+
+def _require_nonblank(body: dict, field: str, label: str, max_len: int = 200) -> str:
+    """Shared validation for the admin content-CRUD endpoints below that still
+    take a raw dict (camelCase payloads that don't map 1:1 onto a snake_case
+    schema) — these previously accepted an empty/missing title-like field
+    silently, producing content with no display name."""
+    value = (body.get(field) or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail=f"{label} is required")
+    if len(value) > max_len:
+        raise HTTPException(status_code=400, detail=f"{label} must be under {max_len} characters")
+    return value
+
+
+def _require_non_negative(value, label: str) -> float:
+    try:
+        num = float(value) if value is not None else 0.0
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{label} must be a number")
+    if num < 0:
+        raise HTTPException(status_code=400, detail=f"{label} cannot be negative")
+    return num
 
 
 @router.get("/my-permissions")
@@ -142,7 +166,7 @@ async def approve_payment(
     the same grant helpers the real Razorpay verify flow and webhook use, so
     there's exactly one place that knows how to grant a course vs an MCQ
     subject, and coupon usage is recorded consistently either way."""
-    from app.routers.payments import _apply_course_grant_or_extend, _apply_mcq_grant
+    from app.routers.payments import _apply_course_grant_or_extend, _apply_mcq_grant, _apply_test_series_grant
     from app.core.config import get_settings
 
     payment_res = db.table("payments").select("*").eq("id", payment_id).single().execute()
@@ -156,13 +180,19 @@ async def approve_payment(
     user_id = payment["user_id"]
     utr_number = payment.get("utr_number") or ""
     is_mcq = not payment.get("course_id") and utr_number.startswith("mcq-")
+    is_test_series = not payment.get("course_id") and utr_number.startswith("testseries-")
 
     if is_mcq:
-        _apply_mcq_grant(db, payment["razorpay_order_id"], user_id, "admin_approved", "admin_approved")
+        result = await _apply_mcq_grant(db, payment["razorpay_order_id"], user_id, "admin_approved", "admin_approved")
+    elif is_test_series:
+        result = await _apply_test_series_grant(db, payment["razorpay_order_id"], user_id, "admin_approved", "admin_approved")
     else:
         user_res = db.table("profiles").select("email").eq("id", user_id).single().execute()
         email = user_res.data.get("email") if user_res.data else None
-        _apply_course_grant_or_extend(db, payment, user_id, email, "admin_approved", "admin_approved", get_settings())
+        result = await _apply_course_grant_or_extend(db, payment, user_id, email, "admin_approved", "admin_approved", get_settings())
+
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("message", "Could not grant access for this payment."))
 
     return {"success": True}
 
@@ -291,7 +321,7 @@ async def list_users(
             "email": p.get("email", ""),
             "joinDate": p.get("created_at", ""),
             "full_name": p.get("full_name", ""),
-            "phone": p.get("phone", ""),
+            "phone": p.get("phone_number", ""),
             "address": p.get("address", ""),
             "stage": p.get("stage", ""),
             "attempt_status": p.get("attempt_status", ""),
@@ -457,12 +487,37 @@ async def admin_upsert_course(
     db: Client = Depends(get_db),
 ):
     # Upsert a course
+    # This intentionally still takes a raw dict rather than a Pydantic model
+    # — the frontend's payload is camelCase and doesn't line up 1:1 with a
+    # snake_case schema (see the explicit mapping below), and the
+    # bundled-test-series retroactive-grant logic further down needs to
+    # distinguish "field omitted" from "field sent empty", which a plain
+    # dict does naturally. What *was* missing is validation on the two
+    # fields that reach the public course page unescaped in JSON-LD
+    # (courses/[id]/page.tsx) — title must be non-empty, and price must not
+    # be a negative/non-numeric value silently corrupting checkout pricing.
+    title = (body.get("title") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Course title is required")
+    if len(title) > 200:
+        raise HTTPException(status_code=400, detail="Course title must be under 200 characters")
+    description = body.get("description")
+    if description is not None and len(description) > 5000:
+        raise HTTPException(status_code=400, detail="Course description must be under 5000 characters")
+    price = body.get("price", 0)
+    try:
+        price = float(price) if price is not None else 0.0
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Course price must be a number")
+    if price < 0:
+        raise HTTPException(status_code=400, detail="Course price cannot be negative")
+
     # Convert camelCase to snake_case mapping for DB
     data = {
         "id": body.get("id"),
-        "title": body.get("title"),
+        "title": title,
         "description": body.get("description", ""),
-        "price": body.get("price", 0),
+        "price": price,
         "level": body.get("level"),
         "duration": body.get("duration", ""),
         "tag": body.get("tag"),
@@ -533,13 +588,15 @@ async def admin_upsert_bundle(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
+    title = _require_nonblank(body, "title", "Bundle title")
+    price = _require_non_negative(body.get("price", 0), "Bundle price")
     data = {
         "id": body.get("id"),
-        "title": body.get("title"),
+        "title": title,
         "description": body.get("description", ""),
         "level": body.get("level", "Multiple"),
         "course_ids": body.get("courseIds", []),
-        "price": body.get("price", 0),
+        "price": price,
     }
     result = db.table("course_bundles").upsert(data).execute()
     return {"success": True, "id": result.data[0]["id"] if result.data else None}
@@ -822,15 +879,12 @@ async def purge_old_submission_files(
     settings = get_settings()
     expected = os.getenv("MAINTENANCE_SECRET", "")
     provided = request.headers.get("X-Maintenance-Secret", "")
-    if not expected or provided != expected:
+    if not expected or not hmac.compare_digest(provided, expected):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     purged_subs, purged_evals = 0, 0
-
-    def _storage_path(url: str, bucket: str) -> Optional[str]:
-        marker = f"/storage/v1/object/public/{bucket}/"
-        return url.split(marker, 1)[1] if marker in url else None
+    _storage_path = storage_path_from_url
 
     # Student submissions
     subs = (
@@ -894,12 +948,14 @@ async def admin_upsert_series(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
+    title = _require_nonblank(body, "title", "Series title")
+    price = _require_non_negative(body.get("price", 0), "Series price")
     data = {
         "id": body.get("id"),
-        "title": body.get("title"),
+        "title": title,
         "subject": body.get("subject"),
         "description": body.get("description", ""),
-        "price": body.get("price", 0),
+        "price": price,
         "is_locked": body.get("isLocked", False),
     }
     result = db.table("mcq_series").upsert(data).execute()
@@ -937,14 +993,18 @@ async def admin_upsert_mcq_bundle(
     db: Client = Depends(get_db),
 ):
     import uuid
+    title = _require_nonblank(body, "title", "Bundle title")
+    prices = body.get("prices") or {"1_month": 0, "3_months": 0, "6_months": 0, "1_year": 0}
+    for tier, val in prices.items():
+        prices[tier] = _require_non_negative(val, f"Bundle price ({tier})")
     bundle_id = body.get("id") or f"custom-bundle-{uuid.uuid4().hex[:8]}"
     data = {
         "id": bundle_id,
-        "title": body.get("title"),
+        "title": title,
         "level": body.get("level", "FINAL").upper(),
         "group_name": body.get("groupName") or body.get("group_name") or "Custom",
         "subject_ids": body.get("subjectIds") or body.get("subject_ids") or [],
-        "prices": body.get("prices") or {"1_month": 0, "3_months": 0, "6_months": 0, "1_year": 0},
+        "prices": prices,
         "is_custom": True,
         "is_active": body.get("isActive", True),
         "badge": body.get("badge") or "Custom Bundle",
@@ -989,14 +1049,18 @@ async def admin_upsert_mcq_subject(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
+    name = _require_nonblank(body, "name", "Subject name")
+    prices = body.get("prices") or {"1_month": 150, "3_months": 300, "6_months": 400, "1_year": 500}
+    for tier, val in prices.items():
+        prices[tier] = _require_non_negative(val, f"Subject price ({tier})")
     data = {
         "id": body.get("id"),
         "level": body.get("level", "FINAL").upper(),
         "group_name": body.get("groupName") or body.get("group_name") or "Group I",
-        "name": body.get("name"),
+        "name": name,
         "code": body.get("code"),
         "description": body.get("description", ""),
-        "prices": body.get("prices") or {"1_month": 150, "3_months": 300, "6_months": 400, "1_year": 500},
+        "prices": prices,
         "is_active": body.get("isActive", True),
     }
     try:
@@ -1418,7 +1482,8 @@ async def admin_import_questions(
                 })
                 next_order_index += 1
         except Exception as err:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON format: {str(err)}")
+            print(f"[BULK IMPORT] Invalid JSON: {err}")
+            raise HTTPException(status_code=400, detail="Invalid JSON format. Please check the file and try again.")
 
     if not parsed_questions:
         raise HTTPException(status_code=400, detail="No valid questions found to import")
@@ -1472,6 +1537,7 @@ async def list_pending_submissions(
     this queue, though review_submission itself was already mentor-open."""
     if not await _mentor_has_permission(staff, "evaluate_papers", db):
         raise HTTPException(status_code=403, detail="You don't have permission to evaluate papers")
+    settings = get_settings()
     query = (
         db.table("test_submissions")
         .select("*, profiles(email), tests(title), test_evaluations(marks, remarks, checked_file_url, evaluated_at)")
@@ -1487,17 +1553,24 @@ async def list_pending_submissions(
         email = profile.get("email", "")
         evaluations = s.get("test_evaluations") or []
         evaluation = evaluations[0] if evaluations else None
+        checked_url = evaluation.get("checked_file_url") if evaluation else None
+        # Signed, short-lived — these are personal answer sheets and
+        # evaluations, not public content (see core/storage.py).
+        student_files = [
+            u for u in (signed_url_for(db, settings.supabase_submission_bucket, f) for f in (s.get("submission_files") or []))
+            if u
+        ]
         result.append({
             "id": s["id"],
             "studentEmail": email,
             "studentName": email.split("@")[0],
             "testTitle": test.get("title", ""),
             "submittedAt": s["submitted_at"],
-            "studentFiles": s.get("submission_files", []),
+            "studentFiles": student_files,
             "status": s.get("status", "pending"),
             "marksAwarded": evaluation.get("marks") if evaluation else None,
             "remarks": evaluation.get("remarks") if evaluation else None,
-            "checkedFileUrl": evaluation.get("checked_file_url") if evaluation else None,
+            "checkedFileUrl": signed_url_for(db, settings.supabase_evaluation_bucket, checked_url) if checked_url else None,
             "evaluatedAt": evaluation.get("evaluated_at") if evaluation else None,
         })
     return {"submissions": result}
@@ -1513,10 +1586,7 @@ async def delete_submission(
     including any remaining Storage files — same buckets/path convention the
     7-day auto-purge cron uses (see maintenance/purge-old-files above)."""
     settings = get_settings()
-
-    def _storage_path(url: str, bucket: str) -> Optional[str]:
-        marker = f"/storage/v1/object/public/{bucket}/"
-        return url.split(marker, 1)[1] if marker in url else None
+    _storage_path = storage_path_from_url
 
     sub = db.table("test_submissions").select("submission_files").eq("id", submission_id).execute()
     if not sub.data:
@@ -1552,8 +1622,8 @@ ALLOWED_EVALUATION_CONTENT_TYPES = {"application/pdf", "image/jpeg", "image/png"
 @router.post("/submissions/{submission_id}/review", status_code=200)
 async def review_submission(
     submission_id: str,
-    marks: float = Form(...),
-    remarks: str = Form(...),
+    marks: float = Form(..., ge=0, le=105),
+    remarks: str = Form(..., max_length=5000),
     checkedFile: Optional[UploadFile] = File(None),
     mentor_user: dict = Depends(require_mentor),
     db: Client = Depends(get_db),
@@ -1629,7 +1699,11 @@ async def review_submission(
 
     if settings.sendgrid_api_key and student_email:
         import httpx
-        file_line = f'<p><a href="{checked_file_url}">Download your checked answer sheet</a></p>' if checked_file_url else ""
+        # 7-day expiry (not the default 5-minute one) since this link sits
+        # in an inbox and may be opened days later — the student can also
+        # always get a fresh link from their dashboard (GET /api/tests/submissions).
+        emailed_url = signed_url_for(db, settings.supabase_evaluation_bucket, checked_file_url, expires_in=7 * 24 * 3600) if checked_file_url else None
+        file_line = f'<p><a href="{emailed_url}">Download your checked answer sheet</a></p>' if emailed_url else ""
         try:
             async with httpx.AsyncClient() as client:
                 await client.post(
@@ -1947,32 +2021,37 @@ async def schedule_session(
     except Exception:
         time_formatted = body.scheduledAt
 
-    # Email student with meet link
+    # Email student with meet link — the DB update above already succeeded,
+    # so a SendGrid failure here (timeout, DNS blip) must not turn this into
+    # a 500 for the admin; the schedule itself is already saved.
     settings = get_settings()
     if settings.sendgrid_api_key and student_email:
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                "https://api.sendgrid.com/v3/mail/send",
-                headers={"Authorization": f"Bearer {settings.sendgrid_api_key}"},
-                json={
-                    "personalizations": [{"to": [{"email": student_email}]}],
-                    "from": {"email": settings.sendgrid_from_email},
-                    "subject": f"Your 1:1 Session with {mentor_info.get('name', 'Your Mentor')} is Confirmed!",
-                    "content": [{
-                        "type": "text/html",
-                        "value": f"""
-                        <h2>Your Session is Confirmed 🎉</h2>
-                        <p><strong>Mentor:</strong> {mentor_info.get('name', 'Your Mentor')}</p>
-                        <p><strong>Date & Time:</strong> {time_formatted}</p>
-                        <p><strong>Duration:</strong> {body.durationMinutes} minutes</p>
-                        <br/>
-                        <p><a href="{body.meetLink}" style="background:#1a1a2e;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;">Join Google Meet</a></p>
-                        <br/>
-                        <p style="color:#666;">If the button doesn’t work, copy this link: {body.meetLink}</p>
-                        """
-                    }],
-                },
-            )
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    "https://api.sendgrid.com/v3/mail/send",
+                    headers={"Authorization": f"Bearer {settings.sendgrid_api_key}"},
+                    json={
+                        "personalizations": [{"to": [{"email": student_email}]}],
+                        "from": {"email": settings.sendgrid_from_email},
+                        "subject": f"Your 1:1 Session with {mentor_info.get('name', 'Your Mentor')} is Confirmed!",
+                        "content": [{
+                            "type": "text/html",
+                            "value": f"""
+                            <h2>Your Session is Confirmed 🎉</h2>
+                            <p><strong>Mentor:</strong> {mentor_info.get('name', 'Your Mentor')}</p>
+                            <p><strong>Date & Time:</strong> {time_formatted}</p>
+                            <p><strong>Duration:</strong> {body.durationMinutes} minutes</p>
+                            <br/>
+                            <p><a href="{body.meetLink}" style="background:#1a1a2e;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;">Join Google Meet</a></p>
+                            <br/>
+                            <p style="color:#666;">If the button doesn’t work, copy this link: {body.meetLink}</p>
+                            """
+                        }],
+                    },
+                )
+        except Exception as e:
+            print(f"[EMAIL] Failed to send session-confirmation email to {student_email}: {e}")
     else:
         print(f"[EMAIL STUB] Would email {student_email} with meet link: {body.meetLink}")
 

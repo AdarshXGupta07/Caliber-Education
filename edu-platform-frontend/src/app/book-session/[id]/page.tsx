@@ -18,7 +18,7 @@ interface Mentor {
 export default function BookSessionPage({ params }: { params: Promise<{ id: string }> }) {
     const { id: mentorId } = use(params);
     const router = useRouter();
-    const { isAuthenticated } = useAuth();
+    const { isAuthenticated, isMounted } = useAuth();
 
     const [mentor, setMentor] = useState<Mentor | null>(null);
     const [loadingMentor, setLoadingMentor] = useState(true);
@@ -33,6 +33,11 @@ export default function BookSessionPage({ params }: { params: Promise<{ id: stri
 
     // Find mentor — try API, fall back to mockData
     useEffect(() => {
+        // Wait for AuthContext to finish reading localStorage before
+        // deciding to redirect — otherwise a hard refresh on this page
+        // bounces a logged-in student to /login, same class of bug already
+        // guarded against on /admin, /dashboard, and /profile.
+        if (!isMounted) return;
         if (!isAuthenticated) { router.push("/login"); return; }
 
         const fetchMentor = async () => {
@@ -57,7 +62,7 @@ export default function BookSessionPage({ params }: { params: Promise<{ id: stri
             }
         };
         fetchMentor();
-    }, [mentorId, isAuthenticated, router]);
+    }, [mentorId, isAuthenticated, isMounted, router]);
 
     const handleSubmit = async () => {
         if (!topic.trim() || !preferredTiming.trim()) return;

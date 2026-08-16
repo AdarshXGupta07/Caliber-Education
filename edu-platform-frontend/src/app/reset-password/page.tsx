@@ -95,20 +95,20 @@ export default function ResetPasswordPage() {
             </div>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">New Password</label>
+                <label htmlFor="reset-password" className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">New Password</label>
                 <div className="relative">
-                  <input type={showPw ? "text" : "password"} placeholder="Min. 6 characters" value={password} autoFocus
+                  <input id="reset-password" type={showPw ? "text" : "password"} placeholder="Min. 6 characters" value={password} autoFocus
                     onChange={(e) => { setPassword(e.target.value); setError(""); }}
                     className="w-full px-4 py-2.5 pr-10 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors" required />
-                  <button type="button" onClick={() => setShowPw(!showPw)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate/50 hover:text-slate">
+                  <button type="button" onClick={() => setShowPw(!showPw)} aria-label={showPw ? "Hide password" : "Show password"} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate/50 hover:text-slate">
                     {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
                 {password && <div className="mt-2"><PasswordStrength password={password} /></div>}
               </div>
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Confirm Password</label>
-                <input type="password" placeholder="Repeat your password" value={confirm}
+                <label htmlFor="reset-confirm-password" className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Confirm Password</label>
+                <input id="reset-confirm-password" type="password" placeholder="Repeat your password" value={confirm}
                   onChange={(e) => { setConfirm(e.target.value); setError(""); }}
                   className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors" required />
               </div>

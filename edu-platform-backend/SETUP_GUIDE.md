@@ -88,7 +88,7 @@ TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
 
 **Used for**: Sending OTP codes to users during signup and password recovery
 
-**Without this**: OTP is hardcoded to `123456` and printed to server logs (fine for development).
+**Without this**: OTP delivery is handled by Supabase Auth directly — without a configured SendGrid key, verification still goes through Supabase's own email flow, not a hardcoded/dev-only code.
 
 **Steps:**
 1. Create a free account at [sendgrid.com](https://sendgrid.com)

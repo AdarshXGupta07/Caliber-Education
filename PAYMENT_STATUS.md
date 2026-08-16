@@ -78,7 +78,7 @@ Click "Razorpay" button
 Run this in Python to test if keys work:
 ```python
 import razorpay
-client = razorpay.Client(auth=("rzp_test_TLefj3B59wUaxc", "pzEdpUMTbaesX2LOckqnNg6m"))
+client = razorpay.Client(auth=("rzp_test_xxxxxxxxxxxxxx", "xxxxxxxxxxxxxxxxxxxxxxxx"))
 order = client.order.create({"amount": 10000, "currency": "INR"})
 print(order["id"])  # Should print order_XXXXXXXXXXXX
 ```

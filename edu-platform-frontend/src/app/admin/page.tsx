@@ -7,8 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { Toast, type ToastState } from "@/components/Toast";
 import {
-  pendingVerifications, mcqSets, courses as initialCourses,
-  registeredUsers, mcqSeries,
+  courses as initialCourses,
   type PaymentVerification, type MCQSet, type Question,
   type Course, type Mentor, type MCQSeries,
 } from "@/lib/mockData";
@@ -257,7 +256,7 @@ function EvaluationsTab() {
               <h3 className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{reviewing.testTitle}</h3>
               <p className="text-xs text-slate dark:text-paper/50 mt-0.5">Student: {reviewing.studentName} ({reviewing.studentEmail})</p>
             </div>
-            <button onClick={() => setReviewing(null)} className="p-1 rounded hover:bg-line-gray-light dark:hover:bg-line-gray-dark text-slate dark:text-paper/60"><X className="w-4 h-4" /></button>
+            <button onClick={() => setReviewing(null)} aria-label="Close" className="p-1 rounded hover:bg-line-gray-light dark:hover:bg-line-gray-dark text-slate dark:text-paper/60"><X className="w-4 h-4" /></button>
           </div>
 
           <div className="space-y-3">
@@ -1099,7 +1098,7 @@ function MCQSetsTab({ series }: { series: MCQSeries[] }) {
         <Toast toast={toast} onDismiss={() => setToast(null)} />
         <div className="flex items-center justify-between">
           <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">{editingId === "__new__" ? "New Set" : "Edit Set"}</h2>
-          <button onClick={closeEditor} className="p-2 rounded-lg hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors"><X className="w-4 h-4 text-slate dark:text-paper/60" /></button>
+          <button onClick={closeEditor} aria-label="Close" className="p-2 rounded-lg hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors"><X className="w-4 h-4 text-slate dark:text-paper/60" /></button>
         </div>
 
         {/* Set-level fields */}
@@ -1721,7 +1720,7 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
               </p>
             )}
           </div>
-          <button onClick={closeEditor} className="p-2 rounded-lg hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors"><X className="w-4 h-4 text-slate dark:text-paper/60" /></button>
+          <button onClick={closeEditor} aria-label="Close" className="p-2 rounded-lg hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors"><X className="w-4 h-4 text-slate dark:text-paper/60" /></button>
         </div>
         <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-4">
           <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase tracking-wide">Basic Info</p>
@@ -2148,7 +2147,7 @@ function CouponsTab() {
             <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-4">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase tracking-wide">{editingId ? "Edit Coupon" : "Create Coupon"}</p>
-                <button onClick={resetDraft} className="p-1 rounded hover:bg-line-gray-light dark:hover:bg-line-gray-dark"><X className="w-4 h-4 text-slate dark:text-paper/60" /></button>
+                <button onClick={resetDraft} aria-label="Close" className="p-1 rounded hover:bg-line-gray-light dark:hover:bg-line-gray-dark"><X className="w-4 h-4 text-slate dark:text-paper/60" /></button>
               </div>
               <div className="grid sm:grid-cols-3 gap-3">
                 <div>
@@ -2419,7 +2418,7 @@ function AffiliatesTab() {
             <div className="p-5 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-slate dark:text-paper/60 uppercase tracking-wide">{editingId ? "Edit Affiliate" : "Add Affiliate"}</p>
-                <button onClick={resetDraft} className="p-1 rounded hover:bg-line-gray-light dark:hover:bg-line-gray-dark"><X className="w-4 h-4 text-slate dark:text-paper/60" /></button>
+                <button onClick={resetDraft} aria-label="Close" className="p-1 rounded hover:bg-line-gray-light dark:hover:bg-line-gray-dark"><X className="w-4 h-4 text-slate dark:text-paper/60" /></button>
               </div>
               <div className="grid sm:grid-cols-3 gap-3">
                 <div><label className="text-xs font-medium text-slate dark:text-paper/70 mb-1 block">Name</label><input className={inp} placeholder="Rahul Sharma" value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} /></div>

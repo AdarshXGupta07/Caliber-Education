@@ -8,7 +8,6 @@ import {
   ArrowLeft, CheckCircle, Lock, Users, Star, Clock,
   BookOpen, MessageCircle, ChevronDown, ChevronRight, X, Zap, Copy, Check, Bell, Tag
 } from "lucide-react";
-import { courses as defaultCourses } from "@/lib/mockData";
 import { useAuth } from "@/context/AuthContext";
 import { Toast, type ToastState } from "@/components/Toast";
 
@@ -506,7 +505,7 @@ export default function CourseDetailClient({ id }: { id: string }) {
                               <p className="text-[10px] text-signal-emerald/70">{appliedCoupon.message}</p>
                             </div>
                           </div>
-                          <button onClick={handleRemoveCoupon} className="p-1 rounded-lg text-signal-emerald/60 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors">
+                          <button onClick={handleRemoveCoupon} aria-label="Remove coupon" className="p-1 rounded-lg text-signal-emerald/60 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors">
                             <X className="w-3.5 h-3.5" />
                           </button>
                         </div>

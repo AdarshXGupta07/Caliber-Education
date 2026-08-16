@@ -4,6 +4,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 import { Navbar } from "@/components/Navbar";
 import Script from "next/script";
+import { SITE_URL, SITE_NAME, SITE_DESCRIPTION } from "@/lib/site";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -22,14 +23,6 @@ const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   display: "swap",
 });
-
-// Swap for your real custom domain once you have one — a free .netlify.app
-// subdomain is treated as lower-trust by search engines, and this value
-// anchors every relative OG/canonical URL generated on the site.
-const SITE_URL = "https://caliber-edu.netlify.app";
-const SITE_NAME = "CAliber Education";
-const SITE_DESCRIPTION =
-  "Premium MCQ practice platform for CA Foundation, Intermediate & Final droppers. Timed mock sets, detailed explanations, mentor-led test series, and WhatsApp group access.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -87,6 +80,10 @@ export default function RootLayout({
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
+            // See courses/[id]/page.tsx for why "<" is escaped before
+            // embedding — these values are hardcoded constants today, not
+            // exploitable, but keeping this consistent means it stays safe
+            // if any of them ever becomes admin-editable.
             __html: JSON.stringify({
               "@context": "https://schema.org",
               "@type": "EducationalOrganization",
@@ -98,7 +95,7 @@ export default function RootLayout({
                 "https://t.me/calibermentorship",
                 "https://www.instagram.com/calibermentorship/",
               ],
-            }),
+            }).replace(/</g, "\\u003c"),
           }}
         />
         <Providers>

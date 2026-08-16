@@ -216,7 +216,6 @@ export default function HomeClient() {
                   alt="Caliber Education Logo"
                   fill
                   sizes="36px"
-                  unoptimized
                   className="object-cover"
                 />
               </div>
@@ -328,7 +327,6 @@ function Footer() {
                   alt="Caliber Education Logo"
                   fill
                   sizes="32px"
-                  unoptimized
                   className="object-cover"
                 />
               </div>
@@ -413,7 +411,6 @@ function Footer() {
                 alt="Caliber Education Logo"
                 fill
                 sizes="16px"
-                unoptimized
                 className="object-cover"
               />
             </span>

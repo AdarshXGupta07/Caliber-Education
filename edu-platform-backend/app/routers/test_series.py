@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from supabase import Client
 
+from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.storage import signed_url_for
 from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/api/test-series", tags=["Test Series"])
@@ -70,6 +72,10 @@ async def get_my_subjects(current_user: dict = Depends(get_current_user), db: Cl
 @router.get("/subjects/{subject_id}/papers")
 async def get_subject_papers(subject_id: str, current_user: dict = Depends(get_current_user), db: Client = Depends(get_db)):
     """Papers under a subject — only for students who've purchased that subject (or staff)."""
+    subject = db.table("test_series_subjects").select("id").eq("id", subject_id).execute()
+    if not subject.data:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
     if current_user.get("role") not in {"admin", "super_admin", "mentor"}:
         enroll = (
             db.table("test_series_enrollments")
@@ -81,6 +87,7 @@ async def get_subject_papers(subject_id: str, current_user: dict = Depends(get_c
         if not enroll.data:
             raise HTTPException(status_code=403, detail="Purchase this subject to view its papers")
 
+    settings = get_settings()
     papers = (
         db.table("tests")
         .select("id, title, description, question_file_url, status, sort_order, created_at")
@@ -89,7 +96,15 @@ async def get_subject_papers(subject_id: str, current_user: dict = Depends(get_c
         .order("sort_order")
         .execute()
     )
-    return papers.data or []
+    result = papers.data or []
+    for p in result:
+        url = p.get("question_file_url")
+        if url:
+            # Signed, short-lived — access to this link is gated on the
+            # purchase check above; a permanent public URL would outlive
+            # that check the moment it's shared or cached anywhere.
+            p["question_file_url"] = signed_url_for(db, settings.supabase_test_series_bucket, url) or url
+    return result
 
 
 def calculate_test_series_cart(level: str, subject_ids: list[str], db: Client) -> dict:

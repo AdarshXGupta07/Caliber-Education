@@ -155,21 +155,21 @@ export default function LoginPage() {
 
             <form onSubmit={handleSubmit} className="space-y-4 opacity-90">
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Email Address</label>
-                <input type="email" placeholder="you@example.com" value={email}
+                <label htmlFor="login-email" className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Email Address</label>
+                <input id="login-email" type="email" placeholder="you@example.com" value={email}
                   onChange={(e) => { setEmail(e.target.value); setError(""); }}
                   className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors" required />
               </div>
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70">Password</label>
+                  <label htmlFor="login-password" className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70">Password</label>
                   <Link href="/forgot-password" className="text-xs text-ink-navy dark:text-paper font-semibold hover:underline">Forgot password?</Link>
                 </div>
                 <div className="relative">
-                  <input type={showPw ? "text" : "password"} placeholder="Your password" value={password}
+                  <input id="login-password" type={showPw ? "text" : "password"} placeholder="Your password" value={password}
                     onChange={(e) => { setPassword(e.target.value); setError(""); }}
                     className="w-full px-4 py-2.5 pr-10 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors" required />
-                  <button type="button" onClick={() => setShowPw(!showPw)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate/50 hover:text-slate transition-colors">
+                  <button type="button" onClick={() => setShowPw(!showPw)} aria-label={showPw ? "Hide password" : "Show password"} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate/50 hover:text-slate transition-colors">
                     {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>

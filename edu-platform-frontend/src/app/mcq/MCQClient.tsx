@@ -259,15 +259,13 @@ export default function MCQClient() {
         // Check which payment method is selected
         if (activePaymentMethod === "razorpay") {
           // REAL RAZORPAY PAYMENT
-          console.log("[MCQ] Opening Razorpay checkout...");
-          
+
           // Dynamically load Razorpay script if not already loaded
           if (!(window as any).Razorpay) {
             await new Promise<void>((resolve, reject) => {
               const script = document.createElement("script");
               script.src = "https://checkout.razorpay.com/v1/checkout.js";
               script.onload = () => {
-                console.log("[MCQ] Razorpay script loaded");
                 resolve();
               };
               script.onerror = () => reject(new Error("Failed to load Razorpay SDK"));
@@ -277,7 +275,13 @@ export default function MCQClient() {
 
           const rzp = new (window as any).Razorpay({
             key: orderData.key || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-            amount: Math.round(finalPayablePrice * 100),
+            // Server-computed amount from the order the backend already
+            // created — matches the other 3 purchase flows. Razorpay
+            // resolves the actual chargeable amount from order_id
+            // regardless, but this avoids ever displaying a different
+            // number than what create-mcq-order priced (e.g. if client-side
+            // coupon math ever drifts from the server's own calculation).
+            amount: orderData.amount,
             currency: "INR",
             name: "Caliber Education",
             description: `${activeLevel} MCQ - ${DURATION_LABELS[selectedDuration].label}`,
@@ -300,7 +304,6 @@ export default function MCQClient() {
               });
               
               if (verifyRes.ok) {
-                console.log("[MCQ] Payment verified, enrollment created/extended");
                 setPurchasedInfo({
                   title: `${activeLevel} MCQ Package (${DURATION_LABELS[selectedDuration].label})`,
                   amount: finalPayablePrice,
@@ -330,14 +333,12 @@ export default function MCQClient() {
             theme: { color: "#10b981" },
             modal: {
               ondismiss: () => {
-                console.log("[MCQ] Razorpay modal closed by user");
                 setIsProcessing(false);
               }
             }
           });
-          
+
           rzp.on("payment.failed", () => {
-            console.log("[MCQ] Razorpay payment.failed event");
             setToast({ type: "error", message: "Payment didn't go through. No amount was charged — please try again." });
             setIsProcessing(false);
           });
@@ -347,7 +348,6 @@ export default function MCQClient() {
           
         } else {
           // TEST MODE - Instant activation without Razorpay
-          console.log("[MCQ] Test mode: Confirming payment instantly");
           const confirmRes = await fetch(`${apiURL}/api/payments/mock-confirm-mcq`, {
             method: "POST",
             headers: {
@@ -362,7 +362,6 @@ export default function MCQClient() {
           });
 
           if (confirmRes.ok) {
-            console.log("[MCQ] Test payment confirmed, enrollment created/extended");
             setPurchasedInfo({
               title: `${activeLevel} MCQ Package (${DURATION_LABELS[selectedDuration].label})`,
               amount: finalPayablePrice,

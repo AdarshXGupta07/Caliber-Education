@@ -29,7 +29,7 @@ Good choice for a free, ~100-200-user startup launch — all three have workable
 - Build command: `pip install -r requirements.txt`
 - Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT` — **use `$PORT`, not the hardcoded `8000`** from the Dockerfile. Render assigns the port dynamically and your app must bind to whatever it provides; if you deploy the existing Dockerfile as-is instead of Render's native Python runtime, override the start command in Render's dashboard to respect `$PORT` rather than relying on the Dockerfile's fixed `--port 8000`.
 - Add every backend env var from the checklist below in Render's dashboard (Environment tab) — none of them carry over from your local `.env` automatically.
-- Once deployed, you'll have a URL like `https://your-service.onrender.com` — this becomes your `NEXT_PUBLIC_API_URL` in Netlify, your webhook base URL in Razorpay, and your `BACKEND_URL` GitHub Actions secret.
+- Once deployed, you'll have a URL like `https://your-service.onrender.com` — this becomes your `BACKEND_URL` in Netlify (see section 5's note — `NEXT_PUBLIC_API_URL` should stay empty), your webhook base URL in Razorpay, and your `BACKEND_URL` GitHub Actions secret.
 
 At 100-200 users, none of the scalability findings below (blocking Supabase calls on a single worker, in-memory rate limiter) are likely to actually bite you — they're real findings for when you outgrow this stage, not blockers for launch. I've left them in the report below so they're documented, but don't let them slow down shipping at this scale.
 
@@ -133,7 +133,7 @@ Your `edu-platform-backend/supabase/` folder has **19 SQL files** with no number
 ### 3. Hosting (decided: Render + Netlify + Supabase)
 - [ ] Create the Render Web Service (root dir `edu-platform-backend`, build `pip install -r requirements.txt`, start `uvicorn app.main:app --host 0.0.0.0 --port $PORT`)
 - [ ] Set every backend env var from the checklist below in Render's dashboard
-- [ ] Set every frontend env var from the checklist below in Netlify's dashboard, pointing `NEXT_PUBLIC_API_URL` at your new Render URL
+- [ ] Set every frontend env var from the checklist below in Netlify's dashboard. **Updated since this report was written:** `next.config.ts` now proxies `/api/*` to the backend server-side via a `BACKEND_URL` env var (set that to your Render URL in Netlify) rather than the browser calling the backend directly — leave `NEXT_PUBLIC_API_URL` **empty** in production so requests stay same-origin through the proxy. Only fall back to setting `NEXT_PUBLIC_API_URL` directly if you deliberately switch away from the rewrite-proxy pattern, and if you do, make sure the backend's CORS allow-list actually includes your Netlify domain.
 - [ ] Trigger a fresh Netlify deploy after updating env vars — they don't apply until the next build
 - [ ] Set `FRONTEND_URL` in Render's env vars to your real Netlify domain
 - [ ] Add a `/health` endpoint and point a free uptime pinger (UptimeRobot / cron-job.org) at it every 10-14 min so Render's free tier doesn't sleep between visits
@@ -156,7 +156,8 @@ Your `edu-platform-backend/supabase/` folder has **19 SQL files** with no number
 ### 5. Frontend environment variables to configure
 | Variable | Purpose |
 |---|---|
-| `NEXT_PUBLIC_API_URL` | Backend base URL |
+| `BACKEND_URL` | Backend base URL — server-side only, used by the `/api/*` rewrite proxy in `next.config.ts`. This is the one that must point at your Render URL. |
+| `NEXT_PUBLIC_API_URL` | Leave **empty** in production (see note in section 3) — only set this if you deliberately bypass the rewrite proxy |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Cloudflare Turnstile (public half) |
 | `NEXT_PUBLIC_RAZORPAY_KEY_ID` | Razorpay checkout (public half) |
 | `NEXT_PUBLIC_ENABLE_TEST_PAYMENTS` | Must be unset/false in production |

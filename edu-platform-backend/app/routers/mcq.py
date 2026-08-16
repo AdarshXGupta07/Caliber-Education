@@ -1,13 +1,13 @@
 import uuid
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from supabase import Client
 from typing import Optional, List, Dict, Any
 
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.dependencies import get_current_user
 from app.schemas.mcq import (
-    QuizAttemptRequest,
     CalculateMCQPriceRequest,
     CalculateMCQPriceResponse,
     TestSubmissionV2Request,
@@ -279,11 +279,30 @@ async def get_series(series_id: str, db: Client = Depends(get_db)):
 
     # Fetch all papers belonging to this subject
     papers = db.table("mcq_papers").select("*").eq("subject_code", series_id).execute()
+    paper_rows = papers.data or []
+    paper_ids = [p["id"] for p in paper_rows]
+
+    # Batched instead of one exam_sections + one questions query per paper —
+    # this endpoint was previously issuing 2 extra round trips per paper.
+    sections_by_paper: Dict[str, list] = {pid: [] for pid in paper_ids}
+    question_count_by_section: Dict[str, int] = {}
+    if paper_ids:
+        all_sections = db.table("exam_sections").select("id, paper_id").in_("paper_id", paper_ids).execute()
+        section_ids = []
+        for s in (all_sections.data or []):
+            sections_by_paper.setdefault(s["paper_id"], []).append({"id": s["id"]})
+            section_ids.append(s["id"])
+        if section_ids:
+            all_questions = db.table("questions").select("id, section_id").in_("section_id", section_ids).execute()
+            for q in (all_questions.data or []):
+                question_count_by_section[q["section_id"]] = question_count_by_section.get(q["section_id"], 0) + 1
+
     formatted_sets = []
-    for p in (papers.data or []):
+    for p in paper_rows:
         # We need to map the new schema to the old format expected by mcq/[seriesId]/page.tsx
-        sections_data = db.table("exam_sections").select("id").eq("paper_id", p["id"]).execute()
-        
+        paper_sections = sections_by_paper.get(p["id"], [])
+        question_count = sum(question_count_by_section.get(sec["id"], 0) for sec in paper_sections)
+
         formatted_sets.append({
             "id": p["id"],
             "title": p.get("title", "Test"),
@@ -291,7 +310,8 @@ async def get_series(series_id: str, db: Client = Depends(get_db)):
             "subject": p.get("level", ""),
             "is_locked": True if p.get("status") != "published" else False, # Keep locked if draft
             "price": p.get("price", 0),
-            "sections": sections_data.data or []
+            "sections": paper_sections,
+            "questionCount": question_count,
         })
 
     # Sort so published ones show up unlocked at the top
@@ -519,7 +539,9 @@ def _attempt_response(row: dict, resumed: bool) -> dict:
 
 
 @router.post("/api/quizzes/{set_id}/attempt/start")
+@limiter.limit("20/minute")
 async def start_attempt(
+    request: Request,
     set_id: str,
     body: AttemptStartRequest,
     current_user: dict = Depends(get_current_user),
@@ -556,6 +578,27 @@ async def start_attempt(
     if existing.data:
         return _attempt_response(existing.data[0], resumed=True)
 
+    # Enforce the paper's own retake policy — previously allowRetake/
+    # maxAttempts were only ever surfaced to the frontend for display, never
+    # actually checked server-side, so a direct call here could start
+    # (and, via submit-v2, grade — see submit-v2's attemptId requirement)
+    # unlimited attempts regardless of what the admin configured.
+    allow_retake = bool(mcq_set.data.get("allow_retake", True))
+    max_attempts = mcq_set.data.get("max_attempts")
+    if not allow_retake or max_attempts:
+        submitted_count_res = (
+            db.table("mcq_attempt_sessions")
+            .select("id", count="exact")
+            .eq("user_id", user_id)
+            .eq("set_id", set_id)
+            .eq("status", "submitted")
+            .execute()
+        )
+        submitted_count = submitted_count_res.count or 0
+        limit = max_attempts if allow_retake else 1
+        if limit is not None and submitted_count >= limit:
+            raise HTTPException(status_code=403, detail="You've used all your attempts for this test.")
+
     if not body.questionOrder:
         raise HTTPException(status_code=400, detail="questionOrder is required to start an attempt")
 
@@ -588,7 +631,9 @@ async def start_attempt(
 
 
 @router.patch("/api/quizzes/{set_id}/attempt/{attempt_id}/progress")
+@limiter.limit("60/minute")
 async def save_attempt_progress(
+    request: Request,
     set_id: str,
     attempt_id: str,
     body: AttemptProgressRequest,
@@ -627,7 +672,9 @@ async def save_attempt_progress(
 
 
 @router.post("/api/quizzes/{set_id}/submit-v2")
+@limiter.limit("20/minute")
 async def submit_quiz_v2(
+    request: Request,
     set_id: str,
     body: TestSubmissionV2Request,
     current_user: dict = Depends(get_current_user),
@@ -647,6 +694,17 @@ async def submit_quiz_v2(
     if mcq_set.data.get("is_locked"):
         if not await _has_mcq_paper_access(current_user, mcq_set.data, db):
             raise HTTPException(status_code=403, detail="Purchase this subject to access this test")
+
+    # attemptId is required (not just optional-and-trusted-if-present) —
+    # without it this call used to skip all ownership/deadline checks and
+    # just grade whatever "answers" were posted, returning the correct
+    # option and explanation for every question. That let anyone harvest
+    # the full answer key for any paper, unlimited times, without ever
+    # calling attempt/start. The real frontend always sends attemptId
+    # (quiz/[id]/page.tsx) — a direct call omitting it is exactly the oracle
+    # this closes.
+    if not body.attemptId:
+        raise HTTPException(status_code=400, detail="No active attempt for this submission. Start the quiz again.")
 
     sections_res = db.table("exam_sections").select("*").eq("paper_id", set_id).order("order_index").execute()
     sections = _sorted_by_order_index(sections_res.data or [])
@@ -700,69 +758,63 @@ async def submit_quiz_v2(
     # question list, which silently mis-scored every answer whenever the
     # paper had shuffle enabled (the client's shuffled order never matched
     # this endpoint's own reconstruction).
-    already_submitted = False
-    if body.attemptId:
-        attempt = db.table("mcq_attempt_sessions").select("*").eq("id", body.attemptId).execute()
-        if not attempt.data:
-            raise HTTPException(status_code=404, detail="Attempt not found")
-        attempt_row = attempt.data[0]
-        if attempt_row["user_id"] != user_id or attempt_row["set_id"] != set_id:
-            raise HTTPException(status_code=403, detail="This attempt doesn't belong to you")
+    attempt = db.table("mcq_attempt_sessions").select("*").eq("id", body.attemptId).execute()
+    if not attempt.data:
+        raise HTTPException(status_code=404, detail="Attempt not found")
+    attempt_row = attempt.data[0]
+    if attempt_row["user_id"] != user_id or attempt_row["set_id"] != set_id:
+        raise HTTPException(status_code=403, detail="This attempt doesn't belong to you")
 
-        already_submitted = attempt_row["status"] == "submitted"
-        deadline = _parse_dt(attempt_row["started_at"]) + timedelta(minutes=int(attempt_row["duration_minutes"]))
-        is_late = datetime.now(timezone.utc) > deadline
+    already_submitted = attempt_row["status"] == "submitted"
+    deadline = _parse_dt(attempt_row["started_at"]) + timedelta(minutes=int(attempt_row["duration_minutes"]))
+    is_late = datetime.now(timezone.utc) > deadline
 
-        if not already_submitted:
-            # Atomic claim (compare-and-swap): the WHERE ...eq("status","in_progress")
-            # only matches — and only returns rows in `.data` — if this call is
-            # the one that wins the race. On a winning, on-time claim, persist
-            # the actually-submitted answers onto the attempt row itself (not
-            # just used locally for grading) — otherwise a later replay of
-            # this same attemptId would grade whatever the last autosave
-            # happened to be, which can be stale/incomplete, instead of what
-            # was really submitted here.
-            claim_payload = {"status": "submitted", "submitted_at": datetime.now(timezone.utc).isoformat()}
-            if not is_late:
-                claim_payload["answers"] = body.answers
-                claim_payload["per_question_times"] = body.perQuestionTimes
-            claim = (
-                db.table("mcq_attempt_sessions")
-                .update(claim_payload)
-                .eq("id", body.attemptId)
-                .eq("status", "in_progress")
-                .execute()
-            )
-            if not claim.data:
-                # Lost the race — a concurrent call already claimed it a
-                # moment ago. Fall through to the same handling as a genuine
-                # resubmission below instead of erroring, so a real
-                # double-click/retry still gets back a valid result.
-                already_submitted = True
-            else:
-                attempt_row = claim.data[0]  # reflects what was just persisted
-
-        # Once already submitted (a genuine resubmission, or a race we just
-        # lost) or once past deadline, grade the persisted snapshot instead
-        # of whatever the request body says. Scoring is a pure function of
-        # (questions, answers), so replaying against the same stored answers
-        # reproduces the exact same result deterministically — no need to
-        # read back a separately stored row. This also closes the "keep
-        # answering past the deadline" loophole for the late case.
-        if already_submitted or is_late:
-            user_answers = attempt_row["answers"]
-            per_q_times = attempt_row["per_question_times"]
+    if not already_submitted:
+        # Atomic claim (compare-and-swap): the WHERE ...eq("status","in_progress")
+        # only matches — and only returns rows in `.data` — if this call is
+        # the one that wins the race. On a winning, on-time claim, persist
+        # the actually-submitted answers onto the attempt row itself (not
+        # just used locally for grading) — otherwise a later replay of
+        # this same attemptId would grade whatever the last autosave
+        # happened to be, which can be stale/incomplete, instead of what
+        # was really submitted here.
+        claim_payload = {"status": "submitted", "submitted_at": datetime.now(timezone.utc).isoformat()}
+        if not is_late:
+            claim_payload["answers"] = body.answers
+            claim_payload["per_question_times"] = body.perQuestionTimes
+        claim = (
+            db.table("mcq_attempt_sessions")
+            .update(claim_payload)
+            .eq("id", body.attemptId)
+            .eq("status", "in_progress")
+            .execute()
+        )
+        if not claim.data:
+            # Lost the race — a concurrent call already claimed it a
+            # moment ago. Fall through to the same handling as a genuine
+            # resubmission below instead of erroring, so a real
+            # double-click/retry still gets back a valid result.
+            already_submitted = True
         else:
-            user_answers = body.answers
-            per_q_times = body.perQuestionTimes
-        effective_elapsed_seconds = int(min(
-            (datetime.now(timezone.utc) - _parse_dt(attempt_row["started_at"])).total_seconds(),
-            int(attempt_row["duration_minutes"]) * 60,
-        ))
+            attempt_row = claim.data[0]  # reflects what was just persisted
+
+    # Once already submitted (a genuine resubmission, or a race we just
+    # lost) or once past deadline, grade the persisted snapshot instead
+    # of whatever the request body says. Scoring is a pure function of
+    # (questions, answers), so replaying against the same stored answers
+    # reproduces the exact same result deterministically — no need to
+    # read back a separately stored row. This also closes the "keep
+    # answering past the deadline" loophole for the late case.
+    if already_submitted or is_late:
+        user_answers = attempt_row["answers"]
+        per_q_times = attempt_row["per_question_times"]
     else:
         user_answers = body.answers
         per_q_times = body.perQuestionTimes
-        effective_elapsed_seconds = body.elapsedSeconds
+    effective_elapsed_seconds = int(min(
+        (datetime.now(timezone.utc) - _parse_dt(attempt_row["started_at"])).total_seconds(),
+        int(attempt_row["duration_minutes"]) * 60,
+    ))
 
     for idx, q in enumerate(all_questions):
         user_ans = user_answers.get(q["id"])
@@ -903,51 +955,20 @@ async def submit_quiz_v2(
     }
 
 
-@router.post("/api/quizzes/{set_id}/attempts", status_code=201)
-async def submit_attempt(
-    set_id: str,
-    body: QuizAttemptRequest,
-    current_user: dict = Depends(get_current_user),
-    db: Client = Depends(get_db),
-):
-    """Legacy submission route preserved for backward compatibility."""
-    user_id = current_user["id"]
-
-    attempt = db.table("quiz_attempts").insert({
-        "user_id": user_id,
-        "set_id": set_id,
-        "score": body.score,
-        "total": body.total,
-        "elapsed_seconds": body.elapsedSeconds,
-        "per_question_times": body.perQuestionTimes,
-    }).execute()
-
-    attempt_id = attempt.data[0]["id"] if attempt.data else "unknown"
-
-    better = (
-        db.table("quiz_attempts")
-        .select("id")
-        .eq("set_id", set_id)
-        .or_(
-            f"score.gt.{body.score},"
-            f"and(score.eq.{body.score},elapsed_seconds.lt.{body.elapsedSeconds})"
-        )
-        .execute()
-    )
-    rank = len(better.data or []) + 1
-    total_res = db.table("quiz_attempts").select("id", count="exact").eq("set_id", set_id).execute()
-    total_competitors = total_res.count or 1
-
-    return {
-        "success": True,
-        "attemptId": attempt_id,
-        "rank": rank,
-        "totalCompetitors": total_competitors,
-    }
+# NOTE: the old POST /api/quizzes/{set_id}/attempts "legacy" route was
+# removed here — it inserted a client-supplied score/total straight into
+# quiz_attempts with no grading, no answer-key comparison, and no rate
+# limit, which let anyone forge a leaderboard-topping score for any quiz.
+# It was never called by the current frontend (submit-v2 above is the real,
+# server-graded submission path); if a legacy client still depends on it,
+# it must be rebuilt to recompute the score server-side the same way
+# submit-v2 does, never trust a client-supplied score/total.
 
 
 @router.get("/api/quizzes/{set_id}/leaderboard")
+@limiter.limit("30/minute")
 async def get_leaderboard(
+    request: Request,
     set_id: str,
     current_user: dict = Depends(get_current_user),
     db: Client = Depends(get_db),
@@ -984,7 +1005,8 @@ async def get_leaderboard(
     return board
 
 @router.get("/api/mcq/my-subjects")
-async def get_my_subjects(current_user: dict = Depends(get_current_user), db: Client = Depends(get_db)):
+@limiter.limit("40/minute")
+async def get_my_subjects(request: Request, current_user: dict = Depends(get_current_user), db: Client = Depends(get_db)):
     from datetime import datetime, timezone
     
     # Fetch all enrollments for this user, ordered by access_until descending

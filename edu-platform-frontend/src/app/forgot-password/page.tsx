@@ -11,17 +11,20 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState("");
   const [turnstileKey, setTurnstileKey] = useState(0);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (isSubmitting) return;
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError("Enter a valid email address."); return; }
     if (!turnstileToken) {
       setError("Security verification in progress. Please wait.");
       return;
     }
     setError("");
+    setIsSubmitting(true);
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const res = await fetch(`${apiURL}/api/auth/forgot-password`, {
@@ -42,6 +45,8 @@ export default function ForgotPasswordPage() {
       setTurnstileToken("");
       setTurnstileKey((k) => k + 1);
       setError(err.message || "Request failed. Please try again.");
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -73,8 +78,8 @@ export default function ForgotPasswordPage() {
             </div>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Email Address</label>
-                <input type="email" placeholder="you@example.com" value={email} autoFocus
+                <label htmlFor="forgot-email" className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Email Address</label>
+                <input id="forgot-email" type="email" placeholder="you@example.com" value={email} autoFocus
                   onChange={(e) => { setEmail(e.target.value); setError(""); }}
                   className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-ink-navy dark:focus:border-paper transition-colors" required />
               </div>
@@ -83,9 +88,9 @@ export default function ForgotPasswordPage() {
               {/* Invisible Turnstile widget */}
               <Turnstile key={turnstileKey} onVerify={setTurnstileToken} />
 
-              <button type="submit"
-                className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm animate-pulse">
-                Send Reset Link <ArrowRight className="w-4 h-4" />
+              <button type="submit" disabled={isSubmitting}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100">
+                {isSubmitting ? "Sending…" : <>Send Reset Link <ArrowRight className="w-4 h-4" /></>}
               </button>
             </form>
             <p className="text-xs text-center text-slate dark:text-paper/50">

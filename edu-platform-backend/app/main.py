@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from postgrest.exceptions import APIError as PostgrestAPIError
 from slowapi.errors import RateLimitExceeded
 
 from app.core.config import get_settings
@@ -10,12 +11,17 @@ from app.routers.coupons import router as coupons_router, admin_router as coupon
 
 settings = get_settings()
 
+# Public API docs make sense during development but are a free recon aid in
+# production — every route, request/response schema, and parameter name
+# (including admin/payment-adjacent ones) enumerable with no auth. Disabled
+# outside dev; set APP_ENV=development locally if you want /docs back.
 app = FastAPI(
     title="Caliber Education API",
     description="Backend API for the Caliber Education platform — CA prep courses, MCQ practice, 1:1 mentoring, and test evaluations.",
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if settings.app_env != "production" else None,
+    redoc_url="/redoc" if settings.app_env != "production" else None,
+    openapi_url="/openapi.json" if settings.app_env != "production" else None,
 )
 
 # ─── Rate limiting (per client IP) ───────────────────────────────────────────
@@ -33,6 +39,23 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         status_code=429,
         content={"detail": f"Too many attempts. Please wait a moment and try again ({exc.detail})."},
     )
+
+
+@app.exception_handler(PostgrestAPIError)
+async def postgrest_error_handler(request: Request, exc: PostgrestAPIError):
+    # Most path/body IDs here (course_id, set_id, submission_id, ...) are
+    # taken as plain strings and passed straight into a .eq("id", ...)
+    # filter with no format check first — a malformed value (typo'd link,
+    # probing tool) reaches Postgres as-is and raises 22P02 ("invalid input
+    # syntax for type uuid"), which without this handler surfaced as a raw,
+    # unhandled 500 instead of a clean 4xx. Any other Postgrest error still
+    # comes back as a generic 500 — same outcome as before this handler
+    # existed, just routed through this app's {"detail": ...} convention
+    # instead of a bare unhandled-exception response.
+    if exc.code == "22P02":
+        return JSONResponse(status_code=400, content={"detail": "Invalid ID format."})
+    print(f"[DB ERROR] {exc.code}: {exc.message}")
+    return JSONResponse(status_code=500, content={"detail": "Something went wrong. Please try again."})
 
 # ─── Security response headers ───────────────────────────────────────────────
 # None of these were set anywhere before — added conservatively (no CSP
@@ -53,18 +76,27 @@ async def security_headers(request: Request, call_next):
 
 
 # ─── CORS ─────────────────────────────────────────────────────────────────────
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        settings.frontend_url,
+# The extra localhost/127.0.0.1 fallback ports (for when 3000 is already
+# taken and Next.js auto-increments) are only added when FRONTEND_URL
+# itself is a localhost URL — i.e. this instance is actually being run
+# against a local frontend — rather than gating on app_env, since APP_ENV
+# is easy to leave stale in a local .env and FRONTEND_URL is the more
+# direct signal of whether this is really a local environment.
+_cors_origins = [settings.frontend_url]
+if "localhost" in settings.frontend_url or "127.0.0.1" in settings.frontend_url:
+    _cors_origins += [
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:3002",
         "http://localhost:3003",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
-        "http://127.0.0.1:3002"
-    ],
+        "http://127.0.0.1:3002",
+    ]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -190,8 +190,8 @@ const handleCheckout = async () => {
 ALLOW_TEST_PAYMENTS=true
 
 # Razorpay keys present but NOT used in test mode
-RAZORPAY_KEY_ID=rzp_test_TLefj3B59wUaxc
-RAZORPAY_KEY_SECRET=pzEdpUMTbaesX2LOckqnNg6m
+RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxxxx
+RAZORPAY_KEY_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 ## 🔄 Switching to Production Mode Later

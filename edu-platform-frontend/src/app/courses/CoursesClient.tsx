@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
-import { courses as defaultCourses, type Course } from "@/lib/mockData";
+import { type Course } from "@/lib/mockData";
 import { Toast, type ToastState } from "@/components/Toast";
 import {
   ArrowRight, Lock, Star, Clock, Zap,
@@ -803,7 +803,7 @@ function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[
                     <p className="text-[10px] text-signal-emerald/70">{appliedCoupon.message}</p>
                   </div>
                 </div>
-                <button onClick={handleRemoveCoupon} className="p-1 rounded-lg text-signal-emerald/60 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors">
+                <button onClick={handleRemoveCoupon} aria-label="Remove coupon" className="p-1 rounded-lg text-signal-emerald/60 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors">
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>

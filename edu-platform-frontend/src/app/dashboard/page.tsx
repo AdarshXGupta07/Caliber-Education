@@ -71,6 +71,13 @@ export default function DashboardPage() {
       .finally(() => setLoadingWhatsappLink(false));
   }, [accessCourseId]);
 
+  useEffect(() => {
+    if (!accessCourseId) return;
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setAccessCourseId(null); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [accessCourseId]);
+
   // Read active tab from URL on mount safely
   const [activeTab, setActiveTab] = useState<"courses" | "mcqs" | "test-series" | "sessions" | "results">("courses");
   useEffect(() => {
@@ -852,15 +859,16 @@ export default function DashboardPage() {
         {accessCourseId && activeAccessCourse && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink-navy/60 backdrop-blur-sm"
-            onClick={(e) => e.target === e.currentTarget && setAccessCourseId(null)}>
+            onClick={(e) => e.target === e.currentTarget && setAccessCourseId(null)}
+            role="dialog" aria-modal="true" aria-labelledby="whatsapp-access-modal-title">
             <motion.div initial={{ scale: 0.96, opacity: 0, y: 15 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.96, opacity: 0, y: 15 }}
               className="bg-paper dark:bg-ink-navy border border-line-gray-light dark:border-line-gray-dark rounded-xl p-6 max-w-sm w-full shadow-lg space-y-5">
               <div className="flex items-start justify-between">
                 <div>
-                  <h3 className="font-heading font-bold text-base text-ink-navy dark:text-paper">WhatsApp Access</h3>
+                  <h3 id="whatsapp-access-modal-title" className="font-heading font-bold text-base text-ink-navy dark:text-paper">WhatsApp Access</h3>
                   <p className="text-[10px] font-bold text-slate dark:text-paper/50 mt-0.5">{activeAccessCourse.title}</p>
                 </div>
-                <button onClick={() => setAccessCourseId(null)} className="p-1 rounded hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors">
+                <button onClick={() => setAccessCourseId(null)} aria-label="Close" className="p-1 rounded hover:bg-line-gray-light dark:hover:bg-line-gray-dark transition-colors">
                   <X className="w-4 h-4 text-slate dark:text-paper/60" />
                 </button>
               </div>

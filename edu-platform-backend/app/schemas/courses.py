@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Any
 
 
@@ -23,9 +23,9 @@ class CourseResponse(BaseModel):
 
 
 class CourseUpsertRequest(BaseModel):
-    title: str
-    description: Optional[str] = None
-    price: Optional[float] = None
+    title: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=5000)
+    price: Optional[float] = Field(None, ge=0)
     price_display: Optional[str] = None
     level: Optional[str] = None
     duration: Optional[str] = None

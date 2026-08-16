@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import CourseDetailClient from "./CourseDetailClient";
+import { SITE_URL } from "@/lib/site";
 
 type Course = { id: string; title?: string; description?: string; price?: number; level?: string };
 
@@ -44,6 +45,11 @@ export default async function CourseDetailPage({ params }: { params: Promise<{ i
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
+            // JSON.stringify does not escape "<", so a course title/description
+            // containing "</script><script>...</script>" would otherwise break
+            // out of this tag and execute on every visitor's browser — this
+            // page is public and unauthenticated. < is valid inside a
+            // JSON string and renders identically once parsed as JSON-LD.
             __html: JSON.stringify({
               "@context": "https://schema.org",
               "@type": "Course",
@@ -52,7 +58,7 @@ export default async function CourseDetailPage({ params }: { params: Promise<{ i
               provider: {
                 "@type": "EducationalOrganization",
                 name: "CAliber Education",
-                sameAs: "https://caliber-edu.netlify.app",
+                sameAs: SITE_URL,
               },
               ...(course.price
                 ? {
@@ -63,7 +69,7 @@ export default async function CourseDetailPage({ params }: { params: Promise<{ i
                     },
                   }
                 : {}),
-            }),
+            }).replace(/</g, "\\u003c"),
           }}
         />
       )}

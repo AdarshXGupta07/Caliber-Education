@@ -159,28 +159,28 @@ export default function ProfilePage() {
                             <form onSubmit={handleSaveProfile} className="space-y-5">
                                 <div className="grid sm:grid-cols-2 gap-5">
                                     <div>
-                                        <label className="text-xs font-bold text-slate dark:text-paper/60 mb-1.5 block">Full Name</label>
-                                        <input required value={profileForm.full_name} onChange={e => setProfileForm({ ...profileForm, full_name: e.target.value })}
+                                        <label htmlFor="profile-fullname" className="text-xs font-bold text-slate dark:text-paper/60 mb-1.5 block">Full Name</label>
+                                        <input id="profile-fullname" required value={profileForm.full_name} onChange={e => setProfileForm({ ...profileForm, full_name: e.target.value })}
                                             className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-paper/50 dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors"
                                             placeholder="e.g. John Doe" />
                                     </div>
                                     <div>
-                                        <label className="text-xs font-bold text-slate dark:text-paper/60 mb-1.5 block">Phone or WhatsApp</label>
-                                        <input required value={profileForm.phone_number} onChange={e => setProfileForm({ ...profileForm, phone_number: e.target.value })}
+                                        <label htmlFor="profile-phone" className="text-xs font-bold text-slate dark:text-paper/60 mb-1.5 block">Phone or WhatsApp</label>
+                                        <input id="profile-phone" required value={profileForm.phone_number} onChange={e => setProfileForm({ ...profileForm, phone_number: e.target.value })}
                                             className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-paper/50 dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors"
                                             placeholder="+91..." />
                                     </div>
                                 </div>
                                 <div>
-                                    <label className="text-xs font-bold text-slate dark:text-paper/60 mb-1.5 block">Address / City</label>
-                                    <textarea required value={profileForm.address} onChange={e => setProfileForm({ ...profileForm, address: e.target.value })}
+                                    <label htmlFor="profile-address" className="text-xs font-bold text-slate dark:text-paper/60 mb-1.5 block">Address / City</label>
+                                    <textarea id="profile-address" required value={profileForm.address} onChange={e => setProfileForm({ ...profileForm, address: e.target.value })}
                                         className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-paper/50 dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors resize-none"
                                         rows={2} placeholder="Your residential address" />
                                 </div>
                                 <div className="grid sm:grid-cols-2 gap-5">
                                     <div>
-                                        <label className="text-xs font-bold text-slate dark:text-paper/60 mb-1.5 block">Stage</label>
-                                        <select required value={profileForm.stage} onChange={e => setProfileForm({ ...profileForm, stage: e.target.value })}
+                                        <label htmlFor="profile-stage" className="text-xs font-bold text-slate dark:text-paper/60 mb-1.5 block">Stage</label>
+                                        <select id="profile-stage" required value={profileForm.stage} onChange={e => setProfileForm({ ...profileForm, stage: e.target.value })}
                                             className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-paper/50 dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors">
                                             <option>CA Foundation</option>
                                             <option>CA Intermediate</option>
@@ -188,8 +188,8 @@ export default function ProfilePage() {
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="text-xs font-bold text-slate dark:text-paper/60 mb-1.5 block">Attempt Status</label>
-                                        <select required value={profileForm.attempt_status} onChange={e => setProfileForm({ ...profileForm, attempt_status: e.target.value })}
+                                        <label htmlFor="profile-attempt-status" className="text-xs font-bold text-slate dark:text-paper/60 mb-1.5 block">Attempt Status</label>
+                                        <select id="profile-attempt-status" required value={profileForm.attempt_status} onChange={e => setProfileForm({ ...profileForm, attempt_status: e.target.value })}
                                             className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-paper/50 dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors">
                                             <option>First Attempt</option>
                                             <option>Repeater (2nd)</option>

@@ -24,6 +24,7 @@ import httpx
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.limiter import limiter
+from app.core.storage import signed_url_for
 from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/api/tests", tags=["Tests & Evaluations"])
@@ -63,13 +64,18 @@ async def list_tests(
     current_user: dict = Depends(get_current_user),
     db: Client = Depends(get_db),
 ):
+    """Title/description-only catalog — unlike its sibling
+    GET /api/test-series/subjects/{id}/papers, this route has no purchase
+    check, so it must never return the actual paper download link (that was
+    previously exposed here regardless of whether the caller had bought the
+    subject). Nothing in the frontend currently reads a link from this
+    endpoint; the real, purchase-gated download path is the sibling route."""
     result = db.table("tests").select("*").order("created_at", desc=True).execute()
     return [
         {
             "id": t["id"],
             "title": t["title"],
             "description": t.get("description", ""),
-            "questionPaperLink": t["question_file_url"],
         }
         for t in (result.data or [])
     ]
@@ -80,6 +86,7 @@ async def list_submissions(
     current_user: dict = Depends(get_current_user),
     db: Client = Depends(get_db),
 ):
+    settings = get_settings()
     user_id = current_user["id"]
     subs = (
         db.table("test_submissions")
@@ -92,6 +99,7 @@ async def list_submissions(
     for s in (subs.data or []):
         evaluation = (s.get("test_evaluations") or [None])[0]
         test_info = s.get("tests") or {}
+        checked_url = evaluation["checked_file_url"] if evaluation else None
         result.append({
             "id": s["id"],
             "testId": s["test_id"],
@@ -101,7 +109,10 @@ async def list_submissions(
             "marksAwarded": evaluation["marks"] if evaluation else None,
             "maxMarks": 100,
             "remarks": evaluation["remarks"] if evaluation else None,
-            "checkedFileUrl": evaluation["checked_file_url"] if evaluation else None,
+            # Signed, short-lived — the stored value is a permanent-looking
+            # public URL, but this is the student's own evaluated answer
+            # sheet, so it's never handed out directly (see core/storage.py).
+            "checkedFileUrl": signed_url_for(db, settings.supabase_evaluation_bucket, checked_url) if checked_url else None,
         })
     return result
 

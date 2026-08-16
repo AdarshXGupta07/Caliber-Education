@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertCircle } from "lucide-react";
 
@@ -14,6 +15,15 @@ export function LeaveTestModal({
   onStay: () => void;
   onLeave: () => void;
 }) {
+  // Escape mirrors clicking the backdrop — dismiss/cancel (stay in test),
+  // never the destructive action (leave).
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") onStay(); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onStay]);
+
   return (
     <AnimatePresence>
       {open && (
@@ -23,6 +33,9 @@ export function LeaveTestModal({
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-ink-navy/60 backdrop-blur-sm"
           onClick={(e) => e.target === e.currentTarget && onStay()}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="leave-test-modal-title"
         >
           <motion.div
             initial={{ scale: 0.95, opacity: 0, y: 12 }}
@@ -35,7 +48,7 @@ export function LeaveTestModal({
                 <AlertCircle className="w-5 h-5 text-alert-coral" />
               </div>
               <div>
-                <h3 className="font-heading font-bold text-base text-ink-navy dark:text-paper">Leave Test?</h3>
+                <h3 id="leave-test-modal-title" className="font-heading font-bold text-base text-ink-navy dark:text-paper">Leave Test?</h3>
                 <p className="text-xs text-slate dark:text-paper/60 mt-1 leading-relaxed">
                   You have an active test in progress. Your progress is saved automatically, but leaving now will interrupt your attempt.
                 </p>

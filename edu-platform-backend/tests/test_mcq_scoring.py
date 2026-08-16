@@ -7,6 +7,17 @@ grading comparison read `q.get("correct_option", 0)` — a key that was never
 set on that dict — so every question was silently graded as if option index
 0 were always correct, independent of shuffle.
 """
+from datetime import datetime, timezone
+
+
+def _seed_attempt(fake_db, attempt_id, user_id, set_id):
+    """submit-v2 requires a real, persisted attempt session (see
+    test_mcq_access_control.py's copy of this helper for why)."""
+    fake_db.seed("mcq_attempt_sessions", [{
+        "id": attempt_id, "user_id": user_id, "set_id": set_id, "status": "in_progress",
+        "question_order": [], "answers": {}, "per_question_times": [],
+        "started_at": datetime.now(timezone.utc).isoformat(), "duration_minutes": 60,
+    }])
 
 
 def _seed_scoring_paper(fake_db, paper_id="paper-score", locked=False):
@@ -40,6 +51,7 @@ def _seed_scoring_paper(fake_db, paper_id="paper-score", locked=False):
 
 def test_submit_v2_grades_by_question_id_and_returns_ordered_analysis(make_client, fake_db, student_user):
     _seed_scoring_paper(fake_db)
+    _seed_attempt(fake_db, "att-1", student_user["id"], "paper-score")
     client = make_client(student_user)
 
     res = client.post(f"/api/quizzes/paper-score/submit-v2", json={
@@ -48,6 +60,7 @@ def test_submit_v2_grades_by_question_id_and_returns_ordered_analysis(make_clien
         "answers": {"q3": None, "q1": 2, "q2": 3},
         "perQuestionTimes": [10, 12, 8],
         "elapsedSeconds": 30,
+        "attemptId": "att-1",
     })
     assert res.status_code == 200
     body = res.json()
@@ -73,6 +86,7 @@ def test_submit_v2_grades_against_actual_correct_option_not_always_zero(make_cli
     """Regression test for the correct_option/correct_option_index key bug:
     before the fix this always compared against a hardcoded 0 default."""
     _seed_scoring_paper(fake_db)
+    _seed_attempt(fake_db, "att-1", student_user["id"], "paper-score")
     client = make_client(student_user)
 
     # q1's real correct_option is 2 (not 0). Selecting it must score correct.
@@ -80,6 +94,7 @@ def test_submit_v2_grades_against_actual_correct_option_not_always_zero(make_cli
         "answers": {"q1": 2, "q2": None, "q3": None},
         "perQuestionTimes": [5, 0, 0],
         "elapsedSeconds": 5,
+        "attemptId": "att-1",
     })
     assert res.status_code == 200
     body = res.json()

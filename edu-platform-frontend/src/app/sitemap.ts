@@ -1,6 +1,5 @@
 import type { MetadataRoute } from "next";
-
-const SITE_URL = "https://caliber-edu.netlify.app";
+import { SITE_URL } from "@/lib/site";
 
 const STATIC_ROUTES = ["", "/about", "/courses", "/mcq", "/test-series", "/terms"];
 
@@ -28,9 +27,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         priority: 0.8,
       }));
     }
-  } catch {
+  } catch (e) {
     // Sitemap generation shouldn't fail the whole build if the backend is
-    // briefly unreachable — just ship the static routes that time.
+    // briefly unreachable — just ship the static routes that time. Logged
+    // so a silently course-less sitemap shows up in build output instead of
+    // going unnoticed.
+    console.error("[sitemap] Failed to fetch courses from backend, shipping static routes only:", e);
   }
 
   return [...staticEntries, ...courseEntries];

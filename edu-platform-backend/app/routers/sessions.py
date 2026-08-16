@@ -12,10 +12,11 @@ Admin Flow:
   3. PATCH /api/admin/session-requests/:id/schedule → updates DB + emails student the meet link
 """
 
+import html
 import httpx
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from supabase import Client
 from typing import Optional
 
@@ -29,28 +30,41 @@ router = APIRouter(tags=["Sessions"])
 
 class SessionRequestBody(BaseModel):
     mentorId: str
-    topic: str
-    preferredTiming: str       # Free text e.g. "Weekday evenings after 7pm"
-    note: Optional[str] = ""
+    topic: str = Field(..., min_length=1, max_length=300)
+    preferredTiming: str = Field(..., min_length=1, max_length=300)       # Free text e.g. "Weekday evenings after 7pm"
+    note: Optional[str] = Field("", max_length=1000)
+
+    @field_validator("topic", "preferredTiming")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("This field can't be blank")
+        return v
 
 
 async def _send_email_sendgrid(to: str, subject: str, html: str):
-    """Send email via SendGrid. Silent fail in dev if key not set."""
+    """Send email via SendGrid. Silent fail in dev if key not set. A
+    SendGrid failure (timeout, DNS blip) must never turn an already-successful
+    DB write into a 500 for the caller — every call site here fires this
+    after its own insert/update already committed."""
     settings = get_settings()
     if not settings.sendgrid_api_key:
         print(f"[EMAIL STUB] To: {to} | Subject: {subject}")
         return
-    async with httpx.AsyncClient() as client:
-        await client.post(
-            "https://api.sendgrid.com/v3/mail/send",
-            headers={"Authorization": f"Bearer {settings.sendgrid_api_key}"},
-            json={
-                "personalizations": [{"to": [{"email": to}]}],
-                "from": {"email": settings.sendgrid_from_email},
-                "subject": subject,
-                "content": [{"type": "text/html", "value": html}],
-            },
-        )
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                "https://api.sendgrid.com/v3/mail/send",
+                headers={"Authorization": f"Bearer {settings.sendgrid_api_key}"},
+                json={
+                    "personalizations": [{"to": [{"email": to}]}],
+                    "from": {"email": settings.sendgrid_from_email},
+                    "subject": subject,
+                    "content": [{"type": "text/html", "value": html}],
+                },
+            )
+    except Exception as e:
+        print(f"[EMAIL] Failed to send to {to}: {e}")
 
 
 @router.get("/api/mentors")
@@ -99,17 +113,19 @@ async def request_session(
 
     booking_id = result.data[0]["id"] if result.data else "unknown"
 
-    # Email the mentor
+    # Email the mentor — the student-supplied fields are HTML-escaped before
+    # interpolation; unescaped, a student could embed a styled link or break
+    # the email's layout in what's otherwise a trusted-sender notification.
     if mentor_email:
         await _send_email_sendgrid(
             to=mentor_email,
             subject=f"New 1:1 Session Request from {student_email}",
             html=f"""
             <h2>New Session Request</h2>
-            <p><strong>Student:</strong> {student_email}</p>
-            <p><strong>Topic:</strong> {body.topic}</p>
-            <p><strong>Preferred Timing:</strong> {body.preferredTiming}</p>
-            <p><strong>Note:</strong> {body.note or 'None'}</p>
+            <p><strong>Student:</strong> {html.escape(student_email)}</p>
+            <p><strong>Topic:</strong> {html.escape(body.topic)}</p>
+            <p><strong>Preferred Timing:</strong> {html.escape(body.preferredTiming)}</p>
+            <p><strong>Note:</strong> {html.escape(body.note) if body.note else 'None'}</p>
             <br/>
             <p>Please log in to the <strong>Admin Panel</strong> to schedule this session and send the student a Google Meet link.</p>
             """,

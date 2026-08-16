@@ -9,6 +9,7 @@ import uuid
 import razorpay
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from postgrest.exceptions import APIError as PostgrestAPIError
 from supabase import Client
 
 from app.core.config import get_settings
@@ -360,23 +361,6 @@ async def _apply_course_grant_or_extend(db: Client, payment_data: dict, user_id:
     if payment_data.get("status") == "approved":
         return {"success": True, "message": "Payment already verified and enrollment already completed."}
 
-    db.table("payments").update({
-        "status": "approved",
-        "razorpay_payment_id": rzp_pay_id,
-        "razorpay_signature": rzp_sig,
-    }).eq("id", payment_id).execute()
-
-    coupon_id = payment_data.get("coupon_id")
-    if coupon_id:
-        coupon_row = db.table("coupons").select("*").eq("id", coupon_id).single().execute()
-        if coupon_row.data:
-            _record_coupon_usage(
-                db, coupon_row.data, user_id, payment_id,
-                float(payment_data.get("discount_amount") or 0),
-                payment_data.get("affiliate_id"),
-                float(payment_data.get("commission_amount") or 0),
-            )
-
     # Multi-course cart purchases store course_id as NULL (a comma-joined id
     # list can't satisfy the foreign key to courses.id) and pack the real
     # course ids into utr_number instead — see create_order's insert.
@@ -396,6 +380,11 @@ async def _apply_course_grant_or_extend(db: Client, payment_data: dict, user_id:
 
     course_titles = []
 
+    # Grant the actual course access first — only once every extend call
+    # below has succeeded do we mark the payment "approved". A failure here
+    # raises and propagates to the caller, leaving the payment "pending" so
+    # a retry (webhook redelivery, a manual re-verify) can complete it,
+    # rather than the payment silently looking approved with nothing granted.
     if (bundle and bundle.data) or packed_course_ids or (course_id and "," in course_id):
         if bundle and bundle.data:
             c_ids = bundle.data[0].get("course_ids", [])
@@ -422,6 +411,23 @@ async def _apply_course_grant_or_extend(db: Client, payment_data: dict, user_id:
             if course_data.data.get("title"):
                 course_titles.append(course_data.data.get("title"))
         _apply_course_extras(db, user_id, course_id, payment_id)
+
+    db.table("payments").update({
+        "status": "approved",
+        "razorpay_payment_id": rzp_pay_id,
+        "razorpay_signature": rzp_sig,
+    }).eq("id", payment_id).execute()
+
+    coupon_id = payment_data.get("coupon_id")
+    if coupon_id:
+        coupon_row = db.table("coupons").select("*").eq("id", coupon_id).single().execute()
+        if coupon_row.data:
+            _record_coupon_usage(
+                db, coupon_row.data, user_id, payment_id,
+                float(payment_data.get("discount_amount") or 0),
+                payment_data.get("affiliate_id"),
+                float(payment_data.get("commission_amount") or 0),
+            )
 
     if email:
         try:
@@ -511,19 +517,21 @@ def _atomic_extend_course(db: Client, user_id: str, course_id: str, payment_id: 
         if "6 month" in d.lower(): base_duration = 180
         elif "1 year" in d.lower(): base_duration = 365
     
-    try:
-        res = db.rpc("grant_or_extend_enrollment", {
-            "p_user_id": user_id,
-            "p_course_id": course_id,
-            "p_duration_days": base_duration
-        }).execute()
-        new_expiry = res.data
-        
-        db.table("payments").update({
-            "notes": f"Item extended/granted. New Expiry: {new_expiry}"
-        }).eq("id", payment_id).execute()
-    except Exception as e:
-        print(f"Error atomic extending {course_id} for {user_id}:", e)
+    # No try/except here on purpose — this is the actual course-access grant.
+    # A failure must propagate to the caller so the payment is never marked
+    # "approved" while the customer received nothing (see
+    # _apply_course_grant_or_extend, which only flips status to "approved"
+    # after every extend call here has succeeded).
+    res = db.rpc("grant_or_extend_enrollment", {
+        "p_user_id": user_id,
+        "p_course_id": course_id,
+        "p_duration_days": base_duration
+    }).execute()
+    new_expiry = res.data
+
+    db.table("payments").update({
+        "notes": f"Item extended/granted. New Expiry: {new_expiry}"
+    }).eq("id", payment_id).execute()
 
 
 # ─── MCQ Package Payment Endpoints ──────────────────────────────────────────
@@ -656,123 +664,134 @@ async def verify_mcq_payment(
 
 async def _apply_mcq_grant(db: Client, order_id: str, user_id: str, rzp_pay: str, rzp_sig: str):
 
-    try:
-        # Scoped to the caller — without this, anyone who learns another
-        # user's order_id (order IDs plus the public key are enough to open
-        # a checkout for that specific order) could pay for and claim that
-        # order's grant for themselves instead of its actual owner.
-        payment = db.table("payments").select("*").eq("razorpay_order_id", order_id).eq("user_id", user_id).execute()
-        if not payment.data:
-            # No matching payment for this order+user — either a bad
-            # order_id or (post-fix) someone else's order. Previously this
-            # fell through with no explicit return and still reported
-            # success at the bottom of this function despite granting
-            # nothing; now it fails the same way _apply_test_series_grant
-            # already correctly does.
-            return {"success": False, "message": "No matching payment found"}
-        if payment.data and len(payment.data) > 0:
-            payment_row = payment.data[0]
-            payment_id = payment_row["id"]
+    # Scoped to the caller — without this, anyone who learns another
+    # user's order_id (order IDs plus the public key are enough to open
+    # a checkout for that specific order) could pay for and claim that
+    # order's grant for themselves instead of its actual owner.
+    payment = db.table("payments").select("*").eq("razorpay_order_id", order_id).eq("user_id", user_id).execute()
+    if not payment.data:
+        # No matching payment for this order+user — either a bad
+        # order_id or (post-fix) someone else's order. Previously this
+        # fell through with no explicit return and still reported
+        # success at the bottom of this function despite granting
+        # nothing; now it fails the same way _apply_test_series_grant
+        # already correctly does.
+        return {"success": False, "message": "No matching payment found"}
 
-            # Idempotency guard: a replayed/retried verify call for a payment
-            # already marked approved must not re-run the grant a second
-            # time (it would stack additional access time onto the
-            # enrollment) — mirrors the check the webhook handler already
-            # applies before dispatching.
-            if payment_row.get("status") == "approved":
-                return {"success": True, "message": "MCQ package already activated."}
+    payment_row = payment.data[0]
+    payment_id = payment_row["id"]
 
-            db.table("payments").update({
-                "status": "approved",
-                "razorpay_payment_id": rzp_pay,
-                "razorpay_signature": rzp_sig,
-            }).eq("id", payment_id).execute()
+    # Idempotency guard: a replayed/retried verify call for a payment
+    # already marked approved must not re-run the grant a second
+    # time (it would stack additional access time onto the
+    # enrollment) — mirrors the check the webhook handler already
+    # applies before dispatching.
+    if payment_row.get("status") == "approved":
+        return {"success": True, "message": "MCQ package already activated."}
 
-            coupon_id = payment_row.get("coupon_id")
-            if coupon_id:
-                coupon_row = db.table("coupons").select("*").eq("id", coupon_id).single().execute()
-                if coupon_row.data:
-                    _record_coupon_usage(
-                        db, coupon_row.data, user_id, payment_id,
-                        float(payment_row.get("discount_amount") or 0),
-                        payment_row.get("affiliate_id"),
-                        float(payment_row.get("commission_amount") or 0),
-                    )
+    # Grant the actual mcq_enrollments based on the subjects packed into
+    # utr_number (separated by |) BEFORE marking the payment approved. No
+    # try/except swallowing here on purpose — a failure must propagate so
+    # the payment stays "pending" and a retry can actually complete the
+    # grant, instead of the payment looking "approved" with nothing
+    # delivered and no way to automatically recover.
+    packed_course_id = payment_row.get("utr_number", "")
+    if "|" in packed_course_id:
+        base_c_id, raw_subjects = packed_course_id.split("|", 1)
+        if "|" in raw_subjects:
+            raw_subjects = raw_subjects.split("|")[0]
+        duration_str = base_c_id.split("-")[-1] if "-" in base_c_id else "1_month"
 
-            # Now, grant the actual mcq_enrollments based on the subjects packed into utr_number (separated by |)!
-            packed_course_id = payment_row.get("utr_number", "")
-            if "|" in packed_course_id:
-                base_c_id, raw_subjects = packed_course_id.split("|", 1)
-                if "|" in raw_subjects:
-                    raw_subjects = raw_subjects.split("|")[0]
-                duration_str = base_c_id.split("-")[-1] if "-" in base_c_id else "1_month"
-                
-                from datetime import datetime, timezone, timedelta
-                now = datetime.now(timezone.utc)
-                expiry = None
-                if duration_str == "1_month": expiry = (now + timedelta(days=30)).isoformat()
-                elif duration_str == "3_months": expiry = (now + timedelta(days=90)).isoformat()
-                elif duration_str == "6_months": expiry = (now + timedelta(days=180)).isoformat()
-                elif duration_str == "1_year": expiry = (now + timedelta(days=365)).isoformat()
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        expiry = None
+        if duration_str == "1_month": expiry = (now + timedelta(days=30)).isoformat()
+        elif duration_str == "3_months": expiry = (now + timedelta(days=90)).isoformat()
+        elif duration_str == "6_months": expiry = (now + timedelta(days=180)).isoformat()
+        elif duration_str == "1_year": expiry = (now + timedelta(days=365)).isoformat()
 
-                subjects_list = raw_subjects.split(",")
-                for sub_id in subjects_list:
-                    sub_id = sub_id.strip()
-                    print(f"[MCQ ENROLL] Processing subject: {sub_id}, duration: {duration_str}")
-                    
-                    # Check if enrollment already exists
-                    existing_enroll = db.table("mcq_enrollments")\
-                        .select("id, access_until")\
-                        .eq("user_id", user_id)\
-                        .eq("subject_code", sub_id)\
-                        .execute()
+        subjects_list = raw_subjects.split(",")
+        for sub_id in subjects_list:
+            sub_id = sub_id.strip()
+            print(f"[MCQ ENROLL] Processing subject: {sub_id}, duration: {duration_str}")
 
-                    if existing_enroll.data:
-                        # Pick the row with the latest access_until
-                        def parse_dt(s):
-                            if not s: return datetime(2000, 1, 1, tzinfo=timezone.utc)
-                            try:
-                                dt = datetime.fromisoformat(s.replace("Z", "+00:00").replace(" ", "T"))
-                                if dt.tzinfo is None:
-                                    dt = dt.replace(tzinfo=timezone.utc)
-                                return dt
-                            except ValueError:
-                                return datetime(2000, 1, 1, tzinfo=timezone.utc)
+            # Check if enrollment already exists
+            existing_enroll = db.table("mcq_enrollments")\
+                .select("id, access_until")\
+                .eq("user_id", user_id)\
+                .eq("subject_code", sub_id)\
+                .execute()
 
-                        best_row = max(existing_enroll.data, key=lambda r: parse_dt(r.get("access_until")))
-                        existing_row_id = best_row["id"]
-                        existing_expiry_str = best_row.get("access_until")
-                        print(f"[MCQ ENROLL] Existing expiry for {sub_id}: {existing_expiry_str}")
-                        
-                        existing_expiry = parse_dt(existing_expiry_str)
-                        # Stack extension on top of existing expiry (if future) or from now (if expired)
-                        base_date = existing_expiry if existing_expiry > now else now
+            if existing_enroll.data:
+                # Pick the row with the latest access_until
+                def parse_dt(s):
+                    if not s: return datetime(2000, 1, 1, tzinfo=timezone.utc)
+                    try:
+                        dt = datetime.fromisoformat(s.replace("Z", "+00:00").replace(" ", "T"))
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        return dt
+                    except ValueError:
+                        return datetime(2000, 1, 1, tzinfo=timezone.utc)
 
-                        if duration_str == "1_month":    new_expiry = (base_date + timedelta(days=30)).isoformat()
-                        elif duration_str == "3_months": new_expiry = (base_date + timedelta(days=90)).isoformat()
-                        elif duration_str == "6_months": new_expiry = (base_date + timedelta(days=180)).isoformat()
-                        elif duration_str == "1_year":   new_expiry = (base_date + timedelta(days=365)).isoformat()
-                        else:                            new_expiry = (base_date + timedelta(days=30)).isoformat()
+                best_row = max(existing_enroll.data, key=lambda r: parse_dt(r.get("access_until")))
+                existing_row_id = best_row["id"]
+                existing_expiry_str = best_row.get("access_until")
+                print(f"[MCQ ENROLL] Existing expiry for {sub_id}: {existing_expiry_str}")
 
-                        print(f"[MCQ ENROLL] Extending {sub_id}: {existing_expiry_str} + {duration_str} → {new_expiry}")
+                existing_expiry = parse_dt(existing_expiry_str)
+                # Stack extension on top of existing expiry (if future) or from now (if expired)
+                base_date = existing_expiry if existing_expiry > now else now
 
-                        # Update ONLY the latest row for this subject
-                        db.table("mcq_enrollments").update({
-                            "access_until": new_expiry,
-                            "payment_id": payment_id,
-                        }).eq("id", existing_row_id).execute()
-                    else:
-                        print(f"[MCQ ENROLL] New enrollment for {sub_id}, expiry: {expiry}")
-                        db.table("mcq_enrollments").insert({
-                            "user_id": user_id,
-                            "subject_code": sub_id,
-                            "level": base_c_id.split("-")[1].upper() if len(base_c_id.split("-")) > 1 else "FINAL",
-                            "payment_id": payment_id,
-                            "access_until": expiry
-                        }).execute()
-    except Exception as e:
-        print("Error verifying MCQ Payment:", e)
-        pass
+                if duration_str == "1_month":    new_expiry = (base_date + timedelta(days=30)).isoformat()
+                elif duration_str == "3_months": new_expiry = (base_date + timedelta(days=90)).isoformat()
+                elif duration_str == "6_months": new_expiry = (base_date + timedelta(days=180)).isoformat()
+                elif duration_str == "1_year":   new_expiry = (base_date + timedelta(days=365)).isoformat()
+                else:                            new_expiry = (base_date + timedelta(days=30)).isoformat()
+
+                print(f"[MCQ ENROLL] Extending {sub_id}: {existing_expiry_str} + {duration_str} → {new_expiry}")
+
+                # Update ONLY the latest row for this subject
+                db.table("mcq_enrollments").update({
+                    "access_until": new_expiry,
+                    "payment_id": payment_id,
+                }).eq("id", existing_row_id).execute()
+            else:
+                print(f"[MCQ ENROLL] New enrollment for {sub_id}, expiry: {expiry}")
+                try:
+                    db.table("mcq_enrollments").insert({
+                        "user_id": user_id,
+                        "subject_code": sub_id,
+                        "level": base_c_id.split("-")[1].upper() if len(base_c_id.split("-")) > 1 else "FINAL",
+                        "payment_id": payment_id,
+                        "access_until": expiry
+                    }).execute()
+                except PostgrestAPIError as e:
+                    # 23505 = unique_violation — a concurrent request (double-
+                    # click, webhook racing this same call) already inserted
+                    # the identical (user_id, subject_code) enrollment a
+                    # moment ago. That request already granted the access
+                    # this one was trying to grant, so this is a benign
+                    # no-op, not a real failure — anything else re-raises.
+                    if e.code != "23505":
+                        raise
+
+    db.table("payments").update({
+        "status": "approved",
+        "razorpay_payment_id": rzp_pay,
+        "razorpay_signature": rzp_sig,
+    }).eq("id", payment_id).execute()
+
+    coupon_id = payment_row.get("coupon_id")
+    if coupon_id:
+        coupon_row = db.table("coupons").select("*").eq("id", coupon_id).single().execute()
+        if coupon_row.data:
+            _record_coupon_usage(
+                db, coupon_row.data, user_id, payment_id,
+                float(payment_row.get("discount_amount") or 0),
+                payment_row.get("affiliate_id"),
+                float(payment_row.get("commission_amount") or 0),
+            )
 
     try:
         profile = db.table("profiles").select("email").eq("id", user_id).single().execute()
@@ -921,67 +940,76 @@ async def verify_test_series_payment(
 
 
 async def _apply_test_series_grant(db: Client, order_id: str, user_id: str, rzp_pay: str, rzp_sig: str):
-    try:
-        # Scoped to the caller — see _apply_mcq_grant's comment above; same
-        # ownership gap fixed here.
-        payment = db.table("payments").select("*").eq("razorpay_order_id", order_id).eq("user_id", user_id).execute()
-        if not payment.data:
-            return {"success": False, "message": "No matching payment found"}
+    # Scoped to the caller — see _apply_mcq_grant's comment above; same
+    # ownership gap fixed here.
+    payment = db.table("payments").select("*").eq("razorpay_order_id", order_id).eq("user_id", user_id).execute()
+    if not payment.data:
+        return {"success": False, "message": "No matching payment found"}
 
-        payment_row = payment.data[0]
-        payment_id = payment_row["id"]
+    payment_row = payment.data[0]
+    payment_id = payment_row["id"]
 
-        # Idempotency guard: a replayed/retried verify call for a payment
-        # already marked approved must not re-run the grant a second time —
-        # mirrors the check the webhook handler already applies before
-        # dispatching.
-        if payment_row.get("status") == "approved":
-            return {"success": True, "message": "Test series access already activated."}
+    # Idempotency guard: a replayed/retried verify call for a payment
+    # already marked approved must not re-run the grant a second time —
+    # mirrors the check the webhook handler already applies before
+    # dispatching.
+    if payment_row.get("status") == "approved":
+        return {"success": True, "message": "Test series access already activated."}
 
-        db.table("payments").update({
-            "status": "approved",
-            "razorpay_payment_id": rzp_pay,
-            "razorpay_signature": rzp_sig,
-        }).eq("id", payment_id).execute()
-
-        coupon_id = payment_row.get("coupon_id")
-        if coupon_id:
-            coupon_row = db.table("coupons").select("*").eq("id", coupon_id).single().execute()
-            if coupon_row.data:
-                _record_coupon_usage(
-                    db, coupon_row.data, user_id, payment_id,
-                    float(payment_row.get("discount_amount") or 0),
-                    payment_row.get("affiliate_id"),
-                    float(payment_row.get("commission_amount") or 0),
-                )
-
-        packed = payment_row.get("utr_number", "")
-        if packed.startswith("testseries-") and "|" in packed:
-            subjects_list = packed.split("|", 2)[1].split(",")
-            for sub_id in subjects_list:
-                sub_id = sub_id.strip()
-                if not sub_id:
-                    continue
-                existing = (
-                    db.table("test_series_enrollments")
-                    .select("id")
-                    .eq("user_id", user_id)
-                    .eq("subject_id", sub_id)
-                    .execute()
-                )
-                if existing.data:
-                    db.table("test_series_enrollments").update({
-                        "payment_id": payment_id,
-                    }).eq("id", existing.data[0]["id"]).execute()
-                else:
+    # Grant the actual test-series enrollments BEFORE marking the payment
+    # approved — no try/except swallowing on purpose, same reasoning as
+    # _apply_mcq_grant: a failure must propagate so the payment stays
+    # "pending" and can be retried, instead of silently looking approved
+    # with nothing delivered.
+    packed = payment_row.get("utr_number", "")
+    if packed.startswith("testseries-") and "|" in packed:
+        subjects_list = packed.split("|", 2)[1].split(",")
+        for sub_id in subjects_list:
+            sub_id = sub_id.strip()
+            if not sub_id:
+                continue
+            existing = (
+                db.table("test_series_enrollments")
+                .select("id")
+                .eq("user_id", user_id)
+                .eq("subject_id", sub_id)
+                .execute()
+            )
+            if existing.data:
+                db.table("test_series_enrollments").update({
+                    "payment_id": payment_id,
+                }).eq("id", existing.data[0]["id"]).execute()
+            else:
+                try:
                     db.table("test_series_enrollments").insert({
                         "user_id": user_id,
                         "subject_id": sub_id,
                         "payment_id": payment_id,
                         "access_until": None,  # lifetime — one-time purchase
                     }).execute()
-    except Exception as e:
-        print("Error verifying test series payment:", e)
+                except PostgrestAPIError as e:
+                    # See the matching comment in _apply_mcq_grant — a
+                    # concurrent request already granted this exact
+                    # (user_id, subject_id) enrollment; benign no-op.
+                    if e.code != "23505":
+                        raise
+
+    db.table("payments").update({
+        "status": "approved",
+        "razorpay_payment_id": rzp_pay,
+        "razorpay_signature": rzp_sig,
+    }).eq("id", payment_id).execute()
+
+    coupon_id = payment_row.get("coupon_id")
+    if coupon_id:
+        coupon_row = db.table("coupons").select("*").eq("id", coupon_id).single().execute()
+        if coupon_row.data:
+            _record_coupon_usage(
+                db, coupon_row.data, user_id, payment_id,
+                float(payment_row.get("discount_amount") or 0),
+                payment_row.get("affiliate_id"),
+                float(payment_row.get("commission_amount") or 0),
+            )
 
     try:
         profile = db.table("profiles").select("email").eq("id", user_id).single().execute()

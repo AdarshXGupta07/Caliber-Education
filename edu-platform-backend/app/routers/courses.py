@@ -54,10 +54,13 @@ async def list_course_bundles(db: Client = Depends(get_db)):
 
 @router.get("/{course_id}")
 async def get_course(course_id: str, db: Client = Depends(get_db)):
-    result = db.table("courses").select("*").eq("id", course_id).single().execute()
+    # .single() raises (PGRST116) rather than returning empty data when zero
+    # rows match, so the "not found" check below never actually ran for a
+    # non-existent id — every bad/typo'd course link 500'd instead of 404ing.
+    result = db.table("courses").select("*").eq("id", course_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Course not found")
-    return map_course(result.data)
+    return map_course(result.data[0])
 
 
 @router.get("/{course_id}/whatsapp-access")

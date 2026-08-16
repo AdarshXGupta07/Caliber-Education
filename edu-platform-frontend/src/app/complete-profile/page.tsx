@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight } from "lucide-react";
 import { AuthShell } from "@/components/AuthShell";
@@ -9,12 +9,21 @@ import { getPostLoginRedirect } from "@/lib/authRedirect";
 
 export default function CompleteProfilePage() {
   const router = useRouter();
-  const { user, markProfileComplete } = useAuth();
+  const { user, isAuthenticated, isMounted, markProfileComplete } = useAuth();
   const [form, setForm] = useState({
     full_name: "", phone_number: "", address: "", stage: "CA Final", attempt_status: "First Attempt",
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Every other authenticated page in this app checks isMounted/isAuthenticated
+  // before rendering — this one didn't. The backend still rejects an
+  // unauthenticated PUT /api/auth/profile, so there was no data exposure, but
+  // an unauthenticated visitor could load and fill out the full form before
+  // it silently/genericly failed on submit.
+  useEffect(() => {
+    if (isMounted && !isAuthenticated) router.push("/login");
+  }, [isMounted, isAuthenticated, router]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -49,14 +58,14 @@ export default function CompleteProfilePage() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Full Name</label>
-          <input required autoFocus value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })}
+          <label htmlFor="cp-fullname" className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Full Name</label>
+          <input id="cp-fullname" required autoFocus value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })}
             className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors"
             placeholder="e.g. John Doe" />
         </div>
         <div>
-          <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Phone / WhatsApp</label>
-          <input required value={form.phone_number} onChange={e => setForm({ ...form, phone_number: e.target.value })}
+          <label htmlFor="cp-phone" className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Phone / WhatsApp</label>
+          <input id="cp-phone" required value={form.phone_number} onChange={e => setForm({ ...form, phone_number: e.target.value })}
             className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors"
             placeholder="+91..." />
           <p className="text-[10px] text-slate dark:text-paper/50 mt-1.5 leading-relaxed">
@@ -64,15 +73,15 @@ export default function CompleteProfilePage() {
           </p>
         </div>
         <div>
-          <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Address / City</label>
-          <textarea required value={form.address} onChange={e => setForm({ ...form, address: e.target.value })}
+          <label htmlFor="cp-address" className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Address / City</label>
+          <textarea id="cp-address" required value={form.address} onChange={e => setForm({ ...form, address: e.target.value })}
             className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors resize-none"
             rows={2} placeholder="Your residential address" />
         </div>
         <div className="grid sm:grid-cols-2 gap-4">
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Stage</label>
-            <select required value={form.stage} onChange={e => setForm({ ...form, stage: e.target.value })}
+            <label htmlFor="cp-stage" className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Stage</label>
+            <select id="cp-stage" required value={form.stage} onChange={e => setForm({ ...form, stage: e.target.value })}
               className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors">
               <option>CA Foundation</option>
               <option>CA Intermediate</option>
@@ -80,8 +89,8 @@ export default function CompleteProfilePage() {
             </select>
           </div>
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Attempt Status</label>
-            <select required value={form.attempt_status} onChange={e => setForm({ ...form, attempt_status: e.target.value })}
+            <label htmlFor="cp-attempt-status" className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/70 mb-1.5 block">Attempt Status</label>
+            <select id="cp-attempt-status" required value={form.attempt_status} onChange={e => setForm({ ...form, attempt_status: e.target.value })}
               className="w-full px-4 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-lg outline-none focus:border-signal-emerald/50 transition-colors">
               <option>First Attempt</option>
               <option>Repeater (2nd)</option>

@@ -51,7 +51,7 @@ export default function SeriesDetailPage({ params }: { params: Promise<{ seriesI
   }
 
   const setsInSeries = series.sets || [];
-  const totalQuestions = setsInSeries.length * 10; // Placeholder until questions logic is merged
+  const totalQuestions = setsInSeries.reduce((sum: number, s: any) => sum + (s.questionCount || 0), 0);
   const freeSetCount = setsInSeries.filter((s: any) => !s.is_locked).length;
 
   function handleAttempt(set: typeof setsInSeries[0]) {
@@ -100,7 +100,7 @@ export default function SeriesDetailPage({ params }: { params: Promise<{ seriesI
                 <Layers className="w-4 h-4 text-signal-emerald" /> {setsInSeries.length} MCQ set{setsInSeries.length !== 1 ? "s" : ""}
               </div>
               <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-line-gray-light/40 dark:bg-line-gray-dark/30 text-xs text-ink-navy dark:text-paper font-semibold">
-                <Target className="w-4 h-4 text-signal-emerald" /> {totalQuestions}+ questions
+                <Target className="w-4 h-4 text-signal-emerald" /> {totalQuestions} question{totalQuestions !== 1 ? "s" : ""}
               </div>
               {freeSetCount > 0 && (
                 <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-line-gray-light/40 dark:bg-line-gray-dark/30 text-xs text-ink-navy dark:text-paper font-semibold">
@@ -132,7 +132,7 @@ export default function SeriesDetailPage({ params }: { params: Promise<{ seriesI
           ) : (
             <div className="grid sm:grid-cols-2 gap-6">
               {setsInSeries.map((set: any, i: number) => {
-                const questionCount = 10; // Placeholder until strict question db mapping
+                const questionCount = set.questionCount || 0;
 
                 return (
                   <motion.div
