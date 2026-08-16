@@ -8,7 +8,20 @@ from app.dependencies import get_current_user
 router = APIRouter(prefix="/api/courses", tags=["Courses"])
 
 
+# Explicit allowlist for what these PUBLIC, unauthenticated endpoints may
+# return. Without this, `select("*")` means any future internal column added
+# to `courses` (cost, margin, internal notes, ...) would be exposed to every
+# visitor automatically, with no code change required to leak it.
+PUBLIC_COURSE_FIELDS = {
+    "id", "title", "description", "price", "price_display", "level", "duration",
+    "outcomes", "curriculum", "rating", "tag", "mentors", "status", "created_at",
+    "enrolled_count", "delivery_type", "whatsapp_link", "linked_series_id",
+    "bundled_test_series_subject_ids", "is_one_on_one",
+}
+
+
 def map_course(c: dict) -> dict:
+    c = {k: v for k, v in c.items() if k in PUBLIC_COURSE_FIELDS}
     if "enrolled_count" in c: c["enrolledCount"] = c.pop("enrolled_count")
     if "delivery_type" in c: c["deliveryType"] = c.pop("delivery_type")
     if "whatsapp_link" in c: c["whatsappLink"] = c.pop("whatsapp_link")
@@ -31,10 +44,13 @@ async def list_courses(
     result = query.execute()
     return [map_course(c) for c in (result.data or [])]
 
+PUBLIC_BUNDLE_FIELDS = {"id", "title", "description", "level", "course_ids", "price", "created_at"}
+
+
 @router.get("/bundles", summary="Get all available course bundle discounts")
 async def list_course_bundles(db: Client = Depends(get_db)):
     result = db.table("course_bundles").select("*").execute()
-    return result.data or []
+    return [{k: v for k, v in b.items() if k in PUBLIC_BUNDLE_FIELDS} for b in (result.data or [])]
 
 @router.get("/{course_id}")
 async def get_course(course_id: str, db: Client = Depends(get_db)):

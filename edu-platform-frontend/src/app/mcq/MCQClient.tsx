@@ -283,7 +283,6 @@ export default function MCQClient() {
             description: `${activeLevel} MCQ - ${DURATION_LABELS[selectedDuration].label}`,
             order_id: orderData.orderId,
             handler: async (response: any) => {
-              console.log("[MCQ] Razorpay payment successful", response);
               setIsProcessing(true);
               
               // Verify payment on backend

@@ -34,6 +34,24 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         content={"detail": f"Too many attempts. Please wait a moment and try again ({exc.detail})."},
     )
 
+# ─── Security response headers ───────────────────────────────────────────────
+# None of these were set anywhere before — added conservatively (no CSP
+# enforcement yet, since this API's /docs and /redoc pages plus the
+# frontend's Razorpay checkout script would need real testing against a
+# strict policy first; Report-Only mode surfaces violations without
+# breaking anything while that testing happens).
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy-Report-Only"] = "default-src 'self'; frame-ancestors 'none'"
+    return response
+
+
 # ─── CORS ─────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,

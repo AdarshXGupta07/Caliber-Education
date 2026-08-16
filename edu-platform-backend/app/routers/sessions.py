@@ -14,13 +14,14 @@ Admin Flow:
 
 import httpx
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from supabase import Client
 from typing import Optional
 
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.dependencies import get_current_user
 
 router = APIRouter(tags=["Sessions"])
@@ -60,7 +61,9 @@ async def list_mentors(db: Client = Depends(get_db)):
 
 
 @router.post("/api/sessions/request", status_code=201)
+@limiter.limit("10/minute")
 async def request_session(
+    request: Request,
     body: SessionRequestBody,
     current_user: dict = Depends(get_current_user),
     db: Client = Depends(get_db),

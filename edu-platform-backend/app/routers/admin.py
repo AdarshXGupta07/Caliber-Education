@@ -216,7 +216,8 @@ async def list_users(
         test_series_subjects = db.table("test_series_subjects").select("id, name").execute().data or []
         test_series_subject_map = {s["id"]: s["name"] for s in test_series_subjects}
     except Exception as e:
-        return {"error": str(e.args) if hasattr(e, 'args') else str(e)}
+        print(f"[ADMIN USERS] Failed to load enrollment data: {e}")
+        return {"error": "Failed to load user data. Please try again."}
 
     # Real enrollment dates, keyed by (user_id, course_id) — this is the
     # source of truth for when access actually ends, replacing the
@@ -952,8 +953,8 @@ async def admin_upsert_mcq_bundle(
         res = db.table("mcq_bundles").upsert(data).execute()
         return {"success": True, "bundle": res.data[0] if res.data else data}
     except Exception as e:
-        # Fallback response for dev mode
-        return {"success": True, "bundle": data, "note": str(e)}
+        print(f"MCQ BUNDLE SAVE ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save bundle. Please check every field and try again.")
 
 
 @router.delete("/mcq/bundles/{bundle_id}")
@@ -1002,7 +1003,8 @@ async def admin_upsert_mcq_subject(
         res = db.table("mcq_subjects").upsert(data).execute()
         return {"success": True, "subject": res.data[0] if res.data else data}
     except Exception as e:
-        return {"success": True, "subject": data, "note": str(e)}
+        print(f"MCQ SUBJECT SAVE ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save subject. Please check every field and try again.")
 
 
 # ─── Chapters / Syllabus Master ──────────────────────────────────────────────
@@ -1223,7 +1225,7 @@ async def admin_upsert_set(
         result = db.table("mcq_papers").upsert(data).execute()
     except Exception as e:
         print(f"MCQ SAVE ERROR: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to save paper: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save paper. Please check every field and try again.")
     
     # 2. Sync Sections & Questions
     existing_sections = db.table("exam_sections").select("id").eq("paper_id", set_id).execute()
@@ -1584,7 +1586,16 @@ async def review_submission(
         raw = await checkedFile.read()
         if len(raw) > MAX_EVALUATION_FILE_BYTES:
             raise HTTPException(status_code=400, detail="Checked file must be under 15MB")
-        path = f"evaluated/{submission_id}/{checkedFile.filename}"
+        # Content-Type is attacker-controlled and easy to spoof — also check
+        # the actual file bytes match a real signature for one of the
+        # accepted types.
+        is_pdf = raw.startswith(b"%PDF-")
+        is_jpeg = raw.startswith(b"\xff\xd8\xff")
+        is_png = raw.startswith(b"\x89PNG\r\n\x1a\n")
+        if not (is_pdf or is_jpeg or is_png):
+            raise HTTPException(status_code=400, detail="File doesn't look like a valid PDF, JPG, or PNG.")
+        safe_filename = re.sub(r"[^A-Za-z0-9._-]", "_", checkedFile.filename or "evaluated")
+        path = f"evaluated/{submission_id}/{safe_filename}"
         try:
             db.storage.from_(settings.supabase_evaluation_bucket).upload(
                 path, raw, {"content-type": content_type}
@@ -1647,6 +1658,9 @@ async def admin_list_tests(admin: dict = Depends(require_admin), db: Client = De
     return db.table("tests").select("*").order("created_at", desc=True).execute().data or []
 
 
+TEST_ALLOWED_FIELDS = {"title", "description", "question_file_url", "status", "sort_order", "subject_id"}
+
+
 @router.post("/tests", status_code=201)
 async def admin_create_test(
     body: dict,
@@ -1654,7 +1668,8 @@ async def admin_create_test(
     db: Client = Depends(get_db),
 ):
     """Create a new mock test and upload its question paper URL."""
-    payload = {**body, "created_by": admin["id"]}
+    payload = {k: v for k, v in body.items() if k in TEST_ALLOWED_FIELDS}
+    payload["created_by"] = admin["id"]
     result = db.table("tests").insert(payload).execute()
     return result.data[0] if result.data else {}
 
@@ -1666,8 +1681,10 @@ async def admin_update_test(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    body.pop("created_by", None)  # Prevent overwriting creator
-    return db.table("tests").update(body).eq("id", test_id).execute().data
+    allowed = {k: v for k, v in body.items() if k in TEST_ALLOWED_FIELDS}
+    if not allowed:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    return db.table("tests").update(allowed).eq("id", test_id).execute().data
 
 
 @router.delete("/tests/{test_id}")
@@ -1691,6 +1708,13 @@ async def admin_list_questions(
     return db.table("questions").select("*").eq("section_id", section_id).execute().data or []
 
 
+QUESTION_ALLOWED_FIELDS = {
+    "type", "case_narrative", "case_group_id", "difficulty", "marks",
+    "negative_marks", "content", "options", "correct_option", "explanation",
+    "order_index",
+}
+
+
 @router.post("/sections/{section_id}/questions", status_code=201)
 async def admin_create_question(
     section_id: str,
@@ -1698,7 +1722,8 @@ async def admin_create_question(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    payload = {**body, "section_id": section_id}
+    payload = {k: v for k, v in body.items() if k in QUESTION_ALLOWED_FIELDS}
+    payload["section_id"] = section_id
     result = db.table("questions").insert(payload).execute()
     return result.data[0] if result.data else {}
 
@@ -1710,7 +1735,10 @@ async def admin_update_question(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    return db.table("questions").update(body).eq("id", question_id).execute().data
+    allowed = {k: v for k, v in body.items() if k in QUESTION_ALLOWED_FIELDS}
+    if not allowed:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    return db.table("questions").update(allowed).eq("id", question_id).execute().data
 
 
 @router.delete("/questions/{question_id}")
@@ -1741,7 +1769,8 @@ async def admin_create_section(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    payload = {**body, "paper_id": set_id}
+    payload = {k: v for k, v in body.items() if k in {"title", "order_index"}}
+    payload["paper_id"] = set_id
     result = db.table("exam_sections").insert(payload).execute()
     return result.data[0] if result.data else {}
 
@@ -1803,7 +1832,8 @@ async def admin_create_mentor(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    result = db.table("mentors").insert(body).execute()
+    payload = {k: v for k, v in body.items() if k in {"profile_id", "name", "email", "specialty"}}
+    result = db.table("mentors").insert(payload).execute()
     return result.data[0] if result.data else {}
 
 
@@ -1814,7 +1844,12 @@ async def admin_update_mentor(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    return db.table("mentors").update(body).eq("id", mentor_id).execute().data
+    # profile_id is intentionally excluded from updates — it's the identity
+    # link to the user account and shouldn't be reassignable via this route.
+    allowed = {k: v for k, v in body.items() if k in {"name", "email", "specialty"}}
+    if not allowed:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    return db.table("mentors").update(allowed).eq("id", mentor_id).execute().data
 
 
 @router.delete("/mentors/{mentor_id}")

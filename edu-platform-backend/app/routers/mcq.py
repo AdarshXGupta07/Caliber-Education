@@ -966,9 +966,12 @@ async def get_leaderboard(
     board = []
     for a in (attempts.data or []):
         try:
-            profile = db.table("profiles").select("email").eq("id", a["user_id"]).single().execute()
-            email = profile.data.get("email", "Student") if profile.data else "Student"
-            name = email.split("@")[0]
+            # Uses the student's own chosen display name, not their email —
+            # deriving a "name" from the email's local-part (the old
+            # behavior) leaked a real, private email address to every other
+            # student attempting the same quiz.
+            profile = db.table("profiles").select("full_name").eq("id", a["user_id"]).single().execute()
+            name = (profile.data.get("full_name") if profile.data else None) or "Student"
         except Exception:
             name = "Student"
 

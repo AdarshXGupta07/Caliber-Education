@@ -13,15 +13,17 @@ Mentor/Admin Flow:
   3. POST /api/admin/submissions/:id/review records marks + remarks
   4. Student sees marks + checked copy on their dashboard
 """
+import re
 import uuid
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from supabase import Client
 from typing import List
 import httpx
 
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/api/tests", tags=["Tests & Evaluations"])
@@ -105,7 +107,9 @@ async def list_submissions(
 
 
 @router.post("/{test_id}/submit", status_code=201)
+@limiter.limit("10/minute")
 async def submit_test(
+    request: Request,
     test_id: str,
     files: List[UploadFile] = File(...),
     current_user: dict = Depends(get_current_user),
@@ -140,8 +144,13 @@ async def submit_test(
         raw = await upload.read()
         if len(raw) > MAX_BYTES:
             raise HTTPException(status_code=400, detail="Each file must be under 15MB.")
+        # Content-Type is attacker-controlled and easy to spoof — also check
+        # the actual file bytes start with the real PDF magic number.
+        if not raw.startswith(b"%PDF-"):
+            raise HTTPException(status_code=400, detail="File doesn't look like a valid PDF.")
 
-        path = f"submissions/{current_user['id']}/{test_id}/{uuid.uuid4().hex[:8]}-{upload.filename}"
+        safe_filename = re.sub(r"[^A-Za-z0-9._-]", "_", upload.filename or "submission.pdf")
+        path = f"submissions/{current_user['id']}/{test_id}/{uuid.uuid4().hex[:8]}-{safe_filename}"
         try:
             db.storage.from_(settings.supabase_submission_bucket).upload(
                 path, raw, {"content-type": "application/pdf"}

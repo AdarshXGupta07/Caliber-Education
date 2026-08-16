@@ -243,7 +243,8 @@ async def create_order(
             })
             order_id = order["id"]
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Razorpay error: {str(e)}")
+            print(f"[PAYMENTS] Razorpay order creation failed: {e}")
+            raise HTTPException(status_code=502, detail="Couldn't start payment. Please try again in a moment.")
     else:
         # Stub for dev/testing without Razorpay keys
         order_id = f"order_DEMO_{uuid.uuid4().hex[:12].upper()}"
@@ -307,7 +308,9 @@ async def mock_confirm(
 
 
 @router.post("/verify-payment")
+@limiter.limit("20/minute")
 async def verify_payment(
+    request: Request,
     body: VerifyPaymentRequest,
     current_user: dict = Depends(get_current_user),
     db: Client = Depends(get_db),
@@ -315,21 +318,23 @@ async def verify_payment(
     settings = get_settings()
     user_id = current_user["id"]
 
-    # Verify HMAC-SHA256 signature natively with Razorpay SDK. Always runs
-    # whenever a secret is configured — there is no client-controlled way to
-    # skip this (a prior "pay_TEST_"/"order_DEMO_" prefix bypass here let any
-    # caller forge those IDs and get free enrollment; removed).
-    if settings.razorpay_key_secret:
-        rzp = _get_razorpay_client()
-        try:
-            params_dict = {
-                'razorpay_order_id': body.razorpay_order_id,
-                'razorpay_payment_id': body.razorpay_payment_id,
-                'razorpay_signature': body.razorpay_signature
-            }
-            rzp.utility.verify_payment_signature(params_dict)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail="Invalid payment signature")
+    # Verify HMAC-SHA256 signature natively with Razorpay SDK. Fails closed
+    # if the secret isn't configured — a missing secret must never be
+    # silently treated as "verified" (a prior "pay_TEST_"/"order_DEMO_"
+    # prefix bypass here let any caller forge those IDs and get free
+    # enrollment; removed).
+    if not settings.razorpay_key_secret:
+        raise HTTPException(status_code=503, detail="Payment verification is not configured. Please contact support.")
+    rzp = _get_razorpay_client()
+    try:
+        params_dict = {
+            'razorpay_order_id': body.razorpay_order_id,
+            'razorpay_payment_id': body.razorpay_payment_id,
+            'razorpay_signature': body.razorpay_signature
+        }
+        rzp.utility.verify_payment_signature(params_dict)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Invalid payment signature")
 
     payment = (
         db.table("payments")
@@ -616,34 +621,55 @@ async def mock_confirm_mcq(
 
 
 @router.post("/verify-mcq-payment")
+@limiter.limit("20/minute")
 async def verify_mcq_payment(
+    request: Request,
     body: VerifyPaymentRequest,
     current_user: dict = Depends(get_current_user),
     db: Client = Depends(get_db),
 ):
     settings = get_settings()
 
-    # Always verified whenever a secret is configured — see verify-payment's
+    # Fails closed if the secret isn't configured — see verify-payment's
     # comment above; same client-controlled bypass removed here.
-    if settings.razorpay_key_secret:
-        rzp = _get_razorpay_client()
-        try:
-            params_dict = {
-                'razorpay_order_id': body.razorpay_order_id,
-                'razorpay_payment_id': body.razorpay_payment_id,
-                'razorpay_signature': body.razorpay_signature
-            }
-            rzp.utility.verify_payment_signature(params_dict)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail="Invalid payment signature")
+    if not settings.razorpay_key_secret:
+        raise HTTPException(status_code=503, detail="Payment verification is not configured. Please contact support.")
+    rzp = _get_razorpay_client()
+    try:
+        params_dict = {
+            'razorpay_order_id': body.razorpay_order_id,
+            'razorpay_payment_id': body.razorpay_payment_id,
+            'razorpay_signature': body.razorpay_signature
+        }
+        rzp.utility.verify_payment_signature(params_dict)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Invalid payment signature")
 
-    return await _apply_mcq_grant(db, body.razorpay_order_id, current_user["id"], body.razorpay_payment_id, body.razorpay_signature)
+    result = await _apply_mcq_grant(db, body.razorpay_order_id, current_user["id"], body.razorpay_payment_id, body.razorpay_signature)
+    # The frontend only checks the HTTP status to decide success/failure, not
+    # this body — a grant failure must not come back as a 200, or a genuine
+    # signature-verified-but-unmatched-order request would show as "paid."
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("message", "Payment record not found"))
+    return result
 
 
 async def _apply_mcq_grant(db: Client, order_id: str, user_id: str, rzp_pay: str, rzp_sig: str):
 
     try:
-        payment = db.table("payments").select("*").eq("razorpay_order_id", order_id).execute()
+        # Scoped to the caller — without this, anyone who learns another
+        # user's order_id (order IDs plus the public key are enough to open
+        # a checkout for that specific order) could pay for and claim that
+        # order's grant for themselves instead of its actual owner.
+        payment = db.table("payments").select("*").eq("razorpay_order_id", order_id).eq("user_id", user_id).execute()
+        if not payment.data:
+            # No matching payment for this order+user — either a bad
+            # order_id or (post-fix) someone else's order. Previously this
+            # fell through with no explicit return and still reported
+            # success at the bottom of this function despite granting
+            # nothing; now it fails the same way _apply_test_series_grant
+            # already correctly does.
+            return {"success": False, "message": "No matching payment found"}
         if payment.data and len(payment.data) > 0:
             payment_row = payment.data[0]
             payment_id = payment_row["id"]
@@ -865,32 +891,42 @@ async def mock_confirm_test_series(
 
 
 @router.post("/verify-test-series-payment")
+@limiter.limit("20/minute")
 async def verify_test_series_payment(
+    request: Request,
     body: VerifyPaymentRequest,
     current_user: dict = Depends(get_current_user),
     db: Client = Depends(get_db),
 ):
     settings = get_settings()
-    if settings.razorpay_key_secret:
-        rzp = _get_razorpay_client()
-        try:
-            params_dict = {
-                'razorpay_order_id': body.razorpay_order_id,
-                'razorpay_payment_id': body.razorpay_payment_id,
-                'razorpay_signature': body.razorpay_signature
-            }
-            rzp.utility.verify_payment_signature(params_dict)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail="Invalid payment signature")
+    if not settings.razorpay_key_secret:
+        raise HTTPException(status_code=503, detail="Payment verification is not configured. Please contact support.")
+    rzp = _get_razorpay_client()
+    try:
+        params_dict = {
+            'razorpay_order_id': body.razorpay_order_id,
+            'razorpay_payment_id': body.razorpay_payment_id,
+            'razorpay_signature': body.razorpay_signature
+        }
+        rzp.utility.verify_payment_signature(params_dict)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Invalid payment signature")
 
-    return await _apply_test_series_grant(db, body.razorpay_order_id, current_user["id"], body.razorpay_payment_id, body.razorpay_signature)
+    result = await _apply_test_series_grant(db, body.razorpay_order_id, current_user["id"], body.razorpay_payment_id, body.razorpay_signature)
+    # See verify-mcq-payment's comment above — the frontend only checks the
+    # HTTP status, so a grant failure must not come back as a 200.
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("message", "Payment record not found"))
+    return result
 
 
 async def _apply_test_series_grant(db: Client, order_id: str, user_id: str, rzp_pay: str, rzp_sig: str):
     try:
-        payment = db.table("payments").select("*").eq("razorpay_order_id", order_id).execute()
+        # Scoped to the caller — see _apply_mcq_grant's comment above; same
+        # ownership gap fixed here.
+        payment = db.table("payments").select("*").eq("razorpay_order_id", order_id).eq("user_id", user_id).execute()
         if not payment.data:
-            return {"success": True, "message": "No matching payment found"}
+            return {"success": False, "message": "No matching payment found"}
 
         payment_row = payment.data[0]
         payment_id = payment_row["id"]
@@ -975,6 +1011,7 @@ async def _apply_test_series_grant(db: Client, order_id: str, user_id: str, rzp_
 # open long enough to call /verify-payment itself.
 
 @router.post("/webhook")
+@limiter.limit("60/minute")
 async def razorpay_webhook(request: Request, db: Client = Depends(get_db)):
     webhook_secret = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
     if not webhook_secret:
@@ -1021,7 +1058,9 @@ async def razorpay_webhook(request: Request, db: Client = Depends(get_db)):
 # ─── Manual UTR Payment Path ──────────────────────────────────────────────────
 
 @router.post("/verify-utr", status_code=201)
+@limiter.limit("10/minute")
 async def submit_utr(
+    request: Request,
     body: SubmitUTRRequest,
     current_user: dict = Depends(get_current_user),
     db: Client = Depends(get_db),
