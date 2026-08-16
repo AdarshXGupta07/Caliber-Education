@@ -749,7 +749,14 @@ async def _apply_mcq_grant(db: Client, order_id: str, user_id: str, rzp_pay: str
                 elif duration_str == "1_year":   new_expiry = (base_date + timedelta(days=365)).isoformat()
                 else:                            new_expiry = (base_date + timedelta(days=30)).isoformat()
 
-                print(f"[MCQ ENROLL] Extending {sub_id}: {existing_expiry_str} + {duration_str} → {new_expiry}")
+                # Plain ASCII "->" on purpose, not "→" — a non-ASCII character
+                # here crashes with UnicodeEncodeError on any stdout that
+                # isn't UTF-8 (e.g. a default Windows console), and since the
+                # grant loop no longer swallows exceptions (see the comment
+                # a few lines up), that crash used to abort the entire grant
+                # — the actual root cause behind the duplicate-enrollment
+                # test data this was found from.
+                print(f"[MCQ ENROLL] Extending {sub_id}: {existing_expiry_str} + {duration_str} -> {new_expiry}")
 
                 # Update ONLY the latest row for this subject
                 db.table("mcq_enrollments").update({

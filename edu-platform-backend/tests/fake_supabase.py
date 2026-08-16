@@ -8,6 +8,7 @@ read from or written to by an automated test run.
 """
 from __future__ import annotations
 
+import uuid
 from typing import Any, Callable
 
 
@@ -99,7 +100,15 @@ class FakeQuery:
         table = self._store.setdefault(self._table, [])
 
         if self._pending_insert is not None:
-            inserted = [dict(r) for r in self._pending_insert]
+            # Real Postgres/Supabase auto-generates `id` via a column
+            # default (gen_random_uuid()) when an insert doesn't provide
+            # one — mirror that here, since app code that inserts without
+            # an explicit id (e.g. mcq_enrollments) relies on being able to
+            # look the row back up by its other columns afterward.
+            inserted = [
+                {"id": r.get("id") or uuid.uuid4().hex, **{k: v for k, v in r.items() if k != "id"}}
+                for r in self._pending_insert
+            ]
             if self._pending_upsert_ids is not None:
                 table[:] = [r for r in table if r.get(self._conflict_col) not in self._pending_upsert_ids]
             table.extend(inserted)
