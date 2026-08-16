@@ -516,16 +516,11 @@ def _atomic_extend_course(db: Client, user_id: str, course_id: str, payment_id: 
     # "approved" while the customer received nothing (see
     # _apply_course_grant_or_extend, which only flips status to "approved"
     # after every extend call here has succeeded).
-    res = db.rpc("grant_or_extend_enrollment", {
+    db.rpc("grant_or_extend_enrollment", {
         "p_user_id": user_id,
         "p_course_id": course_id,
         "p_duration_days": base_duration
     }).execute()
-    new_expiry = res.data
-
-    db.table("payments").update({
-        "notes": f"Item extended/granted. New Expiry: {new_expiry}"
-    }).eq("id", payment_id).execute()
 
 
 # ─── MCQ Package Payment Endpoints ──────────────────────────────────────────
