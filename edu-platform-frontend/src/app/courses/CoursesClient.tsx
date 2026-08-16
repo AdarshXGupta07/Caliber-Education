@@ -24,7 +24,7 @@ const LEVEL_FILTERS: FilterOption[] = [
   { id: "level-Intermediate", label: "CA Intermediate" },
   { id: "level-Foundation", label: "CA Foundation" },
   { id: "level-All Levels", label: "All Levels" },
-  { id: "level-Others", label: "Other Services" },
+  { id: "one-on-one", label: "1:1 Sessions" },
 ];
 
 const levelColors: Partial<Record<NonNullable<Course["level"]>, string>> = {
@@ -170,6 +170,15 @@ export default function CoursesClient() {
     loadData();
   }, []);
 
+  // Deep-link support — e.g. /courses#one-on-one from the homepage's
+  // "Book 1:1 Session" button jumps straight into that filter tab.
+  useEffect(() => {
+    const hash = window.location.hash.replace("#", "");
+    if (hash && LEVEL_FILTERS.some((f) => f.id === hash)) {
+      setActiveTab(hash);
+    }
+  }, []);
+
   // Track page scroll to show "Back to Top" button
   useEffect(() => {
     const handleScroll = () => {
@@ -213,11 +222,11 @@ export default function CoursesClient() {
 
     // 2. Category / tab filter
     if (activeTab === "all") return true;
+    if (activeTab === "one-on-one") {
+      return !!c.isOneOnOne;
+    }
     if (activeTab.startsWith("level-")) {
       const level = activeTab.replace("level-", "");
-      if (level === "Others") {
-        return c.level === null;
-      }
       return c.level === level;
     }
     return c.id === activeTab;
@@ -346,9 +355,11 @@ export default function CoursesClient() {
                         }`}>
                         {filter.id === "all"
                           ? courses.length
-                          : filter.id.startsWith("level-")
-                            ? courses.filter(c => filter.id.replace("level-", "") === "Others" ? c.level === null : c.level === filter.id.replace("level-", "")).length
-                            : 0
+                          : filter.id === "one-on-one"
+                            ? courses.filter(c => !!c.isOneOnOne).length
+                            : filter.id.startsWith("level-")
+                              ? courses.filter(c => c.level === filter.id.replace("level-", "")).length
+                              : 0
                         }
                       </span>
                     </button>

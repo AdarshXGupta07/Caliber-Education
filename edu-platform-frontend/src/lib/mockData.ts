@@ -27,6 +27,7 @@ export interface Course {
   linkedSeriesId?: string;    // For MCQ Series delivery
   // Availability — "coming_soon" hides the buy action; product is visible but not purchasable
   status: "available" | "coming_soon";
+  isOneOnOne?: boolean;
 }
 
 export const courses: Course[] = [
