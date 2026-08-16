@@ -148,11 +148,6 @@ export default function SeriesDetailPage({ params }: { params: Promise<{ seriesI
                         <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg bg-line-gray-light/60 dark:bg-line-gray-dark/40 text-slate dark:text-paper/70">
                           {set.subject}
                         </span>
-                        {!set.is_locked ? (
-                          <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg bg-signal-emerald/10 text-signal-emerald border border-signal-emerald/20">Free</span>
-                        ) : (
-                          <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">₹{set.price}</span>
-                        )}
                       </div>
 
                       {/* Title & desc */}
