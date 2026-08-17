@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowRight, BookOpen, MessageCircle, Trophy, ChevronRight, Zap, Users, Star } from "lucide-react";
+import { ArrowRight, BookOpen, MessageCircle, Trophy, Zap, Users, Star } from "lucide-react";
 import Image from "next/image";
 import { HeroMCQCard } from "@/components/HeroMCQCard";
 import { useState } from "react";
@@ -21,23 +21,6 @@ const steps = [
   { num: "01", icon: <BookOpen className="w-5 h-5" />, title: "Enroll", desc: "Choose a CA course that matches your exam level. Pay once, access forever." },
   { num: "02", icon: <Zap className="w-5 h-5" />, title: "Practice MCQs", desc: "Attempt timed MCQ sets daily. Every question mirrors the CA exam pattern." },
   { num: "03", icon: <MessageCircle className="w-5 h-5" />, title: "Get WhatsApp Access", desc: "After enrolment, join our exclusive WhatsApp group for live doubt resolution." },
-];
-
-const founders = [
-  {
-    name: "CA Soumyadeep Pramanick",
-    role: "CA Accounting & Finance Specialist",
-    tagline: "Chartered Accountant. Specializes in building conceptual depth in Financial Reporting & Advanced Accounting for droppers.",
-    initials: "SP",
-    image: "/MENTOR3.png",
-  },
-  {
-    name: "CA Aditya Kanal",
-    role: "CA Law, Audit & Taxation Specialist",
-    tagline: "Chartered Accountant. Decodes complex corporate laws and auditing standards through daily memory-retrieval practice.",
-    initials: "AK",
-    image: "/MENTOR6.jpg",
-  },
 ];
 
 export default function HomeClient() {
@@ -136,38 +119,7 @@ export default function HomeClient() {
             <span className="text-xs font-semibold text-slate dark:text-paper/50 uppercase tracking-widest">The Team</span>
             <h2 className="font-heading font-bold text-3xl sm:text-4xl text-ink-navy dark:text-paper mt-3">Built by CAs who cracked the exam</h2>
           </motion.div>
-          <div className="grid sm:grid-cols-2 gap-8 max-w-4xl mx-auto">
-            {founders.map((f, i) => (
-              <motion.div key={f.name} initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}>
-                <Link href="/about" className="group block">
-                  <div className="flex items-start gap-5 p-6 rounded-xl border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/20 hover:border-ink-navy dark:hover:border-paper transition-all duration-200">
-                    <div
-                      className="flex-shrink-0 w-14 h-14 rounded-lg border border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/35 dark:bg-line-gray-dark/30 flex items-center justify-center text-ink-navy dark:text-paper font-heading font-bold text-base overflow-hidden relative shadow-sm cursor-zoom-in group-hover:scale-105 transition-transform"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        if (f.image) setZoomedImage(f.image);
-                      }}
-                    >
-                      {f.image ? (
-                        <Image src={f.image} alt={f.name} fill className="object-cover" quality={95} />
-                      ) : (
-                        f.initials
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <h3 className="font-heading font-bold text-base text-ink-navy dark:text-paper">{f.name}</h3>
-                        <ChevronRight className="w-4 h-4 text-slate/40 group-hover:text-ink-navy dark:group-hover:text-paper group-hover:translate-x-0.5 transition-all" />
-                      </div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate dark:text-paper/50">{f.role}</span>
-                      <p className="text-xs text-slate dark:text-paper/60 leading-relaxed pt-1">{f.tagline}</p>
-                    </div>
-                  </div>
-                </Link>
-              </motion.div>
-            ))}
-          </div>
-          <div className="text-center mt-12">
+          <div className="text-center mt-4">
             <Link href="/about" className="inline-flex items-center gap-1.5 text-xs font-semibold text-ink-navy dark:text-paper hover:gap-2.5 transition-all">
               Read our full story <ArrowRight className="w-4 h-4" />
             </Link>

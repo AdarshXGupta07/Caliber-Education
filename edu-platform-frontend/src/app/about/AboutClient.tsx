@@ -31,6 +31,24 @@ const founders = [
 
 const mentors = [
   {
+    name: "CA Aditya Kanal",
+    role: "Co-Founder",
+    initials: "AK",
+    image: "/MENTOR6.jpg",
+    linkedin: "https://www.linkedin.com/in/aditya-kanal-3081561b4?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
+    bio: "Aditya is a first attempt Chartered Accountant and has passed level 1 of the CFA program. He is also an alumni of NMIMS, Mumbai, from where he studied Bsc Finance and passed out with a certificate of merit.\n\nHe works in valuations at a leading global advisory firm, where his day-to-day revolves around financial modelling, business valuation, and the kind of rigorous analytical work that CA students spend years training toward. Aditya also worked in valuations for his articleship, at a Big 4 firm.\n\nAlongside his practice, Aditya is an educator at heart — he built CAliber to bring that same rigour to CA aspirants, pairing real-world professional insight with structured mentorship and a results-driven approach. His goal is simple: help serious students not just clear their exams, but understand the “why” behind the numbers and walk into their careers genuinely prepared.",
+    specialties: ["Financial Modelling", "Business Valuation", "Mentorship"],
+  },
+  {
+    name: "CA Soumyadeep Pramanick",
+    role: "Co-Founder",
+    initials: "SP",
+    image: "/MENTOR3.png",
+    linkedin: "https://www.linkedin.com/in/ca-soumyadeep-pramanick?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
+    bio: "Co-founder of CAliber Mentorships, CA Soumyadeep Pramanick is a finance professional with experience in Financial Due Diligence (FDD) and Startup Advisory through his articleship at Big5 and Boutique TAS Firm at Mumbai. He has secured exemptions in Direct Tax (DT), Indirect Tax (IDT), and Integrated Business Solutions (IBS) in the Chartered Accountancy course and is currently pursuing CPA Australia. Having mentored 50+ students and built a community of 10,000+ followers across social media, he is passionate about simplifying finance and guiding aspiring professionals through mentorship and industry-focused learning.",
+    specialties: ["Financial Due Diligence", "Startup Advisory", "Direct & Indirect Tax"],
+  },
+  {
     name: "CA Madhya Jasani",
     role: "Mentor",
     initials: "MJ",
