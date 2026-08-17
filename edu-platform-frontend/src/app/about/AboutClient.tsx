@@ -6,29 +6,6 @@ import Image from "next/image";
 import { useState } from "react";
 import { LinkedInIcon } from "@/components/SocialIcons";
 
-const founders = [
-  {
-    name: "CA Aditya Kanal",
-    role: "Co-Founder",
-    initials: "AK",
-    image: "/MENTOR6.jpg",
-    linkedin: "https://www.linkedin.com/in/aditya-kanal-3081561b4?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
-    bio: "Aditya is a first attempt Chartered Accountant and has passed level 1 of the CFA program. He is also an alumni of NMIMS, Mumbai, from where he studied Bsc Finance and passed out with a certificate of merit.\n\nHe works in valuations at a leading global advisory firm, where his day-to-day revolves around financial modelling, business valuation, and the kind of rigorous analytical work that CA students spend years training toward. Aditya also worked in valuations for his articleship, at a Big 4 firm.\n\nAlongside his practice, Aditya is an educator at heart — he built CAliber to bring that same rigour to CA aspirants, pairing real-world professional insight with structured mentorship and a results-driven approach. His goal is simple: help serious students not just clear their exams, but understand the “why” behind the numbers and walk into their careers genuinely prepared.",
-    specialties: ["Financial Modelling", "Business Valuation", "Mentorship"],
-    quote: "Help serious students not just clear their exams, but understand the “why” behind the numbers.",
-  },
-  {
-    name: "CA Soumyadeep Pramanick",
-    role: "Co-Founder",
-    initials: "SP",
-    image: "/MENTOR3.png",
-    linkedin: "https://www.linkedin.com/in/ca-soumyadeep-pramanick?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
-    bio: "Co-founder of CAliber Mentorships, CA Soumyadeep Pramanick is a finance professional with experience in Financial Due Diligence (FDD) and Startup Advisory through his articleship at Big5 and Boutique TAS Firm at Mumbai. He has secured exemptions in Direct Tax (DT), Indirect Tax (IDT), and Integrated Business Solutions (IBS) in the Chartered Accountancy course and is currently pursuing CPA Australia. Having mentored 50+ students and built a community of 10,000+ followers across social media, he is passionate about simplifying finance and guiding aspiring professionals through mentorship and industry-focused learning.",
-    specialties: ["Financial Due Diligence", "Startup Advisory", "Direct & Indirect Tax"],
-    quote: "Passionate about simplifying finance and guiding aspiring professionals.",
-  },
-];
-
 const mentors = [
   {
     name: "CA Aditya Kanal",
@@ -96,54 +73,7 @@ export default function AboutClient() {
             <h2 className="font-heading font-bold text-3xl sm:text-4xl text-ink-navy dark:text-paper mt-2">Meet the team</h2>
           </motion.div>
 
-          {/* Founders Layer - Top 2 */}
-          <div className="max-w-6xl mx-auto mb-12">
-            <h3 className="font-heading font-bold text-xl text-center text-ink-navy dark:text-paper border-b border-line-gray-light dark:border-line-gray-dark pb-3 mb-6">Our Founders</h3>
-            <div className="grid md:grid-cols-2 gap-8">
-              {founders.map((f, i) => (
-                <motion.div key={f.name} initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}
-                  className="flex flex-col p-6 bg-white dark:bg-line-gray-dark/20 rounded-xl border border-line-gray-light dark:border-line-gray-dark">
-                  <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 mb-5">
-                    <div
-                      className="w-20 h-20 rounded-2xl border-4 border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/35 dark:bg-line-gray-dark/30 flex items-center justify-center text-ink-navy dark:text-paper font-heading font-bold text-2xl overflow-hidden relative shadow-sm flex-shrink-0 cursor-zoom-in hover:scale-105 transition-transform"
-                      onClick={() => { if (f.image) setZoomedImage(f.image); }}
-                    >
-                      {f.image ? (
-                        <Image src={f.image} alt={f.name} fill className="object-cover" quality={95} />
-                      ) : (
-                        f.initials
-                      )}
-                    </div>
-                    <div className="text-center sm:text-left mt-1 sm:mt-2">
-                      <div className="flex items-center justify-center sm:justify-start gap-2">
-                        <p className="font-heading font-bold text-lg text-ink-navy dark:text-paper">{f.name}</p>
-                        {f.linkedin && (
-                          <a href={f.linkedin} target="_blank" rel="noopener noreferrer" aria-label={`${f.name} on LinkedIn`}
-                            className="opacity-70 hover:opacity-100 hover:scale-110 transition-all">
-                            <LinkedInIcon className="w-4 h-4" />
-                          </a>
-                        )}
-                      </div>
-                      <p className="text-[10px] font-bold text-signal-emerald uppercase mt-1">{f.role}</p>
-                    </div>
-                  </div>
-                  <div className="flex-1 flex flex-col space-y-4">
-                    <p className="text-xs text-slate dark:text-paper/70 leading-relaxed whitespace-pre-line max-h-[170px] overflow-y-auto pr-2 stylish-scrollbar">{f.bio}</p>
-                    <div className="flex flex-wrap gap-2">
-                      {f.specialties.map((s) => (
-                        <span key={s} className="text-[9px] px-2.5 py-0.5 rounded bg-line-gray-light/60 dark:bg-line-gray-dark/40 text-slate dark:text-paper/60 font-semibold border border-line-gray-light/30">{s}</span>
-                      ))}
-                    </div>
-                    <blockquote className="border-l-2 border-amber-400 pl-4 text-[10px] italic font-medium text-slate dark:text-paper/80 pt-1 mt-auto">
-                      &ldquo;{f.quote}&rdquo;
-                    </blockquote>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-
-          {/* Mentors Layer - Bottom 3 */}
+          {/* Mentors Layer */}
           <div className="max-w-6xl mx-auto">
             <h3 className="font-heading font-bold text-xl text-center text-ink-navy dark:text-paper border-b border-line-gray-light dark:border-line-gray-dark pb-3 mb-8">Expert Mentors</h3>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
