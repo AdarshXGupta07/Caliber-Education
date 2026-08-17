@@ -60,8 +60,52 @@ const values = [
   { icon: <MessageCircle className="w-5 h-5" />, title: "Human access", desc: "Our WhatsApp groups give you direct access to Somya and Aditya. Real answers to real doubts, not chatbots." },
 ];
 
+function MentorCard({ m, i, onZoom }: { m: (typeof mentors)[number]; i: number; onZoom: (image: string) => void }) {
+  return (
+    <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}
+      className="flex flex-col p-6 bg-white dark:bg-line-gray-dark/20 rounded-xl border border-line-gray-light dark:border-line-gray-dark hover:border-slate/40 dark:hover:border-paper/40 transition-colors">
+      <div className="flex items-center gap-4 mb-4">
+        <div
+          className="w-16 h-16 rounded-xl border-2 border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/35 dark:bg-line-gray-dark/30 flex-shrink-0 flex items-center justify-center text-ink-navy dark:text-paper font-heading font-bold text-lg overflow-hidden relative shadow-sm cursor-zoom-in hover:scale-105 transition-transform"
+          onClick={() => { if (m.image) onZoom(m.image); }}
+        >
+          {m.image ? (
+            <Image src={m.image} alt={m.name} fill className="object-cover" quality={95} />
+          ) : (
+            m.initials
+          )}
+        </div>
+        <div>
+          <div className="flex items-center gap-1.5">
+            <p className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{m.name}</p>
+            {m.linkedin && (
+              <a href={m.linkedin} target="_blank" rel="noopener noreferrer" aria-label={`${m.name} on LinkedIn`}
+                className="opacity-70 hover:opacity-100 hover:scale-110 transition-all">
+                <LinkedInIcon className="w-3.5 h-3.5" />
+              </a>
+            )}
+          </div>
+          <p className="text-[10px] font-bold text-slate dark:text-paper/50 uppercase mt-0.5">{m.role}</p>
+        </div>
+      </div>
+      <div className="flex-1 space-y-4">
+        <p className="text-xs text-slate dark:text-paper/70 leading-relaxed max-h-[140px] overflow-y-auto pr-1 stylish-scrollbar">{m.bio}</p>
+        <div className="flex flex-wrap gap-1.5 pt-2 border-t border-line-gray-light dark:border-line-gray-dark">
+          {m.specialties.map((s) => (
+            <span key={s} className="text-[9px] px-2 py-0.5 rounded bg-line-gray-light/60 dark:bg-line-gray-dark/40 text-slate dark:text-paper/60 font-semibold border border-line-gray-light/30">{s}</span>
+          ))}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 export default function AboutClient() {
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
+  // First 2 entries are the co-founders — shown in their own 2-column row
+  // above the rest of the mentor grid (3-column), per the requested layout.
+  const founderMentors = mentors.slice(0, 2);
+  const otherMentors = mentors.slice(2);
 
   return (
     <div className="pt-6">
@@ -73,46 +117,17 @@ export default function AboutClient() {
             <h2 className="font-heading font-bold text-3xl sm:text-4xl text-ink-navy dark:text-paper mt-2">Meet the team</h2>
           </motion.div>
 
-          {/* Mentors Layer */}
+          {/* Mentors Layer — founders get their own 2-col row, rest are 3-col */}
           <div className="max-w-6xl mx-auto">
             <h3 className="font-heading font-bold text-xl text-center text-ink-navy dark:text-paper border-b border-line-gray-light dark:border-line-gray-dark pb-3 mb-8">Expert Mentors</h3>
+            <div className="grid sm:grid-cols-2 gap-6 mb-6">
+              {founderMentors.map((m, i) => (
+                <MentorCard key={m.name} m={m} i={i} onZoom={setZoomedImage} />
+              ))}
+            </div>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {mentors.map((m, i) => (
-                <motion.div key={m.name} initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.05 }}
-                  className="flex flex-col p-6 bg-white dark:bg-line-gray-dark/20 rounded-xl border border-line-gray-light dark:border-line-gray-dark hover:border-slate/40 dark:hover:border-paper/40 transition-colors">
-                  <div className="flex items-center gap-4 mb-4">
-                    <div
-                      className="w-16 h-16 rounded-xl border-2 border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/35 dark:bg-line-gray-dark/30 flex-shrink-0 flex items-center justify-center text-ink-navy dark:text-paper font-heading font-bold text-lg overflow-hidden relative shadow-sm cursor-zoom-in hover:scale-105 transition-transform"
-                      onClick={() => { if (m.image) setZoomedImage(m.image); }}
-                    >
-                      {m.image ? (
-                        <Image src={m.image} alt={m.name} fill className="object-cover" quality={95} />
-                      ) : (
-                        m.initials
-                      )}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <p className="font-heading font-bold text-sm text-ink-navy dark:text-paper">{m.name}</p>
-                        {m.linkedin && (
-                          <a href={m.linkedin} target="_blank" rel="noopener noreferrer" aria-label={`${m.name} on LinkedIn`}
-                            className="opacity-70 hover:opacity-100 hover:scale-110 transition-all">
-                            <LinkedInIcon className="w-3.5 h-3.5" />
-                          </a>
-                        )}
-                      </div>
-                      <p className="text-[10px] font-bold text-slate dark:text-paper/50 uppercase mt-0.5">{m.role}</p>
-                    </div>
-                  </div>
-                  <div className="flex-1 space-y-4">
-                    <p className="text-xs text-slate dark:text-paper/70 leading-relaxed max-h-[140px] overflow-y-auto pr-1 stylish-scrollbar">{m.bio}</p>
-                    <div className="flex flex-wrap gap-1.5 pt-2 border-t border-line-gray-light dark:border-line-gray-dark">
-                      {m.specialties.map((s) => (
-                        <span key={s} className="text-[9px] px-2 py-0.5 rounded bg-line-gray-light/60 dark:bg-line-gray-dark/40 text-slate dark:text-paper/60 font-semibold border border-line-gray-light/30">{s}</span>
-                      ))}
-                    </div>
-                  </div>
-                </motion.div>
+              {otherMentors.map((m, i) => (
+                <MentorCard key={m.name} m={m} i={i} onZoom={setZoomedImage} />
               ))}
             </div>
           </div>
