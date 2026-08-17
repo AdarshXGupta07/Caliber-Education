@@ -9,7 +9,7 @@ import { LinkedInIcon } from "@/components/SocialIcons";
 const mentors = [
   {
     name: "CA Aditya Kanal",
-    role: "Co-Founder",
+    role: "Mentor",
     initials: "AK",
     image: "/MENTOR6.jpg",
     linkedin: "https://www.linkedin.com/in/aditya-kanal-3081561b4?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
@@ -18,7 +18,7 @@ const mentors = [
   },
   {
     name: "CA Soumyadeep Pramanick",
-    role: "Co-Founder",
+    role: "Mentor",
     initials: "SP",
     image: "/MENTOR3.png",
     linkedin: "https://www.linkedin.com/in/ca-soumyadeep-pramanick?utm_source=share_via&utm_content=profile&utm_medium=member_ios",
@@ -57,7 +57,7 @@ const values = [
   { icon: <Target className="w-5 h-5" />, title: "Exam-first design", desc: "Every MCQ, every explanation, every timer is built to replicate actual CA exam conditions — not textbook reading." },
   { icon: <Heart className="w-5 h-5" />, title: "Student-centred", desc: "We obsess over the student experience. Mobile-first, no distractions, instant feedback on every question." },
   { icon: <Lightbulb className="w-5 h-5" />, title: "Understand, don't memorise", desc: "Every answer comes with a full explanation. We care about building conceptual clarity, not rote recall." },
-  { icon: <MessageCircle className="w-5 h-5" />, title: "Human access", desc: "Our WhatsApp groups give you direct access to Somya and Aditya. Real answers to real doubts, not chatbots." },
+  { icon: <MessageCircle className="w-5 h-5" />, title: "Human access", desc: "Our WhatsApp groups give you direct access to mentors. Real answers to real doubts, not chatbots." },
 ];
 
 function MentorCard({ m, i, onZoom }: { m: (typeof mentors)[number]; i: number; onZoom: (image: string) => void }) {
