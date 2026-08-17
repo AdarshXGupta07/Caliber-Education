@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Fragment, useEffect, useState, createContext, useContext } from "react";
+import React, { Fragment, useEffect, useState, useRef, createContext, useContext } from "react";
 import MCQStudio from "./components/MCQStudio";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -14,7 +14,7 @@ import {
 import {
   Shield, ShieldOff, CheckCircle, XCircle, Upload, Plus, BookOpen,
   Users, Clock, AlertTriangle, Trash2, ChevronDown,
-  ChevronRight, Edit2, X, GripVertical, RefreshCw, Download, Tag, UserCheck, CheckCheck
+  ChevronRight, ChevronLeft, Edit2, X, GripVertical, RefreshCw, Download, Tag, UserCheck, CheckCheck
 } from "lucide-react";
 
 const inp = "w-full px-3 py-2 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-xl focus:outline-none focus:border-signal-emerald transition-colors";
@@ -613,6 +613,38 @@ function PaymentsTab() {
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "approved" | "rejected" | "refunded">("all");
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const checkScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 5);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 5);
+  };
+
+  useEffect(() => {
+    checkScroll();
+    const el = scrollRef.current;
+    if (!el) return;
+    el.addEventListener("scroll", checkScroll);
+    const observer = new ResizeObserver(checkScroll);
+    observer.observe(el);
+    return () => {
+      el.removeEventListener("scroll", checkScroll);
+      observer.disconnect();
+    };
+  }, [verifications, statusFilter]);
+
+  const scrollTable = (dir: "left" | "right") => {
+    scrollRef.current?.scrollBy({ left: dir === "left" ? -280 : 280 });
+    // Update button visibility directly rather than relying solely on the
+    // scroll event listener — keeps this deterministic regardless of
+    // whether a given browser fires 'scroll' synchronously for a
+    // programmatic (non-user-gesture) scrollBy call.
+    checkScroll();
+  };
 
   useEffect(() => {
     async function loadPayments() {
@@ -691,7 +723,29 @@ function PaymentsTab() {
         </div>
       </div>
 
-      <div className="hidden sm:block overflow-x-auto rounded-2xl border border-line-gray-light dark:border-line-gray-dark">
+      <div className="hidden sm:block relative">
+        {/* Anchored to the header row's height only (not vertically centered
+            on the whole table) so they never sit on top of a data row's
+            Approve/Reject buttons further down. */}
+        {canScrollLeft && (
+          <button
+            onClick={() => scrollTable("left")}
+            aria-label="Scroll table left"
+            className="absolute left-1 top-2 z-20 w-8 h-8 rounded-full bg-white dark:bg-line-gray-dark border border-line-gray-light dark:border-line-gray-dark shadow-md flex items-center justify-center text-ink-navy dark:text-paper hover:bg-line-gray-light dark:hover:bg-line-gray-dark/60 transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+        )}
+        {canScrollRight && (
+          <button
+            onClick={() => scrollTable("right")}
+            aria-label="Scroll table right"
+            className="absolute right-1 top-2 z-20 w-8 h-8 rounded-full bg-white dark:bg-line-gray-dark border border-line-gray-light dark:border-line-gray-dark shadow-md flex items-center justify-center text-ink-navy dark:text-paper hover:bg-line-gray-light dark:hover:bg-line-gray-dark/60 transition-colors"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        )}
+        <div ref={scrollRef} className="overflow-x-auto scrollbar-x-visible rounded-2xl border border-line-gray-light dark:border-line-gray-dark">
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-line-gray-light/50 dark:bg-line-gray-dark/50 text-left text-xs text-slate dark:text-paper/50 uppercase tracking-wider">
@@ -734,6 +788,7 @@ function PaymentsTab() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       <div className="sm:hidden space-y-3">
