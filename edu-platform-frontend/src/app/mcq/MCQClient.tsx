@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { Toast, type ToastState } from "@/components/Toast";
+import { UpiPaymentModal } from "@/components/UpiPaymentModal";
 import {
   Search,
   Zap,
@@ -87,6 +88,8 @@ export default function MCQClient() {
   const [purchaseSuccess, setPurchaseSuccess] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [purchasedInfo, setPurchasedInfo] = useState<{ title: string; amount: number } | null>(null);
+  const [showUpiModal, setShowUpiModal] = useState(false);
+  const paymentMode = process.env.NEXT_PUBLIC_PAYMENT_MODE || "manual";
 
   // Fetch backend packages on mount with graceful fallback to seeded matrix
   useEffect(() => {
@@ -395,6 +398,25 @@ export default function MCQClient() {
     }
   };
 
+  const handleUpiSubmit = async (upiReference: string) => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("caliber_jwt") : null;
+    const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+    const res = await fetch(`${apiURL}/api/payments/submit-manual-mcq`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: token ? `Bearer ${token}` : "" },
+      body: JSON.stringify({
+        level: activeLevel,
+        subjectIds: modalSelectedSubjectIds,
+        duration: selectedDuration,
+        couponCode: couponApplied ? couponCode : undefined,
+        upiReference,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) return { success: true };
+    return { success: false, message: data.detail || "Couldn't submit your payment. Please try again." };
+  };
+
   const levelBadges: Record<MCQLevel, { label: string; tag: string; bg: string; border: string; text: string }> = {
     FINAL: {
       label: "CA Final",
@@ -422,6 +444,13 @@ export default function MCQClient() {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 selection:bg-emerald-500 selection:text-black">
       <Toast toast={toast} onDismiss={() => setToast(null)} />
+      <UpiPaymentModal
+        open={showUpiModal}
+        onClose={() => setShowUpiModal(false)}
+        amount={finalPayablePrice}
+        itemLabel={`${activeLevel} MCQ Package (${DURATION_LABELS[selectedDuration].label})`}
+        onSubmit={handleUpiSubmit}
+      />
       {/* ─── Top High-Value Bundle Recommendation Header ─── */}
       <section className="relative pt-24 pb-8 overflow-hidden">
         {/* Ambient Gradient Glows */}
@@ -1114,23 +1143,39 @@ export default function MCQClient() {
                       </span>
                     </div>
 
-                    <button
-                      onClick={handleCheckout}
-                      disabled={isProcessing || modalSelectedSubjectIds.length === 0}
-                      className="w-full sm:w-auto px-8 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400 hover:from-emerald-300 hover:to-cyan-300 text-slate-950 text-sm font-black shadow-xl shadow-emerald-500/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      {isProcessing ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          <span>Processing Checkout...</span>
-                        </>
-                      ) : (
-                        <>
-                          <CreditCard className="w-4 h-4" />
-                          <span>Proceed to Pay ₹{finalPayablePrice}</span>
-                        </>
-                      )}
-                    </button>
+                    {(paymentMode === "manual" || paymentMode === "both") && (
+                      <button
+                        onClick={() => (isAuthenticated ? setShowUpiModal(true) : router.push("/login?next=/mcq"))}
+                        disabled={modalSelectedSubjectIds.length === 0}
+                        className="w-full sm:w-auto px-8 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400 hover:from-emerald-300 hover:to-cyan-300 text-slate-950 text-sm font-black shadow-xl shadow-emerald-500/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        <CreditCard className="w-4 h-4" />
+                        <span>Pay via UPI — ₹{finalPayablePrice}</span>
+                      </button>
+                    )}
+                    {(paymentMode === "razorpay" || paymentMode === "both") && (
+                      <button
+                        onClick={handleCheckout}
+                        disabled={isProcessing || modalSelectedSubjectIds.length === 0}
+                        className={`w-full sm:w-auto px-8 py-3.5 rounded-2xl text-sm font-black transition-all flex items-center justify-center gap-2 disabled:opacity-50 ${
+                          paymentMode === "both"
+                            ? "border border-slate-700/50 text-slate-300 hover:bg-slate-800"
+                            : "bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400 hover:from-emerald-300 hover:to-cyan-300 text-slate-950 shadow-xl shadow-emerald-500/20 hover:scale-[1.02] active:scale-[0.98]"
+                        }`}
+                      >
+                        {isProcessing ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Processing Checkout...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CreditCard className="w-4 h-4" />
+                            <span>Proceed to Pay ₹{finalPayablePrice}</span>
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

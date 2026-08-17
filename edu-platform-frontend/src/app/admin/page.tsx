@@ -14,7 +14,7 @@ import {
 import {
   Shield, ShieldOff, CheckCircle, XCircle, Upload, Plus, BookOpen,
   Users, Clock, AlertTriangle, Trash2, ChevronDown,
-  ChevronRight, Edit2, X, GripVertical, RefreshCw, Download, Tag, UserCheck
+  ChevronRight, Edit2, X, GripVertical, RefreshCw, Download, Tag, UserCheck, CheckCheck
 } from "lucide-react";
 
 const inp = "w-full px-3 py-2 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-xl focus:outline-none focus:border-signal-emerald transition-colors";
@@ -636,6 +636,45 @@ function PaymentsTab() {
 
   const filtered = statusFilter === "all" ? verifications : verifications.filter(v => v.status === statusFilter);
 
+  const approveVerification = async (id: string) => {
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/payments/${id}/approve`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setVerifications(prev => prev.map(v => (v.id === id ? { ...v, status: "approved" } : v)));
+        setToast({ type: "success", message: "Payment approved — access granted." });
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setToast({ type: "error", message: data.detail || "Failed to approve payment" });
+      }
+    } catch (e) {
+      setToast({ type: "error", message: "Error approving payment" });
+    }
+  };
+
+  const rejectVerification = async (id: string) => {
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/payments/${id}/reject`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setVerifications(prev => prev.map(v => (v.id === id ? { ...v, status: "rejected" } : v)));
+        setToast({ type: "success", message: "Payment rejected." });
+      } else {
+        setToast({ type: "error", message: "Failed to reject payment" });
+      }
+    } catch (e) {
+      setToast({ type: "error", message: "Error rejecting payment" });
+    }
+  };
+
   return (
     <motion.div key="payments" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
       <Toast toast={toast} onDismiss={() => setToast(null)} />
@@ -656,7 +695,7 @@ function PaymentsTab() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-line-gray-light/50 dark:bg-line-gray-dark/50 text-left text-xs text-slate dark:text-paper/50 uppercase tracking-wider">
-              {["Student Email", "Course / Set", "Amount", "UTR", "Date", "Status"].map(h => <th key={h} className="px-5 py-3 font-semibold">{h}</th>)}
+              {["Student Email", "Course / Set", "Amount", "Method", "Reference", "Date", "Status", "Actions"].map(h => <th key={h} className="px-5 py-3 font-semibold">{h}</th>)}
             </tr>
           </thead>
           <tbody className="divide-y divide-line-gray-light dark:divide-line-gray-dark bg-white dark:bg-line-gray-dark/20">
@@ -666,9 +705,22 @@ function PaymentsTab() {
                 <td className="px-5 py-3.5 text-ink-navy dark:text-paper font-medium">{v.studentEmail}</td>
                 <td className="px-5 py-3.5 text-slate dark:text-paper/70 max-w-[160px] truncate">{v.courseTitle}</td>
                 <td className="px-5 py-3.5 font-mono font-semibold text-ink-navy dark:text-paper">₹{v.amount.toLocaleString()}</td>
-                <td className="px-5 py-3.5 font-mono text-xs text-slate dark:text-paper/60">{v.utrNumber}</td>
+                <td className="px-5 py-3.5">
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${v.paymentMethod === "manual_upi" ? "bg-amber-500/10 text-amber-600" : "bg-blue-500/10 text-blue-600"}`}>
+                    {v.paymentMethod === "manual_upi" ? "Manual UPI" : "Razorpay"}
+                  </span>
+                </td>
+                <td className="px-5 py-3.5 font-mono text-xs text-slate dark:text-paper/60">{v.paymentReference || v.utrNumber}</td>
                 <td className="px-5 py-3.5 text-slate dark:text-paper/60">{v.date}</td>
                 <td className="px-5 py-3.5"><StatusBadge status={v.status} /></td>
+                <td className="px-5 py-3.5">
+                  {v.status === "pending" && (
+                    <div className="flex gap-2">
+                      <button onClick={() => approveVerification(v.id)} className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-signal-emerald border border-signal-emerald/30 rounded-lg hover:bg-signal-emerald/10 transition-colors"><CheckCheck className="w-3 h-3" /> Approve</button>
+                      <button onClick={() => rejectVerification(v.id)} className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-alert-coral border border-alert-coral/30 rounded-lg hover:bg-alert-coral/10 transition-colors"><XCircle className="w-3 h-3" /> Reject</button>
+                    </div>
+                  )}
+                </td>
               </motion.tr>
             ))}
           </tbody>
@@ -683,10 +735,19 @@ function PaymentsTab() {
               <div><p className="font-semibold text-sm text-ink-navy dark:text-paper">{v.studentEmail}</p><p className="text-xs text-slate dark:text-paper/60 mt-0.5">{v.courseTitle}</p></div>
               <StatusBadge status={v.status} />
             </div>
-            <div className="flex flex-wrap gap-3 text-xs text-slate dark:text-paper/60">
+            <div className="flex flex-wrap items-center gap-3 text-xs text-slate dark:text-paper/60">
               <span className="font-mono font-bold text-ink-navy dark:text-paper">₹{v.amount.toLocaleString()}</span>
-              <span>{v.utrNumber}</span><span>{v.date}</span>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${v.paymentMethod === "manual_upi" ? "bg-amber-500/10 text-amber-600" : "bg-blue-500/10 text-blue-600"}`}>
+                {v.paymentMethod === "manual_upi" ? "Manual UPI" : "Razorpay"}
+              </span>
+              <span>{v.paymentReference || v.utrNumber}</span><span>{v.date}</span>
             </div>
+            {v.status === "pending" && (
+              <div className="flex gap-2">
+                <button onClick={() => approveVerification(v.id)} className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-signal-emerald border border-signal-emerald/30 rounded-lg hover:bg-signal-emerald/10 transition-colors"><CheckCheck className="w-3 h-3" /> Approve</button>
+                <button onClick={() => rejectVerification(v.id)} className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-alert-coral border border-alert-coral/30 rounded-lg hover:bg-alert-coral/10 transition-colors"><XCircle className="w-3 h-3" /> Reject</button>
+              </div>
+            )}
           </motion.div>
         ))}
       </div>

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Toast, type ToastState } from "@/components/Toast";
+import { UpiPaymentModal } from "@/components/UpiPaymentModal";
 
 export default function CourseDetailClient({ id }: { id: string }) {
   const [course, setCourse] = useState<any>(null);
@@ -79,6 +80,21 @@ export default function CourseDetailClient({ id }: { id: string }) {
   } | null>(null);
   const [couponError, setCouponError] = useState("");
   const [activePaymentMethod, setActivePaymentMethod] = useState<"razorpay" | "manual">("razorpay");
+  const [showUpiModal, setShowUpiModal] = useState(false);
+  const paymentMode = process.env.NEXT_PUBLIC_PAYMENT_MODE || "manual";
+
+  const handleUpiSubmit = async (upiReference: string) => {
+    const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+    const token = localStorage.getItem("caliber_jwt") || "";
+    const res = await fetch(`${apiURL}/api/payments/submit-manual-course`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ courseId: course.id, couponCode: appliedCoupon?.code || null, upiReference }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) return { success: true };
+    return { success: false, message: data.detail || "Couldn't submit your payment. Please try again." };
+  };
 
   const handleApplyCoupon = async () => {
     if (!couponCode.trim()) return;
@@ -288,6 +304,13 @@ export default function CourseDetailClient({ id }: { id: string }) {
   return (
     <div className="pt-16 pb-20">
       <Toast toast={toast} onDismiss={() => setToast(null)} />
+      <UpiPaymentModal
+        open={showUpiModal}
+        onClose={() => setShowUpiModal(false)}
+        amount={typeof course.price === "number" ? (appliedCoupon ? course.price - appliedCoupon.discount_amount : course.price) : 0}
+        itemLabel={course.title}
+        onSubmit={handleUpiSubmit}
+      />
       {/* Breadcrumb */}
       <div className="max-w-6xl mx-auto px-6 sm:px-8 pt-8">
         <Link href="/courses" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper transition-colors mb-6">
@@ -537,10 +560,24 @@ export default function CourseDetailClient({ id }: { id: string }) {
                       </Link>
                     </div>
                   ) : (
-                    <button onClick={handleBuyNow} disabled={purchaseLoading}
-                      className="w-full py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                      <Lock className="w-4 h-4" /> {purchaseLoading ? "Processing Razorpay..." : "Pay with Razorpay"}
-                    </button>
+                    <div className="space-y-2.5">
+                      {(paymentMode === "manual" || paymentMode === "both") && (
+                        <button onClick={() => (isAuthenticated ? setShowUpiModal(true) : router.push("/login"))}
+                          className="w-full py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm">
+                          <Lock className="w-4 h-4" /> Pay via UPI
+                        </button>
+                      )}
+                      {(paymentMode === "razorpay" || paymentMode === "both") && (
+                        <button onClick={handleBuyNow} disabled={purchaseLoading}
+                          className={`w-full py-3 font-bold rounded-lg active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                            paymentMode === "both"
+                              ? "border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40"
+                              : "bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy hover:opacity-90"
+                          }`}>
+                          <Lock className="w-4 h-4" /> {purchaseLoading ? "Processing Razorpay..." : "Pay with Razorpay"}
+                        </button>
+                      )}
+                    </div>
                   )}
 
                   <div className="space-y-3 pt-4 border-t border-line-gray-light dark:border-line-gray-dark">

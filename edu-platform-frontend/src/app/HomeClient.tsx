@@ -190,11 +190,8 @@ export default function HomeClient() {
                 30 real CA exam-pattern Accounting questions. Full explanations. The same experience our paid students get.
               </p>
               <div className="flex flex-wrap gap-4 justify-center pt-2">
-                <Link href="/mcq" className="inline-flex items-center gap-2 px-6 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm">
-                  Start Free Practice <ArrowRight className="w-4 h-4" />
-                </Link>
-                <Link href="/signup" className="inline-flex items-center gap-2 px-6 py-3 border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 font-semibold rounded-lg active:scale-[0.98] transition-all text-sm">
-                  <Users className="w-4 h-4" /> Sign Up Free
+                <Link href="/courses#one-on-one" className="inline-flex items-center gap-2 px-6 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm">
+                  Book 1:1 Session <ArrowRight className="w-4 h-4" />
                 </Link>
               </div>
             </div>

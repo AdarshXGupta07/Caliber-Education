@@ -118,12 +118,12 @@ async def list_payments(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    payments_res = db.table("payments").select("id, user_id, course_id, utr_number, amount, status, created_at").order("created_at", desc=True).execute()
+    payments_res = db.table("payments").select("id, user_id, course_id, utr_number, amount, status, created_at, payment_method, payment_reference").order("created_at", desc=True).execute()
     payments = payments_res.data or []
-    
+
     users_res = db.table("profiles").select("id, email, full_name").execute()
     users_map = {u["id"]: u for u in (users_res.data or [])}
-    
+
     courses_res = db.table("courses").select("id, title").execute()
     courses_map = {c["id"]: c["title"] for c in (courses_res.data or [])}
 
@@ -131,16 +131,16 @@ async def list_payments(
     for p in payments:
         user = users_map.get(p.get("user_id"))
         email = user.get("email", "Unknown") if user else "Unknown"
-        
+
         course_title = "Multiple/Bundle"
         raw_c_id = p.get("course_id")
         utr = p.get("utr_number", "")
-        
+
         if raw_c_id and raw_c_id in courses_map:
             course_title = courses_map[raw_c_id]
-        elif utr.startswith("mcq-"):
+        elif utr.startswith("mcq-") or utr.startswith("testseries-"):
             course_title = utr.split("|")[0]
-            
+
         verifications.append({
             "id": p["id"],
             "studentEmail": email,
@@ -148,10 +148,70 @@ async def list_payments(
             "amount": float(p.get("amount") or 0.0),
             "date": p.get("created_at", "").split("T")[0] if p.get("created_at") else "",
             "status": p.get("status", "pending"),
-            "utrNumber": utr
+            "utrNumber": utr,
+            "paymentMethod": p.get("payment_method", "razorpay"),
+            "paymentReference": p.get("payment_reference"),
         })
-        
+
     return verifications
+
+@router.post("/payments/{payment_id}/approve")
+@router.patch("/payments/{payment_id}/approve")
+async def approve_payment(
+    payment_id: str,
+    admin: dict = Depends(require_admin),
+    db: Client = Depends(get_db),
+):
+    """Single canonical approve path. Delegates to the same grant helpers the
+    real Razorpay verify flow, the webhook, and the manual-UPI submit
+    endpoints all use, so there's exactly one place that knows how to grant a
+    course vs an MCQ subject vs a test-series subject, and coupon usage is
+    recorded consistently no matter which payment method was used."""
+    from app.routers.payments import _apply_course_grant_or_extend, _apply_mcq_grant, _apply_test_series_grant
+    from app.core.config import get_settings
+
+    payment_res = db.table("payments").select("*").eq("id", payment_id).single().execute()
+    if not payment_res.data:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    payment = payment_res.data
+    if payment["status"] == "approved":
+        return {"success": True, "message": "Already approved"}
+
+    user_id = payment["user_id"]
+    utr_number = payment.get("utr_number") or ""
+    is_mcq = not payment.get("course_id") and utr_number.startswith("mcq-")
+    is_test_series = not payment.get("course_id") and utr_number.startswith("testseries-")
+
+    if is_mcq:
+        result = await _apply_mcq_grant(db, payment["razorpay_order_id"], user_id, "admin_approved", "admin_approved")
+    elif is_test_series:
+        result = await _apply_test_series_grant(db, payment["razorpay_order_id"], user_id, "admin_approved", "admin_approved")
+    else:
+        user_res = db.table("profiles").select("email").eq("id", user_id).single().execute()
+        email = user_res.data.get("email") if user_res.data else None
+        result = await _apply_course_grant_or_extend(db, payment, user_id, email, "admin_approved", "admin_approved", get_settings())
+
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("message", "Could not grant access for this payment."))
+
+    return {"success": True}
+
+@router.post("/payments/{payment_id}/reject")
+@router.patch("/payments/{payment_id}/reject")
+async def reject_payment(
+    payment_id: str,
+    body: dict = None,
+    admin: dict = Depends(require_admin),
+    db: Client = Depends(get_db),
+):
+    """Body: { "reason": "..." } (optional) — reason is returned to the caller
+    to show the student; add a dedicated `rejection_reason` column if you want
+    it persisted rather than just relayed at approval time."""
+    rejection_note = (body or {}).get("reason", "")
+    db.table("payments").update({"status": "rejected"}).eq("id", payment_id).execute()
+    return {"success": True, "reason": rejection_note}
+
 
 # ─── Users ────────────────────────────────────────────────────────────────────
 

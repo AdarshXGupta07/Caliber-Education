@@ -7,6 +7,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, CheckCircle2, Lock, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Toast, type ToastState } from "@/components/Toast";
+import { UpiPaymentModal } from "@/components/UpiPaymentModal";
 
 interface TSSubject {
   id: string; level: string; group_name: string; name: string; code: string;
@@ -35,6 +36,8 @@ export default function TestSeriesLevelPage({ params }: { params: Promise<{ leve
   const [buying, setBuying] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [showUpiModal, setShowUpiModal] = useState(false);
+  const paymentMode = process.env.NEXT_PUBLIC_PAYMENT_MODE || "manual";
 
   useEffect(() => {
     const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
@@ -156,11 +159,31 @@ export default function TestSeriesLevelPage({ params }: { params: Promise<{ leve
     }
   }
 
+  async function handleUpiSubmit(upiReference: string) {
+    const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+    const token = localStorage.getItem("caliber_jwt") || "";
+    const res = await fetch(`${apiURL}/api/payments/submit-manual-test-series`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ level: levelKey, subjectIds: selected, upiReference }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) return { success: true };
+    return { success: false, message: data.detail || "Couldn't submit your payment. Please try again." };
+  }
+
   const groups = Array.from(new Set(subjects.map((s) => s.group_name)));
 
   return (
     <div className="pt-24 pb-32 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
       <Toast toast={toast} onDismiss={() => setToast(null)} />
+      <UpiPaymentModal
+        open={showUpiModal}
+        onClose={() => setShowUpiModal(false)}
+        amount={total}
+        itemLabel={`${LEVEL_LABELS[level] || levelKey} Test Series`}
+        onSubmit={handleUpiSubmit}
+      />
       <Link href="/test-series" className="inline-flex items-center gap-1.5 text-xs text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper mb-6">
         <ArrowLeft className="w-3.5 h-3.5" /> All levels
       </Link>
@@ -256,10 +279,24 @@ export default function TestSeriesLevelPage({ params }: { params: Promise<{ leve
                     )}
                   </p>
                 </div>
-                <button onClick={handleBuy} disabled={buying || total <= 0}
-                  className="flex items-center gap-2 px-6 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-xl text-sm disabled:opacity-50">
-                  <ShieldCheck className="w-4 h-4" /> {buying ? "Starting..." : "Buy with Razorpay"}
-                </button>
+                <div className="flex items-center gap-2">
+                  {(paymentMode === "manual" || paymentMode === "both") && (
+                    <button onClick={() => (isAuthenticated ? setShowUpiModal(true) : router.push("/login"))} disabled={total <= 0}
+                      className="flex items-center gap-2 px-6 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-xl text-sm disabled:opacity-50">
+                      <ShieldCheck className="w-4 h-4" /> Pay via UPI
+                    </button>
+                  )}
+                  {(paymentMode === "razorpay" || paymentMode === "both") && (
+                    <button onClick={handleBuy} disabled={buying || total <= 0}
+                      className={`flex items-center gap-2 px-6 py-3 font-bold rounded-xl text-sm disabled:opacity-50 ${
+                        paymentMode === "both"
+                          ? "border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper"
+                          : "bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy"
+                      }`}>
+                      <ShieldCheck className="w-4 h-4" /> {buying ? "Starting..." : "Buy with Razorpay"}
+                    </button>
+                  )}
+                </div>
               </div>
             </motion.div>
           )}

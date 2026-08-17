@@ -1028,6 +1028,239 @@ async def _apply_test_series_grant(db: Client, order_id: str, user_id: str, rzp_
     }
 
 
+# ─── Manual UPI Payment Path (Razorpay not live yet) ────────────────────────
+# Student pays via a static UPI QR code shown in the frontend, then submits
+# their UPI transaction reference here instead of going through Razorpay
+# checkout. Creates a "pending" row exactly like the Razorpay create-*-order
+# endpoints do, using a synthetic razorpay_order_id so the SAME grant
+# functions (_apply_course_grant_or_extend, _apply_mcq_grant,
+# _apply_test_series_grant) work completely unchanged once an admin approves
+# it — see admin.py's approve_payment. The Razorpay path above is untouched;
+# these are new, additive endpoints only.
+
+class SubmitManualCourseRequest(CreateOrderRequest):
+    upiReference: str
+
+
+class SubmitManualMCQRequest(CreateMCQOrderRequest):
+    upiReference: str
+
+
+class SubmitManualTestSeriesRequest(CreateTestSeriesOrderRequest):
+    upiReference: str
+
+
+def _insert_manual_payment(db: Client, payment_row: dict, upi_reference: str) -> dict:
+    """Shared insert path for all three submit-manual-* endpoints below.
+    Normalizes the reference, rejects an already-used one (app-level check,
+    with the DB's partial unique index as the race-safe backstop for two
+    simultaneous submissions of the same reference)."""
+    reference = upi_reference.strip()
+    if not reference:
+        raise HTTPException(status_code=400, detail="Please enter your UPI transaction reference.")
+
+    existing = (
+        db.table("payments").select("id")
+        .eq("payment_reference", reference)
+        .eq("payment_method", "manual_upi")
+        .execute()
+    )
+    if existing.data:
+        raise HTTPException(
+            status_code=400,
+            detail="This payment reference has already been submitted. Contact support if this is an error.",
+        )
+
+    payment_row["payment_method"] = "manual_upi"
+    payment_row["payment_reference"] = reference
+    try:
+        result = db.table("payments").insert(payment_row).execute()
+    except PostgrestAPIError as e:
+        if e.code == "23505":
+            raise HTTPException(
+                status_code=400,
+                detail="This payment reference has already been submitted. Contact support if this is an error.",
+            )
+        raise
+    return result.data[0] if result.data else {}
+
+
+@router.post("/submit-manual-course", status_code=201)
+@limiter.limit("10/minute")
+async def submit_manual_course(
+    request: Request,
+    body: SubmitManualCourseRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Client = Depends(get_db),
+):
+    """Manual-UPI equivalent of create_order — identical item resolution and
+    coupon logic, no Razorpay call, creates a pending row for admin review."""
+    bundle = None
+    if body.courseId:
+        try:
+            uuid.UUID(body.courseId)
+            bundle = db.table("course_bundles").select("id, title, price, course_ids").eq("id", body.courseId).execute()
+        except ValueError:
+            bundle = None
+
+    is_multi_course_cart = False
+    original_price = 0.0
+
+    if bundle and bundle.data:
+        price = float(bundle.data[0].get("price") or 0)
+        original_price = price
+        active_course_id = body.courseId
+    elif body.courseIds and len(body.courseIds) > 0:
+        is_multi_course_cart = True
+        courses_res = db.table("courses").select("id, title, price").in_("id", body.courseIds).execute()
+        if not courses_res.data:
+            raise HTTPException(status_code=404, detail="Items not found in database")
+        price = sum(float(c.get("price") or 0) for c in courses_res.data)
+        original_price = price
+        active_course_id = ",".join(body.courseIds)
+    else:
+        course = db.table("courses").select("id, title, price").eq("id", body.courseId).single().execute()
+        if not course.data:
+            raise HTTPException(status_code=404, detail="Item not found")
+        price = float(course.data.get("price") or 0)
+        original_price = price
+        active_course_id = body.courseId
+
+    coupon, discount_amount, affiliate_id, commission_amount = _resolve_coupon(
+        db, body.couponCode, active_course_id, current_user["id"], price
+    )
+    final_price = max(0, price - discount_amount)
+
+    payment_row = {
+        "user_id": current_user["id"],
+        "course_id": None if is_multi_course_cart else active_course_id,
+        "amount": final_price,
+        "original_amount": original_price,
+        "discount_amount": discount_amount,
+        "coupon_id": coupon["id"] if coupon else None,
+        "affiliate_id": affiliate_id,
+        "commission_amount": commission_amount,
+        "status": "pending",
+        "razorpay_order_id": f"manual_{uuid.uuid4().hex}",
+    }
+    if is_multi_course_cart:
+        payment_row["utr_number"] = "courses|" + ",".join(body.courseIds) + f"|{uuid.uuid4().hex[:8]}"
+
+    _insert_manual_payment(db, payment_row, body.upiReference)
+
+    return {
+        "success": True,
+        "amount": final_price,
+        "originalAmount": original_price,
+        "discountAmount": discount_amount,
+        "couponCode": coupon["code"] if coupon else None,
+        "message": "Payment submitted for verification. You'll get access once our team confirms it.",
+    }
+
+
+@router.post("/submit-manual-mcq", status_code=201)
+@limiter.limit("10/minute")
+async def submit_manual_mcq(
+    request: Request,
+    body: SubmitManualMCQRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Client = Depends(get_db),
+):
+    """Manual-UPI equivalent of create_mcq_order."""
+    if not body.subjectIds:
+        raise HTTPException(status_code=400, detail="No subjects selected")
+
+    calc = calculate_mcq_cart(body.level, body.subjectIds, body.duration, db)
+    base_price = calc["real_total_price"]
+    discounted_price = calc["discounted_price"]
+
+    coupon, coupon_discount, affiliate_id, commission_amount = _resolve_coupon(
+        db, body.couponCode, f"mcq-{body.level.lower()}", current_user["id"], discounted_price
+    )
+    final_price = max(0.0, discounted_price - coupon_discount)
+
+    payment_row = {
+        "user_id": current_user["id"],
+        "course_id": None,
+        "utr_number": f"mcq-{body.level.lower()}-{body.duration}|" + ",".join(body.subjectIds) + f"|{uuid.uuid4().hex[:8]}",
+        "amount": final_price,
+        "original_amount": base_price,
+        "discount_amount": base_price - final_price,
+        "coupon_id": coupon["id"] if coupon else None,
+        "affiliate_id": affiliate_id,
+        "commission_amount": commission_amount,
+        "status": "pending",
+        "razorpay_order_id": f"manual_{uuid.uuid4().hex}",
+    }
+
+    _insert_manual_payment(db, payment_row, body.upiReference)
+
+    return {
+        "success": True,
+        "amount": final_price,
+        "originalAmount": base_price,
+        "discountAmount": base_price - final_price,
+        "savingsAmount": calc["savings_amount"],
+        "appliedBundle": calc.get("applied_bundle_title"),
+        "couponCode": coupon["code"] if coupon else None,
+        "message": "Payment submitted for verification. You'll get access once our team confirms it.",
+    }
+
+
+@router.post("/submit-manual-test-series", status_code=201)
+@limiter.limit("10/minute")
+async def submit_manual_test_series(
+    request: Request,
+    body: SubmitManualTestSeriesRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Client = Depends(get_db),
+):
+    """Manual-UPI equivalent of create_test_series_order."""
+    if not body.subjectIds:
+        raise HTTPException(status_code=400, detail="No subjects selected")
+
+    calc = calculate_test_series_cart(body.level, body.subjectIds, db)
+    if not calc.get("purchasable", True):
+        raise HTTPException(
+            status_code=400,
+            detail="Some of these papers aren't sold individually — select a full Group or add the rest of that group's papers.",
+        )
+    base_price = calc["real_total_price"]
+    discounted_price = calc["discounted_price"]
+
+    coupon, coupon_discount, affiliate_id, commission_amount = _resolve_coupon(
+        db, body.couponCode, f"testseries-{body.level.lower()}", current_user["id"], discounted_price
+    )
+    final_price = max(0.0, discounted_price - coupon_discount)
+
+    payment_row = {
+        "user_id": current_user["id"],
+        "course_id": None,
+        "utr_number": f"testseries-{body.level.lower()}|" + ",".join(body.subjectIds) + f"|{uuid.uuid4().hex[:8]}",
+        "amount": final_price,
+        "original_amount": base_price,
+        "discount_amount": base_price - final_price,
+        "coupon_id": coupon["id"] if coupon else None,
+        "affiliate_id": affiliate_id,
+        "commission_amount": commission_amount,
+        "status": "pending",
+        "razorpay_order_id": f"manual_{uuid.uuid4().hex}",
+    }
+
+    _insert_manual_payment(db, payment_row, body.upiReference)
+
+    return {
+        "success": True,
+        "amount": final_price,
+        "originalAmount": base_price,
+        "discountAmount": base_price - final_price,
+        "savingsAmount": calc["savings_amount"],
+        "appliedBundle": calc.get("applied_bundle_title"),
+        "couponCode": coupon["code"] if coupon else None,
+        "message": "Payment submitted for verification. You'll get access once our team confirms it.",
+    }
+
+
 # ─── Razorpay Webhook (authoritative confirmation path) ─────────────────────
 # Configure this URL + a webhook secret in the Razorpay dashboard (Settings ->
 # Webhooks), subscribed to "payment.captured". This is the source of truth

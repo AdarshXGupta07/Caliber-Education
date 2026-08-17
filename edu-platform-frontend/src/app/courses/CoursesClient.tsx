@@ -7,6 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
 import { type Course } from "@/lib/mockData";
 import { Toast, type ToastState } from "@/components/Toast";
+import { UpiPaymentModal } from "@/components/UpiPaymentModal";
 import {
   ArrowRight, Lock, Star, Clock, Zap,
   Search, ChevronUp, ChevronDown, SlidersHorizontal, X, ArrowUp, Tag
@@ -663,7 +664,22 @@ function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[
 
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [showUpiModal, setShowUpiModal] = useState(false);
+  const paymentMode = process.env.NEXT_PUBLIC_PAYMENT_MODE || "manual";
   const router = useRouter();
+
+  const handleUpiSubmit = async (upiReference: string) => {
+    const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+    const token = localStorage.getItem("caliber_jwt") || "";
+    const res = await fetch(`${apiURL}/api/payments/submit-manual-course`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ courseIds: selectedIds, couponCode: appliedCoupon?.code || null, upiReference }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) return { success: true };
+    return { success: false, message: data.detail || "Couldn't submit your payment. Please try again." };
+  };
 
   const handleCheckout = async () => {
     if (!isAuthenticated) {
@@ -741,6 +757,13 @@ function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[
   return (
     <div className="bg-white/80 dark:bg-line-gray-dark/40 backdrop-blur-md border border-line-gray-light dark:border-line-gray-dark rounded-2xl shadow-xl overflow-hidden shadow-emerald-500/5">
       <Toast toast={toast} onDismiss={() => setToast(null)} />
+      <UpiPaymentModal
+        open={showUpiModal}
+        onClose={() => setShowUpiModal(false)}
+        amount={finalPrice}
+        itemLabel={selectedIds.length > 1 ? "Custom Course Bundle" : "Course"}
+        onSubmit={handleUpiSubmit}
+      />
       <div className="p-5 border-b border-line-gray-light dark:border-line-gray-dark bg-line-gray-light/30 dark:bg-line-gray-dark/30">
         <div className="flex items-center justify-between">
           <h3 className="font-heading font-bold text-ink-navy dark:text-paper flex items-center gap-2">
@@ -858,14 +881,25 @@ function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[
           </div>
         </div>
 
-        <button
-          disabled={selectedIds.length === 0 || purchaseLoading}
-          onClick={handleCheckout}
-          className={`w-full py-3 rounded-xl font-bold text-sm transition-all focus:outline-none flex items-center justify-center gap-2 ${selectedIds.length > 0 && !purchaseLoading ? "bg-signal-emerald text-white hover:opacity-90 active:scale-[0.98] shadow-md shadow-emerald-500/20" : "bg-line-gray-light dark:bg-line-gray-dark text-slate/50 cursor-not-allowed"}`}
-        >
-          {purchaseLoading ? "Processing..." : selectedIds.length > 1 ? "Buy Selected Plan" : "Buy Course"}
-          {!purchaseLoading && <ArrowRight className="w-4 h-4" />}
-        </button>
+        {(paymentMode === "manual" || paymentMode === "both") && (
+          <button
+            disabled={selectedIds.length === 0}
+            onClick={() => (isAuthenticated ? setShowUpiModal(true) : router.push("/login"))}
+            className={`w-full py-3 rounded-xl font-bold text-sm transition-all focus:outline-none flex items-center justify-center gap-2 mb-2 ${selectedIds.length > 0 ? "bg-signal-emerald text-white hover:opacity-90 active:scale-[0.98] shadow-md shadow-emerald-500/20" : "bg-line-gray-light dark:bg-line-gray-dark text-slate/50 cursor-not-allowed"}`}
+          >
+            Pay via UPI <ArrowRight className="w-4 h-4" />
+          </button>
+        )}
+        {(paymentMode === "razorpay" || paymentMode === "both") && (
+          <button
+            disabled={selectedIds.length === 0 || purchaseLoading}
+            onClick={handleCheckout}
+            className={`w-full py-3 rounded-xl font-bold text-sm transition-all focus:outline-none flex items-center justify-center gap-2 ${selectedIds.length > 0 && !purchaseLoading ? (paymentMode === "both" ? "border border-line-gray-light dark:border-line-gray-dark text-ink-navy dark:text-paper" : "bg-signal-emerald text-white hover:opacity-90 active:scale-[0.98] shadow-md shadow-emerald-500/20") : "bg-line-gray-light dark:bg-line-gray-dark text-slate/50 cursor-not-allowed"}`}
+          >
+            {purchaseLoading ? "Processing..." : selectedIds.length > 1 ? "Buy Selected Plan" : "Buy Course"}
+            {!purchaseLoading && <ArrowRight className="w-4 h-4" />}
+          </button>
+        )}
         <p className="text-center mt-3 text-[10px] text-slate/60 hover:underline cursor-pointer" onClick={onBuyIndividual}>Prefer browsing individual courses instead?</p>
       </div>
     </div>
