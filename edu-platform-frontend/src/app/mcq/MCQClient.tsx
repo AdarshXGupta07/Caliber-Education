@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { Toast, type ToastState } from "@/components/Toast";
-import { UpiPaymentModal } from "@/components/UpiPaymentModal";
+import { UpiPaymentModal, type UpiSubmitDetails } from "@/components/UpiPaymentModal";
 import {
   Search,
   Zap,
@@ -398,7 +398,7 @@ export default function MCQClient() {
     }
   };
 
-  const handleUpiSubmit = async (upiReference: string) => {
+  const handleUpiSubmit = async (details: UpiSubmitDetails) => {
     const token = typeof window !== "undefined" ? localStorage.getItem("caliber_jwt") : null;
     const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
     const res = await fetch(`${apiURL}/api/payments/submit-manual-mcq`, {
@@ -409,7 +409,7 @@ export default function MCQClient() {
         subjectIds: modalSelectedSubjectIds,
         duration: selectedDuration,
         couponCode: couponApplied ? couponCode : undefined,
-        upiReference,
+        ...details,
       }),
     });
     const data = await res.json().catch(() => ({}));

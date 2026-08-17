@@ -118,7 +118,7 @@ async def list_payments(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    payments_res = db.table("payments").select("id, user_id, course_id, utr_number, amount, status, created_at, payment_method, payment_reference").order("created_at", desc=True).execute()
+    payments_res = db.table("payments").select("id, user_id, course_id, utr_number, amount, status, created_at, payment_method, payment_reference, payer_upi_id, payer_name").order("created_at", desc=True).execute()
     payments = payments_res.data or []
 
     users_res = db.table("profiles").select("id, email, full_name").execute()
@@ -151,6 +151,8 @@ async def list_payments(
             "utrNumber": utr,
             "paymentMethod": p.get("payment_method", "razorpay"),
             "paymentReference": p.get("payment_reference"),
+            "payerUpiId": p.get("payer_upi_id"),
+            "payerName": p.get("payer_name"),
         })
 
     return verifications

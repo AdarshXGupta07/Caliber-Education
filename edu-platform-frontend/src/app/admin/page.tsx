@@ -695,7 +695,7 @@ function PaymentsTab() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-line-gray-light/50 dark:bg-line-gray-dark/50 text-left text-xs text-slate dark:text-paper/50 uppercase tracking-wider">
-              {["Student Email", "Course / Set", "Amount", "Method", "Reference", "Date", "Status", "Actions"].map(h => <th key={h} className="px-5 py-3 font-semibold">{h}</th>)}
+              {["Student Email", "Course / Set", "Amount", "Method", "Reference", "Paid From", "Date", "Status", "Actions"].map(h => <th key={h} className="px-5 py-3 font-semibold">{h}</th>)}
             </tr>
           </thead>
           <tbody className="divide-y divide-line-gray-light dark:divide-line-gray-dark bg-white dark:bg-line-gray-dark/20">
@@ -711,6 +711,14 @@ function PaymentsTab() {
                   </span>
                 </td>
                 <td className="px-5 py-3.5 font-mono text-xs text-slate dark:text-paper/60">{v.paymentReference || v.utrNumber}</td>
+                <td className="px-5 py-3.5 text-xs text-slate dark:text-paper/60">
+                  {v.payerName || v.payerUpiId ? (
+                    <>
+                      <p className="text-ink-navy dark:text-paper font-medium">{v.payerName}</p>
+                      <p className="font-mono">{v.payerUpiId}</p>
+                    </>
+                  ) : "—"}
+                </td>
                 <td className="px-5 py-3.5 text-slate dark:text-paper/60">{v.date}</td>
                 <td className="px-5 py-3.5"><StatusBadge status={v.status} /></td>
                 <td className="px-5 py-3.5">
@@ -742,6 +750,12 @@ function PaymentsTab() {
               </span>
               <span>{v.paymentReference || v.utrNumber}</span><span>{v.date}</span>
             </div>
+            {(v.payerName || v.payerUpiId) && (
+              <p className="text-xs text-slate dark:text-paper/60">
+                Paid from: <span className="text-ink-navy dark:text-paper font-medium">{v.payerName}</span>{" "}
+                <span className="font-mono">({v.payerUpiId})</span>
+              </p>
+            )}
             {v.status === "pending" && (
               <div className="flex gap-2">
                 <button onClick={() => approveVerification(v.id)} className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-signal-emerald border border-signal-emerald/30 rounded-lg hover:bg-signal-emerald/10 transition-colors"><CheckCheck className="w-3 h-3" /> Approve</button>

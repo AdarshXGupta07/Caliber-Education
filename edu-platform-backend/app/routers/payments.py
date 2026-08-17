@@ -1040,24 +1040,37 @@ async def _apply_test_series_grant(db: Client, order_id: str, user_id: str, rzp_
 
 class SubmitManualCourseRequest(CreateOrderRequest):
     upiReference: str
+    payerUpiId: str
+    payerName: str
 
 
 class SubmitManualMCQRequest(CreateMCQOrderRequest):
     upiReference: str
+    payerUpiId: str
+    payerName: str
 
 
 class SubmitManualTestSeriesRequest(CreateTestSeriesOrderRequest):
     upiReference: str
+    payerUpiId: str
+    payerName: str
 
 
-def _insert_manual_payment(db: Client, payment_row: dict, upi_reference: str) -> dict:
+def _insert_manual_payment(db: Client, payment_row: dict, upi_reference: str, payer_upi_id: str, payer_name: str) -> dict:
     """Shared insert path for all three submit-manual-* endpoints below.
     Normalizes the reference, rejects an already-used one (app-level check,
     with the DB's partial unique index as the race-safe backstop for two
-    simultaneous submissions of the same reference)."""
+    simultaneous submissions of the same reference). Also records who the
+    student says they paid from (their own UPI ID + name) — not verified
+    against anything, just carried through so admin has enough to cross-check
+    against their actual bank/UPI app transaction list."""
     reference = upi_reference.strip()
     if not reference:
         raise HTTPException(status_code=400, detail="Please enter your UPI transaction reference.")
+    payer_upi_id = payer_upi_id.strip()
+    payer_name = payer_name.strip()
+    if not payer_upi_id or not payer_name:
+        raise HTTPException(status_code=400, detail="Please enter the UPI ID and name you paid from.")
 
     existing = (
         db.table("payments").select("id")
@@ -1073,6 +1086,8 @@ def _insert_manual_payment(db: Client, payment_row: dict, upi_reference: str) ->
 
     payment_row["payment_method"] = "manual_upi"
     payment_row["payment_reference"] = reference
+    payment_row["payer_upi_id"] = payer_upi_id
+    payment_row["payer_name"] = payer_name
     try:
         result = db.table("payments").insert(payment_row).execute()
     except PostgrestAPIError as e:
@@ -1146,7 +1161,7 @@ async def submit_manual_course(
     if is_multi_course_cart:
         payment_row["utr_number"] = "courses|" + ",".join(body.courseIds) + f"|{uuid.uuid4().hex[:8]}"
 
-    _insert_manual_payment(db, payment_row, body.upiReference)
+    _insert_manual_payment(db, payment_row, body.upiReference, body.payerUpiId, body.payerName)
 
     return {
         "success": True,
@@ -1193,7 +1208,7 @@ async def submit_manual_mcq(
         "razorpay_order_id": f"manual_{uuid.uuid4().hex}",
     }
 
-    _insert_manual_payment(db, payment_row, body.upiReference)
+    _insert_manual_payment(db, payment_row, body.upiReference, body.payerUpiId, body.payerName)
 
     return {
         "success": True,
@@ -1247,7 +1262,7 @@ async def submit_manual_test_series(
         "razorpay_order_id": f"manual_{uuid.uuid4().hex}",
     }
 
-    _insert_manual_payment(db, payment_row, body.upiReference)
+    _insert_manual_payment(db, payment_row, body.upiReference, body.payerUpiId, body.payerName)
 
     return {
         "success": True,

@@ -7,7 +7,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, CheckCircle2, Lock, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Toast, type ToastState } from "@/components/Toast";
-import { UpiPaymentModal } from "@/components/UpiPaymentModal";
+import { UpiPaymentModal, type UpiSubmitDetails } from "@/components/UpiPaymentModal";
 
 interface TSSubject {
   id: string; level: string; group_name: string; name: string; code: string;
@@ -159,13 +159,13 @@ export default function TestSeriesLevelPage({ params }: { params: Promise<{ leve
     }
   }
 
-  async function handleUpiSubmit(upiReference: string) {
+  async function handleUpiSubmit(details: UpiSubmitDetails) {
     const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
     const token = localStorage.getItem("caliber_jwt") || "";
     const res = await fetch(`${apiURL}/api/payments/submit-manual-test-series`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ level: levelKey, subjectIds: selected, upiReference }),
+      body: JSON.stringify({ level: levelKey, subjectIds: selected, ...details }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) return { success: true };

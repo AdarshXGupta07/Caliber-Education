@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { Toast, type ToastState } from "@/components/Toast";
-import { UpiPaymentModal } from "@/components/UpiPaymentModal";
+import { UpiPaymentModal, type UpiSubmitDetails } from "@/components/UpiPaymentModal";
 
 export default function CourseDetailClient({ id }: { id: string }) {
   const [course, setCourse] = useState<any>(null);
@@ -83,13 +83,13 @@ export default function CourseDetailClient({ id }: { id: string }) {
   const [showUpiModal, setShowUpiModal] = useState(false);
   const paymentMode = process.env.NEXT_PUBLIC_PAYMENT_MODE || "manual";
 
-  const handleUpiSubmit = async (upiReference: string) => {
+  const handleUpiSubmit = async (details: UpiSubmitDetails) => {
     const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
     const token = localStorage.getItem("caliber_jwt") || "";
     const res = await fetch(`${apiURL}/api/payments/submit-manual-course`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ courseId: course.id, couponCode: appliedCoupon?.code || null, upiReference }),
+      body: JSON.stringify({ courseId: course.id, couponCode: appliedCoupon?.code || null, ...details }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) return { success: true };

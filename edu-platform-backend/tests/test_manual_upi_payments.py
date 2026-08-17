@@ -16,6 +16,8 @@ def test_submit_manual_course_creates_pending_manual_payment(make_client, fake_d
     res = client.post("/api/payments/submit-manual-course", json={
         "courseId": "course-1",
         "upiReference": "  123456789012  ",
+        "payerUpiId": "  student@oksbi  ",
+        "payerName": "  Test Student  ",
     })
     assert res.status_code == 201, res.text
     assert res.json()["success"] is True
@@ -25,6 +27,8 @@ def test_submit_manual_course_creates_pending_manual_payment(make_client, fake_d
     row = rows[0]
     assert row["payment_method"] == "manual_upi"
     assert row["payment_reference"] == "123456789012"  # normalized (stripped)
+    assert row["payer_upi_id"] == "student@oksbi"  # normalized (stripped)
+    assert row["payer_name"] == "Test Student"  # normalized (stripped)
     assert row["status"] == "pending"
     assert row["course_id"] == "course-1"
     assert row["amount"] == 1000
@@ -42,6 +46,8 @@ def test_submit_manual_course_rejects_duplicate_reference(make_client, fake_db, 
     res = client.post("/api/payments/submit-manual-course", json={
         "courseId": "course-1",
         "upiReference": "999999999999",
+        "payerUpiId": "student@oksbi",
+        "payerName": "Test Student",
     })
     assert res.status_code == 400
     assert "already been submitted" in res.json()["detail"]
@@ -56,12 +62,16 @@ def test_submit_manual_mcq_packs_raw_duration_into_utr_number(make_client, fake_
         "subjectIds": ["final-g1-fr"],
         "duration": "1_month",
         "upiReference": "abc123",
+        "payerUpiId": "student@oksbi",
+        "payerName": "Test Student",
     })
     assert res.status_code == 201, res.text
 
     row = fake_db.store["payments"][0]
     assert row["payment_method"] == "manual_upi"
     assert row["payment_reference"] == "abc123"
+    assert row["payer_upi_id"] == "student@oksbi"
+    assert row["payer_name"] == "Test Student"
     # Same packing convention _apply_mcq_grant expects: "mcq-{level}-{duration}|{subjects}|{suffix}"
     assert row["utr_number"].startswith("mcq-final-1_month|final-g1-fr|")
 
@@ -88,6 +98,8 @@ def test_admin_approve_manual_mcq_payment_grants_and_records_coupon(make_client,
         "duration": "1_month",
         "couponCode": "save10",
         "upiReference": "ref-001",
+        "payerUpiId": "student@oksbi",
+        "payerName": "Test Student",
     })
     assert submit_res.status_code == 201, submit_res.text
 

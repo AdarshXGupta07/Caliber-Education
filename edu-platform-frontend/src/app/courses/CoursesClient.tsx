@@ -7,7 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
 import { type Course } from "@/lib/mockData";
 import { Toast, type ToastState } from "@/components/Toast";
-import { UpiPaymentModal } from "@/components/UpiPaymentModal";
+import { UpiPaymentModal, type UpiSubmitDetails } from "@/components/UpiPaymentModal";
 import {
   ArrowRight, Lock, Star, Clock, Zap,
   Search, ChevronUp, ChevronDown, SlidersHorizontal, X, ArrowUp, Tag
@@ -668,13 +668,13 @@ function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[
   const paymentMode = process.env.NEXT_PUBLIC_PAYMENT_MODE || "manual";
   const router = useRouter();
 
-  const handleUpiSubmit = async (upiReference: string) => {
+  const handleUpiSubmit = async (details: UpiSubmitDetails) => {
     const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
     const token = localStorage.getItem("caliber_jwt") || "";
     const res = await fetch(`${apiURL}/api/payments/submit-manual-course`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ courseIds: selectedIds, couponCode: appliedCoupon?.code || null, upiReference }),
+      body: JSON.stringify({ courseIds: selectedIds, couponCode: appliedCoupon?.code || null, ...details }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) return { success: true };

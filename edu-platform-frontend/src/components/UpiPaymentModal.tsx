@@ -11,16 +11,24 @@ import { X, Copy, Check, ChevronDown, ShieldCheck, CheckCircle2, Loader2 } from 
 // update both together — they must stay in sync.
 const UPI_VPA = "8653065093@hdfc";
 
+export interface UpiSubmitDetails {
+  upiReference: string;
+  payerUpiId: string;
+  payerName: string;
+}
+
 interface UpiPaymentModalProps {
   open: boolean;
   onClose: () => void;
   amount: number;
   itemLabel: string;
-  onSubmit: (upiReference: string) => Promise<{ success: boolean; message?: string }>;
+  onSubmit: (details: UpiSubmitDetails) => Promise<{ success: boolean; message?: string }>;
 }
 
 export function UpiPaymentModal({ open, onClose, amount, itemLabel, onSubmit }: UpiPaymentModalProps) {
   const [reference, setReference] = useState("");
+  const [payerUpiId, setPayerUpiId] = useState("");
+  const [payerName, setPayerName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -32,6 +40,8 @@ export function UpiPaymentModal({ open, onClose, amount, itemLabel, onSubmit }: 
     onClose();
     setTimeout(() => {
       setReference("");
+      setPayerUpiId("");
+      setPayerName("");
       setError("");
       setSubmitted(false);
       setShowHint(false);
@@ -47,15 +57,21 @@ export function UpiPaymentModal({ open, onClose, amount, itemLabel, onSubmit }: 
   };
 
   const handleSubmit = async () => {
-    const trimmed = reference.trim();
-    if (!trimmed) {
+    const trimmedRef = reference.trim();
+    const trimmedUpiId = payerUpiId.trim();
+    const trimmedName = payerName.trim();
+    if (!trimmedRef) {
       setError("Please enter your UPI transaction reference.");
+      return;
+    }
+    if (!trimmedUpiId || !trimmedName) {
+      setError("Please enter the UPI ID and name you paid from.");
       return;
     }
     setSubmitting(true);
     setError("");
     try {
-      const result = await onSubmit(trimmed);
+      const result = await onSubmit({ upiReference: trimmedRef, payerUpiId: trimmedUpiId, payerName: trimmedName });
       if (result.success) {
         setSubmitted(true);
       } else {
@@ -143,7 +159,32 @@ export function UpiPaymentModal({ open, onClose, amount, itemLabel, onSubmit }: 
 
                 <div className="space-y-2 pt-1 border-t border-line-gray-light dark:border-line-gray-dark">
                   <label className="text-xs font-bold text-ink-navy dark:text-paper block pt-4">
-                    Already paid? Enter your UPI transaction reference
+                    Already paid? Tell us where it came from
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-semibold text-slate dark:text-paper/50">Your UPI ID</label>
+                      <input
+                        type="text"
+                        value={payerUpiId}
+                        onChange={(e) => setPayerUpiId(e.target.value)}
+                        placeholder="e.g. name@oksbi"
+                        className="w-full px-3 py-2.5 text-sm font-mono border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/30 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-signal-emerald transition-colors"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-semibold text-slate dark:text-paper/50">Name on that UPI account</label>
+                      <input
+                        type="text"
+                        value={payerName}
+                        onChange={(e) => setPayerName(e.target.value)}
+                        placeholder="e.g. Rahul Sharma"
+                        className="w-full px-3 py-2.5 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/30 text-ink-navy dark:text-paper rounded-lg focus:outline-none focus:border-signal-emerald transition-colors"
+                      />
+                    </div>
+                  </div>
+                  <label className="text-xs font-bold text-ink-navy dark:text-paper block pt-2">
+                    UPI transaction reference
                   </label>
                   <input
                     type="text"
@@ -191,7 +232,7 @@ export function UpiPaymentModal({ open, onClose, amount, itemLabel, onSubmit }: 
 
                 <button
                   onClick={handleSubmit}
-                  disabled={submitting || !reference.trim()}
+                  disabled={submitting || !reference.trim() || !payerUpiId.trim() || !payerName.trim()}
                   className="w-full py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-bold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
