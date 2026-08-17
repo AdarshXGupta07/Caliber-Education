@@ -695,7 +695,8 @@ function PaymentsTab() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-line-gray-light/50 dark:bg-line-gray-dark/50 text-left text-xs text-slate dark:text-paper/50 uppercase tracking-wider">
-              {["Student Email", "Course / Set", "Amount", "Method", "Reference", "Paid From", "Date", "Status", "Actions"].map(h => <th key={h} className="px-5 py-3 font-semibold">{h}</th>)}
+              {["Student Email", "Course / Set", "Amount", "Method", "Reference", "Paid From", "Date", "Status"].map(h => <th key={h} className="px-5 py-3 font-semibold whitespace-nowrap">{h}</th>)}
+              <th className="px-5 py-3 font-semibold whitespace-nowrap sticky right-0 bg-line-gray-light dark:bg-line-gray-dark shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.08)]">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line-gray-light dark:divide-line-gray-dark bg-white dark:bg-line-gray-dark/20">
@@ -719,9 +720,9 @@ function PaymentsTab() {
                     </>
                   ) : "—"}
                 </td>
-                <td className="px-5 py-3.5 text-slate dark:text-paper/60">{v.date}</td>
-                <td className="px-5 py-3.5"><StatusBadge status={v.status} /></td>
-                <td className="px-5 py-3.5">
+                <td className="px-5 py-3.5 text-slate dark:text-paper/60 whitespace-nowrap">{v.date}</td>
+                <td className="px-5 py-3.5 whitespace-nowrap"><StatusBadge status={v.status} /></td>
+                <td className="px-5 py-3.5 whitespace-nowrap sticky right-0 bg-white dark:bg-line-gray-dark shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.08)]">
                   {v.status === "pending" && (
                     <div className="flex gap-2">
                       <button onClick={() => approveVerification(v.id)} className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-signal-emerald border border-signal-emerald/30 rounded-lg hover:bg-signal-emerald/10 transition-colors"><CheckCheck className="w-3 h-3" /> Approve</button>
