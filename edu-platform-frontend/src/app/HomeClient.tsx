@@ -301,7 +301,6 @@ function Footer() {
             <ul className="space-y-2.5">
               {[
                 { href: "/courses", label: "All Courses" },
-                { href: "/mcq", label: "Free MCQ Practice" },
                 { href: "/courses", label: "Course Listings" },
                 { href: "/dashboard", label: "Dashboard" },
               ].map((l) => (
