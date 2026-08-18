@@ -1493,7 +1493,10 @@ function SeriesTab({ items, setItems }: { items: MCQSeries[]; setItems: React.Di
       });
       if (res.ok) {
         setItems(current => current.filter(s => s.id !== id));
-      } else setToast({ type: "error", message: "Delete failed" });
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setToast({ type: "error", message: extractErrorMessage(data.detail, "Delete failed") });
+      }
     } catch {
       setToast({ type: "error", message: "Error contacting server" });
     }
@@ -1890,7 +1893,8 @@ function CoursesTab({ series }: { series: MCQSeries[] }) {
       if (res.ok) {
         setCourseList(prev => prev.filter(c => c.id !== id));
       } else {
-        setToast({ type: "error", message: "Delete failed on server" });
+        const data = await res.json().catch(() => ({}));
+        setToast({ type: "error", message: extractErrorMessage(data.detail, "Delete failed on server") });
       }
     } catch (e) {
       setToast({ type: "error", message: "Error contacting server" });
@@ -2831,7 +2835,13 @@ function TestSeriesTab() {
 
   async function deletePaper(id: string) {
     if (!(await confirm("Delete this paper permanently?"))) return;
-    await fetch(`${api}/api/admin/test-series/papers/${id}`, { method: "DELETE", headers: authHeaders() });
+    const res = await fetch(`${api}/api/admin/test-series/papers/${id}`, { method: "DELETE", headers: authHeaders() });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setMsg(extractErrorMessage(data.detail, "Failed to delete paper."));
+      setTimeout(() => setMsg(""), 3500);
+      return;
+    }
     void loadPapers(selSubjectId);
   }
 
