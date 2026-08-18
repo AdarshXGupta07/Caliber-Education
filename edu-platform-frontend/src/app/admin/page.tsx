@@ -656,6 +656,7 @@ function StatusBadge({ status }: { status: PaymentVerification["status"] }) {
 const PAYMENTS_PAGE_SIZE = 25;
 
 function PaymentsTab() {
+  const confirm = useConfirm();
   const [verifications, setVerifications] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState({ all: 0, pending: 0, approved: 0, rejected: 0, refunded: 0 });
@@ -789,6 +790,32 @@ function PaymentsTab() {
     }
   };
 
+  const deletePayment = async (id: string) => {
+    if (!(await confirm("Permanently delete this payment record? This removes the transaction history — it does not revoke any access already granted."))) return;
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/payments/${id}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setVerifications(prev => {
+          const row = prev.find(v => v.id === id);
+          if (row) setCounts(c => ({ ...c, all: Math.max(0, c.all - 1), [row.status]: Math.max(0, (c as any)[row.status] - 1) }));
+          return prev.filter(v => v.id !== id);
+        });
+        setTotal(t => Math.max(0, t - 1));
+        setToast({ type: "success", message: "Payment deleted." });
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setToast({ type: "error", message: extractErrorMessage(data.detail, "Failed to delete payment") });
+      }
+    } catch (e) {
+      setToast({ type: "error", message: "Error deleting payment" });
+    }
+  };
+
   return (
     <motion.div key="payments" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
       <Toast toast={toast} onDismiss={() => setToast(null)} />
@@ -859,12 +886,15 @@ function PaymentsTab() {
                 <td className="px-5 py-3.5 text-slate dark:text-paper/60 whitespace-nowrap">{v.date}</td>
                 <td className="px-5 py-3.5 whitespace-nowrap"><StatusBadge status={v.status} /></td>
                 <td className="px-5 py-3.5 whitespace-nowrap sticky right-0 bg-white dark:bg-line-gray-dark shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.08)]">
-                  {v.status === "pending" && (
-                    <div className="flex gap-2">
-                      <button onClick={() => approveVerification(v.id)} className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-signal-emerald border border-signal-emerald/30 rounded-lg hover:bg-signal-emerald/10 transition-colors"><CheckCheck className="w-3 h-3" /> Approve</button>
-                      <button onClick={() => rejectVerification(v.id)} className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-alert-coral border border-alert-coral/30 rounded-lg hover:bg-alert-coral/10 transition-colors"><XCircle className="w-3 h-3" /> Reject</button>
-                    </div>
-                  )}
+                  <div className="flex gap-2 items-center">
+                    {v.status === "pending" && (
+                      <>
+                        <button onClick={() => approveVerification(v.id)} className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-signal-emerald border border-signal-emerald/30 rounded-lg hover:bg-signal-emerald/10 transition-colors"><CheckCheck className="w-3 h-3" /> Approve</button>
+                        <button onClick={() => rejectVerification(v.id)} className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-alert-coral border border-alert-coral/30 rounded-lg hover:bg-alert-coral/10 transition-colors"><XCircle className="w-3 h-3" /> Reject</button>
+                      </>
+                    )}
+                    <button onClick={() => deletePayment(v.id)} aria-label="Delete payment" className="p-1.5 rounded-lg text-slate/50 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
                 </td>
               </motion.tr>
             ))}
@@ -894,12 +924,15 @@ function PaymentsTab() {
                 <span className="font-mono">({v.payerUpiId})</span>
               </p>
             )}
-            {v.status === "pending" && (
-              <div className="flex gap-2">
-                <button onClick={() => approveVerification(v.id)} className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-signal-emerald border border-signal-emerald/30 rounded-lg hover:bg-signal-emerald/10 transition-colors"><CheckCheck className="w-3 h-3" /> Approve</button>
-                <button onClick={() => rejectVerification(v.id)} className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-alert-coral border border-alert-coral/30 rounded-lg hover:bg-alert-coral/10 transition-colors"><XCircle className="w-3 h-3" /> Reject</button>
-              </div>
-            )}
+            <div className="flex gap-2">
+              {v.status === "pending" && (
+                <>
+                  <button onClick={() => approveVerification(v.id)} className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-signal-emerald border border-signal-emerald/30 rounded-lg hover:bg-signal-emerald/10 transition-colors"><CheckCheck className="w-3 h-3" /> Approve</button>
+                  <button onClick={() => rejectVerification(v.id)} className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-alert-coral border border-alert-coral/30 rounded-lg hover:bg-alert-coral/10 transition-colors"><XCircle className="w-3 h-3" /> Reject</button>
+                </>
+              )}
+              <button onClick={() => deletePayment(v.id)} aria-label="Delete payment" className="p-2 rounded-lg text-slate/50 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+            </div>
           </motion.div>
         ))}
       </div>
@@ -920,12 +953,14 @@ function PaymentsTab() {
 const USERS_PAGE_SIZE = 25;
 
 function UsersTab() {
+  const confirm = useConfirm();
   const [expanded, setExpanded] = useState<string | null>(null);
   const [localUsers, setLocalUsers] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
   const fetchUsers = async (offset: number, append: boolean) => {
     try {
@@ -955,6 +990,31 @@ function UsersTab() {
   const loadMoreUsers = () => {
     setLoadingMore(true);
     fetchUsers(localUsers.length, true);
+  };
+
+  const deleteUser = async (id: string, email: string) => {
+    if (!(await confirm(`Permanently delete ${email}? This removes their account, all purchases, enrollments, quiz attempts, and any evaluated papers. This cannot be undone.`))) return;
+    setDeletingUserId(id);
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const res = await fetch(`${apiURL}/api/admin/users/${id}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setLocalUsers(prev => prev.filter(u => u.id !== id));
+        setTotal(t => Math.max(0, t - 1));
+        setToast({ type: "success", message: "User deleted." });
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setToast({ type: "error", message: extractErrorMessage(data.detail, "Failed to delete user") });
+      }
+    } catch (e) {
+      setToast({ type: "error", message: "Error deleting user" });
+    } finally {
+      setDeletingUserId(null);
+    }
   };
 
   const handleExportCSV = async () => {
@@ -1086,18 +1146,24 @@ function UsersTab() {
         {localUsers.map((u: any, i: number) => (
           <motion.div key={u.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
             className="rounded-2xl border border-line-gray-light dark:border-line-gray-dark overflow-hidden bg-white dark:bg-line-gray-dark/20">
-            <button onClick={() => setExpanded(expanded === u.id ? null : u.id)}
-              className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-line-gray-light/30 dark:hover:bg-line-gray-dark/30 transition-colors text-left">
-              <div className="flex items-center gap-4">
-                <div className="w-8 h-8 rounded-full bg-signal-emerald/20 flex items-center justify-center text-signal-emerald text-xs font-bold">{u.email[0].toUpperCase()}</div>
-                <div><p className="text-sm font-semibold text-ink-navy dark:text-paper">{u.email}</p><p className="text-xs text-slate dark:text-paper/50">Joined {u.joinDate}</p></div>
-              </div>
-              <div className="flex items-center gap-4 text-xs text-slate dark:text-paper/50 mr-2">
-                <span>{u.purchases.length} purchase{u.purchases.length !== 1 ? "s" : ""}</span>
-                <span>{u.quizAttempts.length} attempt{u.quizAttempts.length !== 1 ? "s" : ""}</span>
-                {expanded === u.id ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-              </div>
-            </button>
+            <div className="w-full flex items-center hover:bg-line-gray-light/30 dark:hover:bg-line-gray-dark/30 transition-colors">
+              <button onClick={() => setExpanded(expanded === u.id ? null : u.id)}
+                className="flex-1 min-w-0 flex items-center justify-between px-5 py-3.5 text-left">
+                <div className="flex items-center gap-4">
+                  <div className="w-8 h-8 rounded-full bg-signal-emerald/20 flex items-center justify-center text-signal-emerald text-xs font-bold">{u.email[0].toUpperCase()}</div>
+                  <div><p className="text-sm font-semibold text-ink-navy dark:text-paper">{u.email}</p><p className="text-xs text-slate dark:text-paper/50">Joined {u.joinDate}</p></div>
+                </div>
+                <div className="flex items-center gap-4 text-xs text-slate dark:text-paper/50 mr-2">
+                  <span>{u.purchases.length} purchase{u.purchases.length !== 1 ? "s" : ""}</span>
+                  <span>{u.quizAttempts.length} attempt{u.quizAttempts.length !== 1 ? "s" : ""}</span>
+                  {expanded === u.id ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                </div>
+              </button>
+              <button onClick={() => deleteUser(u.id, u.email)} disabled={deletingUserId === u.id} aria-label="Delete user"
+                className="flex-shrink-0 p-1.5 mr-3 rounded-lg text-slate/50 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors disabled:opacity-40">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
             <AnimatePresence initial={false}>
               {expanded === u.id && (
                 <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
@@ -2988,22 +3054,39 @@ function TestSeriesTab() {
 
 // ─── CONTACT MESSAGES TAB ─────────────────────────────────────────────────
 function MessagesTab() {
+  const confirm = useConfirm();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const api = process.env.NEXT_PUBLIC_API_URL || "";
+  const authHeaders = { Authorization: `Bearer ${localStorage.getItem("caliber_jwt") || ""}` };
 
   useEffect(() => {
-    fetch(`${api}/api/admin/contact-messages`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem("caliber_jwt") || ""}` },
-    })
+    fetch(`${api}/api/admin/contact-messages`, { headers: authHeaders })
       .then((r) => (r.ok ? r.json() : []))
       .then(setItems)
       .catch(() => setItems([]))
       .finally(() => setLoading(false));
   }, [api]);
 
+  const deleteMessage = async (id: string) => {
+    if (!(await confirm("Delete this message permanently?"))) return;
+    try {
+      const res = await fetch(`${api}/api/admin/contact-messages/${id}`, { method: "DELETE", headers: authHeaders });
+      if (res.ok) {
+        setItems(prev => prev.filter(m => m.id !== id));
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setToast({ type: "error", message: extractErrorMessage(data.detail, "Failed to delete message") });
+      }
+    } catch {
+      setToast({ type: "error", message: "Error deleting message" });
+    }
+  };
+
   return (
     <motion.div key="messages" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} className="space-y-4">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <h2 className="font-heading font-bold text-lg text-ink-navy dark:text-paper">Contact messages</h2>
       {loading ? (
         <p className="text-sm text-slate dark:text-paper/50">Loading...</p>
@@ -3015,7 +3098,10 @@ function MessagesTab() {
             <div key={m.id} className="p-4 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-2xl">
               <div className="flex items-baseline justify-between gap-3 flex-wrap">
                 <p className="text-sm font-bold text-ink-navy dark:text-paper">{m.name}</p>
-                <p className="text-[10px] font-mono text-slate dark:text-paper/50">{(m.created_at || "").split("T")[0]}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-[10px] font-mono text-slate dark:text-paper/50">{(m.created_at || "").split("T")[0]}</p>
+                  <button onClick={() => deleteMessage(m.id)} aria-label="Delete message" className="p-1 rounded-lg text-slate/50 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                </div>
               </div>
               <a href={`mailto:${m.email}`} className="text-xs text-signal-emerald hover:underline">{m.email}</a>
               <p className="text-xs text-slate dark:text-paper/70 mt-2 whitespace-pre-wrap">{m.message}</p>
@@ -3124,6 +3210,7 @@ interface SessionRow {
 }
 
 function SessionsTab() {
+  const confirm = useConfirm();
   const { user } = useAuth();
   const [rows, setRows] = useState<SessionRow[]>([]);
   const [mentors, setMentors] = useState<any[]>([]);
@@ -3207,6 +3294,18 @@ function SessionsTab() {
     void load();
   }
 
+  async function deleteSession(sessionId: string) {
+    if (!(await confirm("Delete this 1:1 session booking permanently?"))) return;
+    const r = await fetch(`${api}/api/admin/sessions/${sessionId}`, { method: "DELETE", headers: authHeaders() });
+    if (r.ok) {
+      setRows(prev => prev.filter(row => row.id !== sessionId));
+    } else {
+      const data = await r.json().catch(() => ({}));
+      setMsg(extractErrorMessage(data.detail, "Failed to delete session."));
+      setTimeout(() => setMsg(""), 3500);
+    }
+  }
+
   const label: Record<string, { text: string; cls: string }> = {
     pending_assignment: { text: "Needs mentor", cls: "bg-amber-500/10 text-amber-600" },
     pending_schedule: { text: "Needs slot", cls: "bg-blue-500/10 text-blue-600" },
@@ -3249,7 +3348,10 @@ function SessionsTab() {
                       </p>
                       <p className="text-[10px] text-slate dark:text-paper/40 mt-0.5">{s.studentEmail}</p>
                     </div>
-                    <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${st.cls}`}>{st.text}</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${st.cls}`}>{st.text}</span>
+                      <button onClick={() => deleteSession(s.id)} aria-label="Delete session" className="p-1 rounded-lg text-slate/50 hover:text-alert-coral hover:bg-alert-coral/10 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </div>
                   </div>
 
                   {s.status === "pending_assignment" && (

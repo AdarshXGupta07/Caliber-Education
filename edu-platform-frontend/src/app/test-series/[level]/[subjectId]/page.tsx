@@ -110,8 +110,12 @@ export default function TestSeriesSubjectPage({ params }: { params: Promise<{ le
         className="font-heading font-extrabold text-2xl sm:text-3xl text-ink-navy dark:text-paper mb-2">
         Your papers
       </motion.h1>
-      <p className="text-sm text-slate dark:text-paper/60 mb-8">
+      <p className="text-sm text-slate dark:text-paper/60 mb-2">
         Download a paper, attempt it on paper under exam conditions, then upload your answer sheet as a single PDF.
+      </p>
+      <p className="text-xs text-amber-600 dark:text-amber-500 mb-8">
+        Your uploaded answer sheet and the mentor's checked copy are both automatically deleted 7 days after
+        submission/evaluation to save storage — download your checked copy as soon as it's ready.
       </p>
 
       {error && <p className="text-xs text-alert-coral mb-4">{error}</p>}
@@ -168,10 +172,13 @@ export default function TestSeriesSubjectPage({ params }: { params: Promise<{ le
                   )}
 
                   {sub?.checkedFileUrl && (
-                    <a href={sub.checkedFileUrl} target="_blank" rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-signal-emerald/10 text-signal-emerald rounded-xl hover:bg-signal-emerald/20 transition-colors">
-                      <Download className="w-3.5 h-3.5" /> Checked copy
-                    </a>
+                    <div className="flex flex-col gap-1">
+                      <a href={sub.checkedFileUrl} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-signal-emerald/10 text-signal-emerald rounded-xl hover:bg-signal-emerald/20 transition-colors">
+                        <Download className="w-3.5 h-3.5" /> Checked copy
+                      </a>
+                      <p className="text-[10px] text-amber-600 dark:text-amber-500">Deleted 7 days after evaluation — save it now.</p>
+                    </div>
                   )}
 
                   {!sub && (

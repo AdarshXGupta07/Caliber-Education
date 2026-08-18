@@ -257,6 +257,23 @@ async def reject_payment(
     return {"success": True, "reason": rejection_note}
 
 
+@router.delete("/payments/{payment_id}")
+async def delete_payment(
+    payment_id: str,
+    super_admin: dict = Depends(require_super_admin),
+    db: Client = Depends(get_db),
+):
+    """Permanently removes a payment record — deleting financial/audit
+    history, not just changing its status, so this is gated one level
+    stricter than approve/reject. mcq_enrollments/test_series_enrollments/
+    session_bookings/coupon_usages all reference payment_id as
+    ON DELETE SET NULL, so this never blocks on those and never revokes
+    access that was already granted — it only removes the payment row
+    itself."""
+    _safe_delete(db, "payments", "id", payment_id, "this payment")
+    return {"success": True}
+
+
 # ─── Users ────────────────────────────────────────────────────────────────────
 
 @router.get("/users")
@@ -448,6 +465,59 @@ async def set_user_role(
             }).execute()
 
     return {"success": True, "userId": user_id, "role": body.role}
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    super_admin: dict = Depends(require_super_admin),
+    db: Client = Depends(get_db),
+):
+    """Permanently deletes a user account and every row that references
+    them — the same tables and order as a manual cleanup query would need,
+    because several of these FKs predate this repo's tracked migrations
+    and their ON DELETE behavior isn't reliably known, so this deletes
+    dependents explicitly rather than assuming a cascade exists. Gated to
+    super_admin given the blast radius, and blocks deleting your own
+    account so an admin can't accidentally lock themselves out."""
+    if user_id == super_admin["id"]:
+        raise HTTPException(status_code=400, detail="You can't delete your own account.")
+
+    target = db.table("profiles").select("id, email").eq("id", user_id).single().execute()
+    if not target.data:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    sub_ids = [s["id"] for s in (db.table("test_submissions").select("id").eq("student_id", user_id).execute().data or [])]
+    if sub_ids:
+        db.table("test_evaluations").delete().in_("submission_id", sub_ids).execute()
+    db.table("test_submissions").delete().eq("student_id", user_id).execute()
+    db.table("session_bookings").delete().eq("student_id", user_id).execute()
+    db.table("payments").delete().eq("user_id", user_id).execute()
+    db.table("enrollments").delete().eq("user_id", user_id).execute()
+    db.table("quiz_attempts").delete().eq("user_id", user_id).execute()
+    db.table("mcq_enrollments").delete().eq("user_id", user_id).execute()
+    db.table("test_series_enrollments").delete().eq("user_id", user_id).execute()
+    db.table("coupon_usages").delete().eq("user_id", user_id).execute()
+    db.table("mcq_attempt_sessions").delete().eq("user_id", user_id).execute()
+
+    mentor_row = db.table("mentors").select("id").eq("profile_id", user_id).execute().data or []
+    if mentor_row:
+        mentor_id = mentor_row[0]["id"]
+        db.table("mentor_permissions").delete().eq("mentor_id", mentor_id).execute()
+        db.table("session_bookings").delete().eq("mentor_id", mentor_id).execute()
+        db.table("mentors").delete().eq("id", mentor_id).execute()
+
+    db.table("profiles").delete().eq("id", user_id).execute()
+    try:
+        db.auth.admin.delete_user(user_id)
+    except Exception as e:
+        # Profile + all data is already gone at this point — the app can't
+        # authenticate this user regardless (get_current_user requires a
+        # matching profiles row). Log rather than fail the request over an
+        # Auth-record cleanup that no longer affects app behavior.
+        print(f"[DELETE USER] auth.admin.delete_user failed for {user_id}: {e}")
+
+    return {"success": True}
 
 
 @router.post("/mentors/enable-self")
@@ -962,6 +1032,15 @@ async def mentor_complete_session(
     return {"success": True}
 
 
+@router.delete("/sessions/{session_id}")
+async def admin_delete_session(
+    session_id: str,
+    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+):
+    _safe_delete(db, "session_bookings", "id", session_id, "this session")
+    return {"success": True}
+
+
 # ─── File retention: 7-day auto-delete ───────────────────────────────────────
 
 @router.post("/maintenance/purge-old-files")
@@ -1035,6 +1114,15 @@ async def admin_mark_contact_read(
     admin: dict = Depends(require_admin), db: Client = Depends(get_db),
 ):
     db.table("contact_messages").update({"is_read": True}).eq("id", message_id).execute()
+    return {"success": True}
+
+
+@router.delete("/contact-messages/{message_id}")
+async def admin_delete_contact_message(
+    message_id: str,
+    admin: dict = Depends(require_admin), db: Client = Depends(get_db),
+):
+    _safe_delete(db, "contact_messages", "id", message_id, "this message")
     return {"success": True}
 
 
