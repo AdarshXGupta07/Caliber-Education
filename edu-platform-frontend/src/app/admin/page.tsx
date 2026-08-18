@@ -491,13 +491,19 @@ function AdminDashboard() {
           fetch(`${apiURL}/api/courses`),
           fetch(`${apiURL}/api/admin/payments`, { headers: authHeaders }),
         ]);
-        const users = usersRes.ok ? await usersRes.json() : [];
+        // /api/admin/users and /api/admin/payments now return
+        // {items, total, ...} rather than a bare array (pagination) — read
+        // through that shape instead of Array.isArray-checking the response
+        // itself. Payments is always paginated server-side (25 at a time),
+        // so "pending" count comes from the server-computed counts, not by
+        // filtering whatever page of items happened to load.
+        const users = usersRes.ok ? await usersRes.json() : { items: [] };
         const courses = coursesRes.ok ? await coursesRes.json() : [];
-        const payments = paymentsRes.ok ? await paymentsRes.json() : [];
+        const payments = paymentsRes.ok ? await paymentsRes.json() : { counts: { pending: 0 } };
         setStats({
-          users: Array.isArray(users) ? users.length : 0,
+          users: Array.isArray(users.items) ? users.items.length : 0,
           courses: Array.isArray(courses) ? courses.length : 0,
-          pendingPayments: Array.isArray(payments) ? payments.filter((p: any) => p.status === "pending").length : 0,
+          pendingPayments: payments.counts?.pending ?? 0,
         });
       } catch (e) { }
     }
@@ -1560,7 +1566,8 @@ function EnrolledStudentsPanel({ courseId }: { courseId: string }) {
 
         if (!resEnrollments.ok || !resUsers.ok) throw new Error("Failed to load admin enrollment rosters");
         setEnrolled(await resEnrollments.json());
-        setUsers(await resUsers.json());
+        const usersData = await resUsers.json();
+        setUsers(usersData.items || []);
       } catch (err: any) {
         setLoadError("Couldn't load enrolled students. Check your connection and try again.");
         setEnrolled([]);
