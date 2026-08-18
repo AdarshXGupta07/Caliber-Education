@@ -45,7 +45,6 @@ export default function MCQClient() {
   const { isAuthenticated } = useAuth();
   const [activeLevel, setActiveLevel] = useState<MCQLevel>("FINAL");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedGroupFilter, setSelectedGroupFilter] = useState<string>("ALL");
   const [allSubjects, setAllSubjects] = useState<MCQSubject[]>(INITIAL_MCQ_SUBJECTS);
   const [allBundles, setAllBundles] = useState<MCQBundle[]>(INITIAL_MCQ_BUNDLES);
   const [loading, setLoading] = useState(true);
@@ -122,17 +121,12 @@ export default function MCQClient() {
 
   // Filter subjects for display (flat catalog)
   const filteredSubjects = useMemo(() => {
-    return levelSubjects.filter((subject) => {
-      const matchSearch =
-        subject.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        subject.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        subject.description.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchGroup =
-        selectedGroupFilter === "ALL" ||
-        subject.groupName.toLowerCase() === selectedGroupFilter.toLowerCase();
-      return matchSearch && matchGroup;
-    });
-  }, [levelSubjects, searchQuery, selectedGroupFilter]);
+    return levelSubjects.filter((subject) =>
+      subject.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      subject.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      subject.description.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [levelSubjects, searchQuery]);
 
   // Open checkout modal — if subject is already owned, open in "extend" mode
   const handleOpenSubjectModal = (subject: MCQSubject, extend = false) => {
@@ -530,10 +524,7 @@ export default function MCQClient() {
               return (
                 <button
                   key={level}
-                  onClick={() => {
-                    setActiveLevel(level);
-                    setSelectedGroupFilter("ALL");
-                  }}
+                  onClick={() => setActiveLevel(level)}
                   className={`relative flex-1 md:flex-initial px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold tracking-wide transition-all duration-300 ${isActive ? "text-slate-950" : "text-slate-500 dark:text-slate-400 hover:text-ink-navy dark:text-white"
                     }`}
                 >
@@ -571,24 +562,6 @@ export default function MCQClient() {
                 </button>
               )}
             </div>
-
-            {/* Quick Filter Group Chips (if level has groups) */}
-            {activeLevel !== "FOUNDATION" && (
-              <div className="hidden sm:flex items-center gap-1.5 bg-white/70 dark:bg-slate-900/70 p-1 border border-white/10 rounded-xl text-xs">
-                {["ALL", "Group I", "Group II"].map((grp) => (
-                  <button
-                    key={grp}
-                    onClick={() => setSelectedGroupFilter(grp)}
-                    className={`px-3 py-1.5 rounded-lg font-medium transition-all ${selectedGroupFilter === grp
-                      ? "bg-slate-200 dark:bg-white/15 text-ink-navy dark:text-white shadow-sm"
-                      : "text-slate-500 dark:text-slate-400 hover:text-ink-navy dark:text-white"
-                      }`}
-                  >
-                    {grp}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       </section>
@@ -652,13 +625,10 @@ export default function MCQClient() {
             <BookOpen className="w-12 h-12 text-slate-600 mx-auto mb-3" />
             <h3 className="text-lg font-bold text-ink-navy dark:text-white">No subjects found</h3>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-sm mx-auto">
-              No subjects matched &quot;{searchQuery}&quot;. Clear your search query or switch filters.
+              No subjects matched &quot;{searchQuery}&quot;. Clear your search query and try again.
             </p>
             <button
-              onClick={() => {
-                setSearchQuery("");
-                setSelectedGroupFilter("ALL");
-              }}
+              onClick={() => setSearchQuery("")}
               className="mt-4 px-4 py-2 bg-black/10 dark:bg-white/10 hover:bg-white/20 text-xs font-bold rounded-xl transition-all"
             >
               Reset Filters
