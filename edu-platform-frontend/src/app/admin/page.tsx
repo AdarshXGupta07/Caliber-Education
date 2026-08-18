@@ -19,6 +19,18 @@ import {
 
 const inp = "w-full px-3 py-2 text-sm border border-line-gray-light dark:border-line-gray-dark bg-white dark:bg-line-gray-dark/50 text-ink-navy dark:text-paper rounded-xl focus:outline-none focus:border-signal-emerald transition-colors";
 
+// FastAPI validation errors (422) send `detail` as an array of {msg, loc, type}
+// objects rather than a string — rendering that directly as a React child
+// crashes the whole tree, so always coerce to a string first.
+function extractErrorMessage(detail: unknown, fallback: string): string {
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail.map((d) => (d && typeof d === "object" && "msg" in d ? String((d as any).msg) : String(d))).filter(Boolean);
+    if (msgs.length) return msgs.join(", ");
+  }
+  return fallback;
+}
+
 const ConfirmContext = createContext<{ confirm: (msg: string) => Promise<boolean> } | null>(null);
 const useConfirm = () => {
   const ctx = useContext(ConfirmContext);
@@ -2186,7 +2198,7 @@ function CouponsTab() {
         resetDraft();
       } else {
         const err = await res.json();
-        setToast({ type: "error", message: err.detail || "Failed to save coupon." });
+        setToast({ type: "error", message: extractErrorMessage(err.detail, "Failed to save coupon.") });
       }
     } catch { setToast({ type: "error", message: "Error contacting server." }); }
   };
@@ -2434,7 +2446,7 @@ function AffiliatesTab() {
         resetDraft();
       } else {
         const err = await res.json();
-        setToast({ type: "error", message: err.detail || "Failed to save affiliate." });
+        setToast({ type: "error", message: extractErrorMessage(err.detail, "Failed to save affiliate.") });
       }
     } catch { setToast({ type: "error", message: "Error contacting server." }); }
   };

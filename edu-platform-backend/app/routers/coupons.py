@@ -3,6 +3,7 @@ Coupons & Affiliates router — public validation + admin CRUD.
 """
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
+from postgrest.exceptions import APIError as PostgrestAPIError
 from supabase import Client
 
 from app.core.database import get_db
@@ -152,7 +153,14 @@ async def create_coupon(
         "created_by": admin["id"],
     }
     result = db.table("coupons").insert(data).execute()
-    return result.data[0] if result.data else {}
+    if not result.data:
+        return {}
+    # Re-select with the affiliate join so the response matches list_coupons'
+    # shape — returning the bare insert row leaves `affiliates` undefined,
+    # which made a just-linked affiliate show as "—" until the next reload.
+    coupon_id = result.data[0]["id"]
+    joined = db.table("coupons").select("*, affiliates(name, email)").eq("id", coupon_id).single().execute()
+    return joined.data or result.data[0]
 
 
 @admin_router.patch("/coupons/{coupon_id}")
@@ -166,7 +174,10 @@ async def update_coupon(
     if not update_data:
         raise HTTPException(status_code=400, detail="Nothing to update")
     result = db.table("coupons").update(update_data).eq("id", coupon_id).execute()
-    return result.data[0] if result.data else {}
+    if not result.data:
+        return {}
+    joined = db.table("coupons").select("*, affiliates(name, email)").eq("id", coupon_id).single().execute()
+    return joined.data or result.data[0]
 
 
 @admin_router.delete("/coupons/{coupon_id}")
@@ -198,7 +209,12 @@ async def create_affiliate(
     db: Client = Depends(get_db),
 ):
     data = body.model_dump()
-    result = db.table("affiliates").insert(data).execute()
+    try:
+        result = db.table("affiliates").insert(data).execute()
+    except PostgrestAPIError as e:
+        if e.code == "23505":
+            raise HTTPException(status_code=400, detail=f"An affiliate with the email '{data['email']}' already exists.")
+        raise
     return result.data[0] if result.data else {}
 
 
@@ -212,7 +228,12 @@ async def update_affiliate(
     update_data = {k: v for k, v in body.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="Nothing to update")
-    result = db.table("affiliates").update(update_data).eq("id", affiliate_id).execute()
+    try:
+        result = db.table("affiliates").update(update_data).eq("id", affiliate_id).execute()
+    except PostgrestAPIError as e:
+        if e.code == "23505":
+            raise HTTPException(status_code=400, detail=f"An affiliate with the email '{update_data.get('email')}' already exists.")
+        raise
     return result.data[0] if result.data else {}
 
 

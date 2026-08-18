@@ -64,7 +64,7 @@ export default function HomeClient() {
 
               <div className="flex items-center justify-center lg:justify-start gap-8 pt-4 border-t border-line-gray-light dark:border-line-gray-dark w-full max-w-lg mx-auto lg:mx-0">
                 {[
-                  { val: "5,400+", label: "Students mentored" },
+                  { val: "300+", label: "Hours of mentoring sessions" },
                   { val: "Elite", label: "CA Faculty" },
                   { val: "4.8★", label: "Average rating" },
                 ].map((s, i) => (
@@ -136,10 +136,10 @@ export default function HomeClient() {
                 <Trophy className="w-3.5 h-3.5 text-slate dark:text-paper/60" /> No credit card required
               </div>
               <h2 className="font-heading font-bold text-3xl sm:text-4xl text-ink-navy dark:text-paper leading-tight">
-                Try a full MCQ set — completely free
+                Book 1:1 Session
               </h2>
               <p className="text-slate dark:text-paper/70 leading-relaxed">
-                30 real CA exam-pattern Accounting questions. Full explanations. The same experience our paid students get.
+                Talk directly to a CA mentor about your prep. Real answers to your real doubts — no pressure, no strings attached.
               </p>
               <div className="flex flex-wrap gap-4 justify-center pt-2">
                 <Link href="/courses#one-on-one" className="inline-flex items-center gap-2 px-6 py-3 bg-ink-navy dark:bg-paper text-paper dark:text-ink-navy font-semibold rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-sm">
@@ -282,7 +282,7 @@ function Footer() {
               <span className="font-heading font-bold text-lg">CAliber</span>
             </div>
             <p className="text-xs text-slate dark:text-paper/60 leading-relaxed">Practice like the exam. Built by CAs who cracked it.</p>
-            <p className="text-[10px] text-slate/40 dark:text-paper/40">Founded by Somya Deep & Aditya Kanal</p>
+            <p className="text-[10px] text-slate/40 dark:text-paper/40">Founded by a team of CAs</p>
             <div className="flex items-center gap-3 pt-1">
               <a href={SOCIAL_LINKS.whatsapp} target="_blank" rel="noopener noreferrer" aria-label="WhatsApp" className="opacity-70 hover:opacity-100 hover:scale-110 transition-all">
                 <WhatsAppIcon className="w-4 h-4" />
@@ -351,21 +351,6 @@ function Footer() {
               </form>
             )}
           </div>
-        </div>
-        <div className="mt-16 pt-8 border-t border-line-gray-light dark:border-line-gray-dark flex flex-col sm:flex-row items-center justify-between gap-4 text-[10px] text-slate/40 dark:text-paper/40">
-          <span className="flex items-center gap-1.5">
-            <span className="w-4 h-4 rounded-full overflow-hidden flex items-center justify-center relative flex-shrink-0 bg-white/10">
-              <Image
-                src={isAuthenticated && purchasedCourseIds?.length > 0 ? "/PREMIUM.jpg" : "/NORMAL.jpg"}
-                alt="Caliber Education Logo"
-                fill
-                sizes="16px"
-                className="object-cover"
-              />
-            </span>
-            © 2026 CAliber Education. All rights reserved.
-          </span>
-          <span>Made with ♥ for CA droppers & repeaters</span>
         </div>
       </div>
     </footer>
