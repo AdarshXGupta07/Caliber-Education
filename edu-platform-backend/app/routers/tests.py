@@ -147,14 +147,14 @@ async def submit_test(
         if not enroll.data:
             raise HTTPException(status_code=403, detail="Purchase this subject before submitting an answer sheet")
 
-    MAX_BYTES = 15 * 1024 * 1024
+    MAX_BYTES = 3 * 1024 * 1024
     stored_urls = []
     for upload in files:
         if (upload.content_type or "") != "application/pdf":
             raise HTTPException(status_code=400, detail="Only PDF files are accepted. Please combine your answer sheet into a single PDF.")
         raw = await upload.read()
         if len(raw) > MAX_BYTES:
-            raise HTTPException(status_code=400, detail="Each file must be under 15MB.")
+            raise HTTPException(status_code=400, detail="Each file must be under 3MB.")
         # Content-Type is attacker-controlled and easy to spoof — also check
         # the actual file bytes start with the real PDF magic number.
         if not raw.startswith(b"%PDF-"):

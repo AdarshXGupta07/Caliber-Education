@@ -439,6 +439,26 @@ function AdminDashboard() {
   const isMentorOnly = user?.role === "mentor";
   const [mentorPerms, setMentorPerms] = useState<{ evaluate_papers: boolean; manage_sessions: boolean; manage_test_series: boolean } | null>(null);
 
+  // The tab strip has 11 tabs but only ~3-4 fit on a phone screen at once,
+  // and its native scrollbar is deliberately hidden (scrollbarWidth: none)
+  // for a cleaner look — with nothing else signaling "there's more here",
+  // it reads as broken/incomplete on mobile rather than as scrollable.
+  const tabBarRef = useRef<HTMLDivElement>(null);
+  const [tabBarCanScrollRight, setTabBarCanScrollRight] = useState(false);
+  useEffect(() => {
+    const el = tabBarRef.current;
+    if (!el) return;
+    const check = () => setTabBarCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 5);
+    check();
+    el.addEventListener("scroll", check);
+    const observer = new ResizeObserver(check);
+    observer.observe(el);
+    return () => {
+      el.removeEventListener("scroll", check);
+      observer.disconnect();
+    };
+  }, []);
+
   useEffect(() => {
     if (!isMentorOnly) return;
     async function loadMyPermissions() {
@@ -577,7 +597,8 @@ function AdminDashboard() {
           ))}
         </div>
 
-        <div className="flex gap-1 p-1 bg-line-gray-light dark:bg-line-gray-dark rounded-xl w-full sm:w-fit overflow-x-auto whitespace-nowrap" style={{ scrollbarWidth: "none" }}>
+        <div className="relative w-full sm:w-fit">
+        <div ref={tabBarRef} className="flex gap-1 p-1 bg-line-gray-light dark:bg-line-gray-dark rounded-xl w-full sm:w-fit overflow-x-auto whitespace-nowrap" style={{ scrollbarWidth: "none" }}>
           {tabs.map((t) => (
             <button key={t.id} onClick={() => setActiveTab(t.id as AdminTab)}
               className={`flex-shrink-0 px-4 py-2 text-sm font-semibold rounded-lg transition-all ${(activeTab as string) === t.id ? "bg-white dark:bg-ink-navy text-ink-navy dark:text-paper shadow-sm" : "text-slate dark:text-paper/60 hover:text-ink-navy dark:hover:text-paper"
@@ -585,6 +606,12 @@ function AdminDashboard() {
               {t.label}
             </button>
           ))}
+        </div>
+        {tabBarCanScrollRight && (
+          <div className="sm:hidden pointer-events-none absolute right-0 top-0 bottom-0 w-10 rounded-r-xl bg-gradient-to-l from-line-gray-light dark:from-line-gray-dark to-transparent flex items-center justify-end pr-1">
+            <ChevronRight className="w-4 h-4 text-slate dark:text-paper/50" />
+          </div>
+        )}
         </div>
 
         {isMentorOnly && mentorPerms && tabs.length === 0 && (

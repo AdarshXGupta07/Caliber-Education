@@ -61,8 +61,8 @@ export default function TestSeriesSubjectPage({ params }: { params: Promise<{ le
       setError("Only PDF files are accepted. Please combine your answer sheet into a single PDF.");
       return;
     }
-    if (file.size > 15 * 1024 * 1024) {
-      setError("File is too large — please keep it under 15MB.");
+    if (file.size > 3 * 1024 * 1024) {
+      setError("File is too large — please keep it under 3MB.");
       return;
     }
     setUploadingFor(paperId);

@@ -7,6 +7,7 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from postgrest.exceptions import APIError as PostgrestAPIError
 from supabase import Client
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
@@ -20,6 +21,19 @@ from app.schemas.admin import ManualEnrollRequest, MentorPermissionsUpdateReques
 from app.schemas.mcq import BulkImportRequest
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
+
+
+def _safe_delete(db: Client, table: str, id_col: str, id_value: str, what: str = "this item"):
+    """Delete a row, converting a foreign-key violation (other rows still
+    reference it) into a clear 400 instead of letting Postgres' raw 23503
+    surface as an unhandled 500 — this was the actual cause behind course
+    deletes failing with a generic server error."""
+    try:
+        db.table(table).delete().eq(id_col, id_value).execute()
+    except PostgrestAPIError as e:
+        if e.code == "23503":
+            raise HTTPException(status_code=400, detail=f"Can't delete {what} — other records still reference it.")
+        raise
 
 
 # ─── Mentor Permission System ──────────────────────────────────────────────────
@@ -625,7 +639,24 @@ async def admin_delete_course(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    db.table("courses").delete().eq("id", course_id).execute()
+    # Hard-deleting a course with active enrollments would silently orphan
+    # every paying student's access record — Postgres already refuses this
+    # via the enrollments FK, but the raw 23503 was previously surfacing as
+    # an unhandled 500. Check first for a clear message; the try/except is
+    # the backstop for the same race a concurrent enrollment would cause.
+    enrolled = db.table("enrollments").select("user_id", count="exact").eq("course_id", course_id).range(0, 0).execute()
+    if enrolled.count:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Can't delete — {enrolled.count} student{'s are' if enrolled.count != 1 else ' is'} still enrolled in this course. "
+                   "Set its status to Archived instead, or remove those enrollments first from Courses → Edit → Enrolled Students.",
+        )
+    try:
+        db.table("courses").delete().eq("id", course_id).execute()
+    except PostgrestAPIError as e:
+        if e.code == "23503":
+            raise HTTPException(status_code=400, detail="Can't delete — this course still has students, payments, or other records referencing it.")
+        raise
     return {"success": True}
 
 @router.get("/course-bundles")
@@ -672,7 +703,7 @@ async def admin_delete_bundle(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    db.table("course_bundles").delete().eq("id", bundle_id).execute()
+    _safe_delete(db, "course_bundles", "id", bundle_id, "this bundle")
     return {"success": True}
 
 # ─── Test Series admin CRUD ──────────────────────────────────────────────────
@@ -733,7 +764,7 @@ async def admin_list_ts_papers(
     return q.order("sort_order").execute().data or []
 
 
-MAX_TEST_SERIES_PAPER_BYTES = 20 * 1024 * 1024
+MAX_TEST_SERIES_PAPER_BYTES = 3 * 1024 * 1024
 
 
 @router.post("/test-series/papers/upload", status_code=201)
@@ -759,7 +790,7 @@ async def admin_upload_ts_paper(
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
     raw = await file.read()
     if len(raw) > MAX_TEST_SERIES_PAPER_BYTES:
-        raise HTTPException(status_code=400, detail="File must be under 20MB")
+        raise HTTPException(status_code=400, detail="File must be under 3MB")
     # Content-Type is attacker-controlled and easy to spoof — also check the
     # actual file bytes start with the real PDF magic number.
     if not raw.startswith(b"%PDF-"):
@@ -813,7 +844,7 @@ async def admin_delete_ts_paper(
 ):
     if not await _mentor_has_permission(staff, "manage_test_series", db):
         raise HTTPException(status_code=403, detail="You don't have permission to manage test series")
-    db.table("tests").delete().eq("id", paper_id).execute()
+    _safe_delete(db, "tests", "id", paper_id, "this paper")
     return {"success": True}
 
 
@@ -1032,7 +1063,7 @@ async def admin_delete_series(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    db.table("mcq_series").delete().eq("id", series_id).execute()
+    _safe_delete(db, "mcq_series", "id", series_id, "this series")
     return {"success": True}
 
 
@@ -1694,7 +1725,7 @@ async def delete_submission(
     return {"success": True}
 
 
-MAX_EVALUATION_FILE_BYTES = 15 * 1024 * 1024  # 15MB
+MAX_EVALUATION_FILE_BYTES = 3 * 1024 * 1024  # 3MB
 ALLOWED_EVALUATION_CONTENT_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
 
 
@@ -1734,7 +1765,7 @@ async def review_submission(
             raise HTTPException(status_code=400, detail="Checked file must be a PDF, JPG, or PNG")
         raw = await checkedFile.read()
         if len(raw) > MAX_EVALUATION_FILE_BYTES:
-            raise HTTPException(status_code=400, detail="Checked file must be under 15MB")
+            raise HTTPException(status_code=400, detail="Checked file must be under 3MB")
         # Content-Type is attacker-controlled and easy to spoof — also check
         # the actual file bytes match a real signature for one of the
         # accepted types.
@@ -1846,7 +1877,7 @@ async def admin_delete_test(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    db.table("tests").delete().eq("id", test_id).execute()
+    _safe_delete(db, "tests", "id", test_id, "this test")
     return {"success": True}
 
 
@@ -1900,7 +1931,7 @@ async def admin_delete_question(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    db.table("questions").delete().eq("id", question_id).execute()
+    _safe_delete(db, "questions", "id", question_id, "this question")
     return {"success": True}
 
 
@@ -1934,7 +1965,7 @@ async def admin_delete_section(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    db.table("exam_sections").delete().eq("id", section_id).execute()
+    _safe_delete(db, "exam_sections", "id", section_id, "this section")
     return {"success": True}
 
 
@@ -2011,7 +2042,7 @@ async def admin_delete_mentor(
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    db.table("mentors").delete().eq("id", mentor_id).execute()
+    _safe_delete(db, "mentors", "id", mentor_id, "this mentor")
     return {"success": True}
 
 
