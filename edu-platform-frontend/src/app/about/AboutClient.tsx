@@ -140,7 +140,7 @@ export default function AboutClient() {
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
             <span className="text-xs font-semibold text-slate dark:text-paper/50 uppercase tracking-widest">About Us</span>
             <h1 className="font-heading font-extrabold text-4xl sm:text-5xl text-ink-navy dark:text-paper mt-4 leading-tight tracking-tight">
-              Two Chartered Accountants building the mentorship they wished they'd had.
+              Two CAs building the mentorship they wished they would have.
             </h1>
           </motion.div>
         </div>
