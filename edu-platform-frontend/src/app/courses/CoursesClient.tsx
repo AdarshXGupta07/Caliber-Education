@@ -237,8 +237,8 @@ export default function CoursesClient() {
     <div className="pt-16 min-h-screen bg-paper dark:bg-ink-navy">
       {/* ─── HEADER WITH BUNDLE BUILDER ─── */}
       <section className="py-12 md:py-16 bg-white dark:bg-ink-navy border-b border-line-gray-light dark:border-line-gray-dark overflow-hidden relative">
-        <div className="max-w-6xl mx-auto px-6 sm:px-8 grid lg:grid-cols-2 gap-10 items-center">
-          <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.4 }} className="z-10">
+        <div className="max-w-6xl mx-auto px-6 sm:px-8 grid grid-cols-1 lg:grid-cols-2 gap-10 items-center">
+          <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.4 }} className="z-10 min-w-0">
             <span className="text-xs font-semibold text-slate dark:text-paper/50 uppercase tracking-widest">Courses</span>
             <h1 className="font-heading font-extrabold text-4xl sm:text-5xl text-ink-navy dark:text-paper mt-2 leading-tight tracking-tight">
               Find your course
@@ -254,7 +254,7 @@ export default function CoursesClient() {
           </motion.div>
 
           {/* Bundle Builder Widget */}
-          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5, delay: 0.1 }} className="z-10">
+          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5, delay: 0.1 }} className="z-10 min-w-0">
             <BundleBuilder courses={courses} loading={loadingCourses} onBuyIndividual={() => window.scrollTo({ top: 700, behavior: "smooth" })} />
           </motion.div>
         </div>
@@ -755,7 +755,7 @@ function BundleBuilder({ courses, loading, onBuyIndividual }: { courses: Course[
   };
 
   return (
-    <div className="bg-white/80 dark:bg-line-gray-dark/40 backdrop-blur-md border border-line-gray-light dark:border-line-gray-dark rounded-2xl shadow-xl overflow-hidden shadow-emerald-500/5">
+    <div className="min-w-0 bg-white/80 dark:bg-line-gray-dark/40 backdrop-blur-md border border-line-gray-light dark:border-line-gray-dark rounded-2xl shadow-xl overflow-hidden shadow-emerald-500/5">
       <Toast toast={toast} onDismiss={() => setToast(null)} />
       <UpiPaymentModal
         open={showUpiModal}
