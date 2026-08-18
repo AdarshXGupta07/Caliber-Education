@@ -620,10 +620,15 @@ function StatusBadge({ status }: { status: PaymentVerification["status"] }) {
 }
 
 // ─── PAYMENTS TAB ────────────────────────────────────────────────────────
+const PAYMENTS_PAGE_SIZE = 25;
+
 function PaymentsTab() {
   const [verifications, setVerifications] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState({ all: 0, pending: 0, approved: 0, rejected: 0, refunded: 0 });
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "approved" | "rejected" | "refunded">("all");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -658,27 +663,59 @@ function PaymentsTab() {
     checkScroll();
   };
 
-  useEffect(() => {
-    async function loadPayments() {
-      try {
-        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-        const token = localStorage.getItem("caliber_jwt") || "";
-        const res = await fetch(`${apiURL}/api/admin/payments`, {
-          headers: { "Authorization": `Bearer ${token}` }
-        });
-        if (res.ok) {
-          setVerifications(await res.json());
-        }
-      } catch (err) {
-        console.error("Failed to fetch payments", err);
-      } finally {
-        setLoading(false);
+  const fetchPayments = async (offset: number, append: boolean) => {
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const params = new URLSearchParams({ limit: String(PAYMENTS_PAGE_SIZE), offset: String(offset) });
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      const res = await fetch(`${apiURL}/api/admin/payments?${params}`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setVerifications(prev => (append ? [...prev, ...data.items] : data.items));
+        setTotal(data.total);
+        setCounts(data.counts);
       }
+    } catch (err) {
+      console.error("Failed to fetch payments", err);
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
     }
-    loadPayments();
-  }, []);
+  };
 
-  const filtered = statusFilter === "all" ? verifications : verifications.filter(v => v.status === statusFilter);
+  // Re-fetches from the top whenever the status tab changes — filtering now
+  // happens server-side, so switching tabs means a fresh page 0, not a
+  // client-side re-filter of whatever happened to already be loaded.
+  useEffect(() => {
+    setLoading(true);
+    fetchPayments(0, false);
+  }, [statusFilter]);
+
+  const loadMore = () => {
+    setLoadingMore(true);
+    fetchPayments(verifications.length, true);
+  };
+
+  // Applies a status change locally instead of re-fetching the whole page.
+  // If the current tab is a specific status (not "all"), a row that no
+  // longer matches drops out of view — otherwise it'd sit in the "Pending"
+  // tab still showing an "Approved" badge until the next reload.
+  const applyStatusUpdate = (id: string, newStatus: "approved" | "rejected") => {
+    setVerifications(prev => {
+      const row = prev.find(v => v.id === id);
+      if (!row) return prev;
+      const oldStatus = row.status;
+      setCounts(c => ({ ...c, [oldStatus]: Math.max(0, (c as any)[oldStatus] - 1), [newStatus]: (c as any)[newStatus] + 1 }));
+      if (statusFilter !== "all" && statusFilter !== newStatus) {
+        setTotal(t => Math.max(0, t - 1));
+        return prev.filter(v => v.id !== id);
+      }
+      return prev.map(v => (v.id === id ? { ...v, status: newStatus } : v));
+    });
+  };
 
   const approveVerification = async (id: string) => {
     try {
@@ -689,7 +726,7 @@ function PaymentsTab() {
         headers: { "Authorization": `Bearer ${token}` }
       });
       if (res.ok) {
-        setVerifications(prev => prev.map(v => (v.id === id ? { ...v, status: "approved" } : v)));
+        applyStatusUpdate(id, "approved");
         setToast({ type: "success", message: "Payment approved — access granted." });
       } else {
         const data = await res.json().catch(() => ({}));
@@ -709,7 +746,7 @@ function PaymentsTab() {
         headers: { "Authorization": `Bearer ${token}` }
       });
       if (res.ok) {
-        setVerifications(prev => prev.map(v => (v.id === id ? { ...v, status: "rejected" } : v)));
+        applyStatusUpdate(id, "rejected");
         setToast({ type: "success", message: "Payment rejected." });
       } else {
         setToast({ type: "error", message: "Failed to reject payment" });
@@ -729,7 +766,7 @@ function PaymentsTab() {
             <button key={s} onClick={() => setStatusFilter(s)}
               className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors capitalize ${statusFilter === s ? "bg-signal-emerald text-white" : "bg-line-gray-light dark:bg-line-gray-dark text-slate dark:text-paper/60 hover:bg-signal-emerald/10 hover:text-signal-emerald"
                 }`}>
-              {s === "all" ? `All (${verifications.length})` : `${s} (${verifications.filter(v => v.status === s).length})`}
+              {s === "all" ? `All (${counts.all})` : `${s} (${counts[s]})`}
             </button>
           ))}
         </div>
@@ -766,7 +803,7 @@ function PaymentsTab() {
             </tr>
           </thead>
           <tbody className="divide-y divide-line-gray-light dark:divide-line-gray-dark bg-white dark:bg-line-gray-dark/20">
-            {filtered.map((v, i) => (
+            {verifications.map((v, i) => (
               <motion.tr key={v.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
                 className="hover:bg-line-gray-light/30 dark:hover:bg-line-gray-dark/30 transition-colors">
                 <td className="px-5 py-3.5 text-ink-navy dark:text-paper font-medium">{v.studentEmail}</td>
@@ -804,7 +841,7 @@ function PaymentsTab() {
       </div>
 
       <div className="sm:hidden space-y-3">
-        {filtered.map((v, i) => (
+        {verifications.map((v, i) => (
           <motion.div key={v.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
             className="p-4 bg-white dark:bg-line-gray-dark/40 border border-line-gray-light dark:border-line-gray-dark rounded-xl space-y-3">
             <div className="flex items-start justify-between">
@@ -833,44 +870,74 @@ function PaymentsTab() {
           </motion.div>
         ))}
       </div>
+
+      {verifications.length < total && (
+        <div className="flex justify-center pt-2">
+          <button onClick={loadMore} disabled={loadingMore}
+            className="px-5 py-2 text-xs font-semibold text-slate dark:text-paper/70 border border-line-gray-light dark:border-line-gray-dark rounded-lg hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+            {loadingMore ? "Loading…" : `Load more (${verifications.length} of ${total})`}
+          </button>
+        </div>
+      )}
     </motion.div>
   );
 }
 
 // ─── USERS TAB ───────────────────────────────────────────────────────────
+const USERS_PAGE_SIZE = 25;
+
 function UsersTab() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [localUsers, setLocalUsers] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
 
-  useEffect(() => {
-    async function loadUsers() {
-      try {
-        const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
-        const token = localStorage.getItem("caliber_jwt") || "";
-        const res = await fetch(`${apiURL}/api/admin/users`, {
-          headers: { "Authorization": `Bearer ${token}` }
-        });
-        if (res.ok) {
-          setLocalUsers(await res.json());
-        }
-      } catch (e) {
-        console.error("Failed loading users", e);
+  const fetchUsers = async (offset: number, append: boolean) => {
+    try {
+      const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
+      const token = localStorage.getItem("caliber_jwt") || "";
+      const params = new URLSearchParams({ limit: String(USERS_PAGE_SIZE), offset: String(offset) });
+      const res = await fetch(`${apiURL}/api/admin/users?${params}`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setLocalUsers(prev => (append ? [...prev, ...data.items] : data.items));
+        setTotal(data.total);
       }
+    } catch (e) {
+      console.error("Failed loading users", e);
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
     }
-    loadUsers();
+  };
+
+  useEffect(() => {
+    fetchUsers(0, false);
   }, []);
+
+  const loadMoreUsers = () => {
+    setLoadingMore(true);
+    fetchUsers(localUsers.length, true);
+  };
 
   const handleExportCSV = async () => {
     try {
       const apiURL = process.env.NEXT_PUBLIC_API_URL || "";
       const token = localStorage.getItem("caliber_jwt") || "";
-      const res = await fetch(`${apiURL}/api/admin/users`, {
+      // The paginated list view only holds whatever page the admin has
+      // loaded so far — export always asks the backend for every user,
+      // regardless of how much of the on-screen list has been paged in.
+      const res = await fetch(`${apiURL}/api/admin/users?include_all=true`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       let usersToExport = localUsers;
       if (res.ok) {
-        usersToExport = await res.json();
+        const data = await res.json();
+        usersToExport = data.items || [];
       }
 
       const cMap = new Map<string, string>();
@@ -1040,6 +1107,15 @@ function UsersTab() {
           </motion.div>
         ))}
       </div>
+
+      {!loading && localUsers.length < total && (
+        <div className="flex justify-center pt-2">
+          <button onClick={loadMoreUsers} disabled={loadingMore}
+            className="px-5 py-2 text-xs font-semibold text-slate dark:text-paper/70 border border-line-gray-light dark:border-line-gray-dark rounded-lg hover:bg-line-gray-light/40 dark:hover:bg-line-gray-dark/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+            {loadingMore ? "Loading…" : `Load more (${localUsers.length} of ${total})`}
+          </button>
+        </div>
+      )}
     </motion.div>
   );
 }

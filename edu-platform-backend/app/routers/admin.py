@@ -113,33 +113,54 @@ async def get_summary(
 
 # ─── Payments ─────────────────────────────────────────────────────────────────
 
+PAYMENT_STATUSES = ("pending", "approved", "rejected", "refunded")
+
+
 @router.get("/payments")
 async def list_payments(
+    status: Optional[str] = None,
+    limit: int = 25,
+    offset: int = 0,
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    payments_res = db.table("payments").select("id, user_id, course_id, utr_number, amount, status, created_at, payment_method, payment_reference, payer_upi_id, payer_name").order("created_at", desc=True).execute()
+    """Paginated + server-filtered — the payments table only grows, so
+    fetching every row on every load (the old behavior) doesn't scale past a
+    few hundred rows. `profiles`/`courses` are pulled in via the FK embed
+    instead of separate full-table fetches, and per-status tab counts come
+    from one lightweight status-only query rather than 5 filtered ones."""
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+
+    query = (
+        db.table("payments")
+        .select(
+            "id, user_id, course_id, utr_number, amount, status, created_at, "
+            "payment_method, payment_reference, payer_upi_id, payer_name, "
+            "profiles(email), courses(title)",
+            count="exact",
+        )
+        .order("created_at", desc=True)
+    )
+    if status and status != "all":
+        query = query.eq("status", status)
+    payments_res = query.range(offset, offset + limit - 1).execute()
     payments = payments_res.data or []
-
-    users_res = db.table("profiles").select("id, email, full_name").execute()
-    users_map = {u["id"]: u for u in (users_res.data or [])}
-
-    courses_res = db.table("courses").select("id, title").execute()
-    courses_map = {c["id"]: c["title"] for c in (courses_res.data or [])}
+    total = payments_res.count or 0
 
     verifications = []
     for p in payments:
-        user = users_map.get(p.get("user_id"))
-        email = user.get("email", "Unknown") if user else "Unknown"
+        profile = p.get("profiles") or {}
+        email = profile.get("email") or "Unknown"
 
-        course_title = "Multiple/Bundle"
-        raw_c_id = p.get("course_id")
-        utr = p.get("utr_number", "")
-
-        if raw_c_id and raw_c_id in courses_map:
-            course_title = courses_map[raw_c_id]
-        elif utr.startswith("mcq-") or utr.startswith("testseries-"):
-            course_title = utr.split("|")[0]
+        course = p.get("courses") or {}
+        utr = p.get("utr_number") or ""
+        course_title = course.get("title")
+        if not course_title:
+            if utr.startswith("mcq-") or utr.startswith("testseries-"):
+                course_title = utr.split("|")[0]
+            else:
+                course_title = "Multiple/Bundle"
 
         verifications.append({
             "id": p["id"],
@@ -155,7 +176,14 @@ async def list_payments(
             "payerName": p.get("payer_name"),
         })
 
-    return verifications
+    status_rows = db.table("payments").select("status").execute().data or []
+    counts = {"all": len(status_rows)} | {s: 0 for s in PAYMENT_STATUSES}
+    for row in status_rows:
+        s = row.get("status")
+        if s in counts:
+            counts[s] += 1
+
+    return {"items": verifications, "total": total, "counts": counts}
 
 @router.post("/payments/{payment_id}/approve")
 @router.patch("/payments/{payment_id}/approve")
@@ -219,37 +247,69 @@ async def reject_payment(
 
 @router.get("/users")
 async def list_users(
+    limit: Optional[int] = None,
+    offset: int = 0,
+    include_all: bool = False,
     admin: dict = Depends(require_admin),
     db: Client = Depends(get_db),
 ):
-    # Fetch all profiles
-    profiles_res = db.table("profiles").select("*").order("created_at", desc=True).execute()
+    """`limit` omitted (or `include_all=true`) returns every user,
+    unpaginated — used by the CSV export, which genuinely needs the full
+    set. Otherwise this is paginated, and every related table (payments,
+    quiz attempts, enrollments of every kind) is scoped to just this page's
+    user_ids via `.in_()` instead of pulling the entire table on every load
+    — those tables grow much faster than the user count, so that was the
+    real scale risk here, not the profiles table itself."""
+    paginate = bool(limit) and not include_all
+
+    query = db.table("profiles").select("*", count="exact" if paginate else None).order("created_at", desc=True)
+    if paginate:
+        limit = max(1, min(limit, 100))
+        offset = max(0, offset)
+        query = query.range(offset, offset + limit - 1)
+    profiles_res = query.execute()
     profiles = profiles_res.data or []
-    
-    # We will also fetch enrollments and their course details, and mcq purchases
-    # For a high performance fetch, we collect all and process in memory
+    total = profiles_res.count if paginate else len(profiles)
+
+    user_ids = [p["id"] for p in profiles] if paginate else None
+    if paginate and not user_ids:
+        return {"items": [], "total": total}
+
     users_mapped = []
 
     try:
-        payments = db.table("payments").select("*").eq("status", "approved").execute().data or []
+        payments_q = db.table("payments").select("*").eq("status", "approved")
         courses = db.table("courses").select("id, title").execute().data or []
         course_map = {c["id"]: c["title"] for c in courses}
 
         # Narrow select — this table also carries a full_question_analysis
         # JSON blob per row that's never used here, only in per-attempt review.
-        attempts = db.table("quiz_attempts").select("user_id, set_id, score, total, created_at").execute().data or []
+        attempts_q = db.table("quiz_attempts").select("user_id, set_id, score, total, created_at")
         papers = db.table("mcq_papers").select("id, title").execute().data or []
         paper_map = {p["id"]: p["title"] for p in papers}
 
-        enrollments = db.table("enrollments").select("user_id, course_id, purchased_at, access_until").execute().data or []
+        enrollments_q = db.table("enrollments").select("user_id, course_id, purchased_at, access_until")
 
-        mcq_enrollments = db.table("mcq_enrollments").select("user_id, subject_code, access_until, created_at").execute().data or []
+        mcq_enrollments_q = db.table("mcq_enrollments").select("user_id, subject_code, access_until, created_at")
         mcq_subjects = db.table("mcq_subjects").select("id, name").execute().data or []
         mcq_subject_map = {s["id"]: s["name"] for s in mcq_subjects}
 
-        test_series_enrollments = db.table("test_series_enrollments").select("user_id, subject_id, access_until, created_at").execute().data or []
+        test_series_enrollments_q = db.table("test_series_enrollments").select("user_id, subject_id, access_until, created_at")
         test_series_subjects = db.table("test_series_subjects").select("id, name").execute().data or []
         test_series_subject_map = {s["id"]: s["name"] for s in test_series_subjects}
+
+        if user_ids is not None:
+            payments_q = payments_q.in_("user_id", user_ids)
+            attempts_q = attempts_q.in_("user_id", user_ids)
+            enrollments_q = enrollments_q.in_("user_id", user_ids)
+            mcq_enrollments_q = mcq_enrollments_q.in_("user_id", user_ids)
+            test_series_enrollments_q = test_series_enrollments_q.in_("user_id", user_ids)
+
+        payments = payments_q.execute().data or []
+        attempts = attempts_q.execute().data or []
+        enrollments = enrollments_q.execute().data or []
+        mcq_enrollments = mcq_enrollments_q.execute().data or []
+        test_series_enrollments = test_series_enrollments_q.execute().data or []
     except Exception as e:
         print(f"[ADMIN USERS] Failed to load enrollment data: {e}")
         return {"error": "Failed to load user data. Please try again."}
@@ -336,7 +396,7 @@ async def list_users(
             "testSeriesPurchases": test_series_by_user.get(uid, []),
         })
 
-    return users_mapped
+    return {"items": users_mapped, "total": total}
 
 
 class SetUserRoleRequest(BaseModel):
